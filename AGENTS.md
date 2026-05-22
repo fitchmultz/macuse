@@ -19,6 +19,13 @@ This repo investigates OpenAI Codex Computer Use reuse from non-Codex agents suc
 ## Validation commands
 
 ```bash
+node tools/validate-macuse.mjs quick
+node tools/validate-macuse.mjs read-only
+```
+
+For focused checks, run the underlying commands directly:
+
+```bash
 node --check tools/probe-codex-computer-use-mcp.mjs
 node --check tools/codex-computer-use-appserver.mjs
 node tools/probe-codex-computer-use-mcp.mjs discover

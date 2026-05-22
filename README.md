@@ -2,6 +2,15 @@
 
 Local tooling and notes for testing whether OpenAI Codex Computer Use can be reused from non-Codex agents such as pi.
 
+## Validation
+
+Run the reusable smoke suite:
+
+```bash
+node tools/validate-macuse.mjs quick
+node tools/validate-macuse.mjs read-only
+```
+
 ## Working path
 
 Use Codex app-server as the compatibility bridge for read-only Computer Use calls:

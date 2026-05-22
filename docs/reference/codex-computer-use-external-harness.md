@@ -427,7 +427,20 @@ The direct raw-MCP script only lists tools and calls read-only `list_apps` /
 `get_app_state`. It does **not** perform click/type/drag/scroll probes. Keep it
 as the discovery, elicitation, denial-path, and raw-MCP regression harness.
 
-This repository also includes the working app-server bridge:
+This repository also includes a validation wrapper for repeated checks:
+
+```text
+tools/validate-macuse.mjs
+```
+
+Use it before shipping bridge or extension changes:
+
+```bash
+node tools/validate-macuse.mjs quick
+node tools/validate-macuse.mjs read-only
+```
+
+The working app-server bridge is:
 
 ```text
 tools/codex-computer-use-appserver.mjs
