@@ -140,7 +140,7 @@ async function main() {
     addCheck(checks, syntax.check);
   }
 
-  const statusRun = commandCheck('app-server status', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'status', '--quiet', '--codex', opts.codex], { timeoutMs: opts.toolTimeoutMs + 30_000 });
+  const statusRun = commandCheck('app-server status', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'status', '--quiet', '--codex', opts.codex], { timeoutMs: opts.toolTimeoutMs + 30_000, warn: true });
   if (statusRun.result.ok) {
     try {
       const json = parseJsonOutput('app-server status', statusRun.result.stdout);
@@ -162,7 +162,9 @@ async function main() {
   }
 
   const discover = commandCheck('direct raw-MCP discover', process.execPath, ['tools/probe-codex-computer-use-mcp.mjs', 'discover'], { timeoutMs: 120_000 });
-  addCheck(checks, { ...discover.check, summary: discover.result.ok && discover.result.stdout.includes('Tools (10):') ? 'raw MCP advertised expected tools' : discover.check.summary });
+  const rawDiscoverHasExpectedTools = discover.result.ok && EXPECTED_TOOLS.every((tool) => discover.result.stdout.includes(`- ${tool} `) || discover.result.stdout.includes(`- ${tool} -`));
+  if (rawDiscoverHasExpectedTools && report.computerUseTools.length === 0) report.computerUseTools = [...EXPECTED_TOOLS].sort();
+  addCheck(checks, { ...discover.check, summary: rawDiscoverHasExpectedTools ? 'raw MCP advertised expected tools' : discover.check.summary });
 
   const listApps = commandCheck('app-server list_apps', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'list-apps', '--quiet', '--codex', opts.codex, '--max-text-chars', '1000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 30_000 });
   addCheck(checks, listApps.check);
