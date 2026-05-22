@@ -51,23 +51,35 @@ function run(name, command, args, opts = {}) {
 }
 
 function runPiExtensionSmoke(verbose) {
-  const stdout = run(
-    'pi extension smoke',
-    'pi',
-    [
-      '--no-context-files',
-      '--no-skills',
-      '--no-prompt-templates',
-      '--no-themes',
-      '--no-extensions',
-      '-e',
-      '.pi/extensions/codex-computer-use.ts',
-      '--list-models',
-      '__no_such_model__',
-    ],
-    { env: { PI_OFFLINE: '1' }, timeoutMs: 120_000, verbose },
-  );
-  return stdout.trim().split('\n').slice(-1)[0] || 'pi extension smoke completed';
+  const script = String.raw`
+const { createJiti } = require('jiti');
+const jiti = createJiti(process.cwd() + '/validate-extension.js', { interopDefault: true });
+const mod = jiti('./.pi/extensions/codex-computer-use.ts');
+const factory = mod.default || mod;
+const tools = [];
+factory({
+  registerTool(def) { tools.push(def.name); },
+  registerCommand() {},
+  on() {},
+});
+for (const expected of ['codex_cu_list_apps', 'codex_cu_get_app_state']) {
+  if (!tools.includes(expected)) {
+    throw new Error('missing extension tool: ' + expected + '; saw ' + tools.join(','));
+  }
+}
+console.log(tools.join(','));
+`;
+  const nodePath = [
+    '/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules',
+    '/opt/homebrew/lib/node_modules',
+    process.env.NODE_PATH || '',
+  ].filter(Boolean).join(':');
+  const stdout = run('pi extension registration smoke', process.execPath, ['-e', script], {
+    env: { NODE_PATH: nodePath },
+    timeoutMs: 120_000,
+    verbose,
+  });
+  return stdout.trim();
 }
 
 function parseJsonOutput(name, text) {
