@@ -15,7 +15,7 @@ This repo investigates OpenAI Codex Computer Use reuse from non-Codex agents suc
 
 - Read-only Computer Use probes are allowed: `list_apps` and `get_app_state`.
 - Mutating GUI actions must use `codex_cu_sequence` or `tools/codex-computer-use-appserver.mjs sequence` with a narrow target, before/after state checks, `allowMutating: true`, and a safety note.
-- Preserve the user's mouse/system focus. Prefer `perform_secondary_action` with `action: "Press"`, `press_key`, `set_value`, or element-targeted `scroll` over pointer `click` when they can accomplish the same task. In pi, pointer `click` requires `allowPointerClick: true`. Run `node tools/validate-macuse.mjs focus` after focus-related changes.
+- Preserve the user's mouse/system focus. Prefer `perform_secondary_action` with `action: "Press"`, `press_key`, `set_value`, or element-targeted `scroll` over pointer `click` when they can accomplish the same task. In pi, pointer `click` requires `allowPointerClick: true`; pointer `drag` requires `allowPointerDrag: true` and the bridge restores mouse position afterward. Run `node tools/validate-macuse.mjs focus` after focus-related changes.
 - Do not perform purchases, sends, deletes, credential/account/security/privacy changes, installs, or ambiguous wrong-window actions without fresh explicit approval for that exact operation.
 - Keep direct raw-MCP probes non-mutating; use them for discovery, app-approval denial paths, and parity investigation.
 

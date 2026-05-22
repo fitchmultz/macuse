@@ -310,6 +310,7 @@ export default function (pi: ExtensionAPI) {
 			approval: approvalParam,
 			allowMutating: Type.Optional(Type.Boolean({ description: "Required when any step is not list_apps or get_app_state." })),
 			allowPointerClick: Type.Optional(Type.Boolean({ description: "Required to use the pointer-based click tool. Prefer perform_secondary_action action=Press when possible." })),
+			allowPointerDrag: Type.Optional(Type.Boolean({ description: "Required to use the pointer-based drag tool. The bridge restores the mouse position afterward." })),
 			safetyNote: Type.Optional(Type.String({ description: "Required for mutating steps. State target app, intended effect, and stop boundary." })),
 			includeImage: Type.Optional(Type.Boolean({ description: "Attach screenshot image blocks returned by sequence steps. Default false." })),
 			saveImagePath: Type.Optional(Type.String({ description: "Optional filesystem path where the first returned screenshot should be saved." })),
@@ -327,8 +328,13 @@ export default function (pi: ExtensionAPI) {
 			}));
 			if (steps.length === 0) throw new Error("codex_cu_sequence requires at least one step.");
 			const mutating = hasMutatingSteps(steps);
-			if (steps.some((step: { tool: string }) => step.tool === "click") && !(params as any).allowPointerClick) {
+			const hasPointerClick = steps.some((step: { tool: string }) => step.tool === "click");
+			const hasPointerDrag = steps.some((step: { tool: string }) => step.tool === "drag");
+			if (hasPointerClick && !(params as any).allowPointerClick) {
 				throw new Error("codex_cu_sequence pointer click steps require allowPointerClick=true. Prefer perform_secondary_action with action=Press when possible to preserve mouse focus.");
+			}
+			if (hasPointerDrag && !(params as any).allowPointerDrag) {
+				throw new Error("codex_cu_sequence pointer drag steps require allowPointerDrag=true. Pointer drag can move the user's cursor; the bridge restores mouse position afterward.");
 			}
 			if (mutating) {
 				if (!(params as any).allowMutating) {
@@ -364,6 +370,7 @@ export default function (pi: ExtensionAPI) {
 				"--max-text-chars", String(maxTextChars),
 			];
 			if (mutating) args.push("--allow-mutating");
+			if (hasPointerClick || hasPointerDrag) args.push("--preserve-mouse");
 			if ((params as any).includeImage) args.push("--include-image");
 			if ((params as any).saveImagePath) args.push("--save-image", (params as any).saveImagePath);
 			const { output, stderr, command } = await runBridge(args, signal, toolTimeoutMs * steps.length + 15_000);

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { accessSync, constants, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
@@ -67,7 +67,7 @@ class ChildExitError extends CliError {
 }
 
 function printHelp() {
-  process.stdout.write(`Codex Computer Use app-server bridge ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver.mjs status [options]\n  node tools/codex-computer-use-appserver.mjs list-apps [options]\n  node tools/codex-computer-use-appserver.mjs get-state --app <app> --approval ask|accept-once|deny [options]\n  node tools/codex-computer-use-appserver.mjs call --tool <tool> --arguments-json <json> [options]\n  node tools/codex-computer-use-appserver.mjs sequence --steps-json <json-array> [options]\n\nModes:\n  status\n      Start Codex app-server and print MCP server status. This proves the\n      app-server can discover the Computer Use MCP server and its tools.\n\n  list-apps\n      Call the read-only Computer Use list_apps tool through Codex app-server.\n      This is the safest positive service-backed regression probe.\n\n  get-state --app <app> --approval ask|accept-once|deny\n      Call the read-only get_app_state tool through Codex app-server.\n      The CLI is non-interactive; approval=ask is rejected here and is meant for\n      the pi extension wrapper, which can ask through pi UI and then pass either\n      accept-once or deny.\n\n  call --tool <tool> --arguments-json <json>\n      Generic app-server-backed tool call. By default only read-only Computer\n      Use tools are allowed. Pass --allow-mutating to call click/type/scroll/etc.\n      Do not use mutating tools without an explicit task-level safety policy.\n\n  sequence --steps-json <json-array>\n      Run multiple Computer Use tool calls in one app-server thread. Each step\n      is {\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}}.\n      Steps may include label, expectText, expectAbsentText, and allowError.\n      Use this for get_app_state -> action -> get_app_state validation.\n\nOptions:\n  --codex <path>                 Codex CLI/app-server binary.\n                                 Default: ${DEFAULT_CODEX_BIN}\n                                 Env: CODEX_BIN\n  --cwd <path>                   Thread cwd. Default: current directory.\n  --app <name|bundle|path>       App for get-state.\n  --tool <name>                  Computer Use tool for call mode.\n  --arguments-json <json>        JSON object arguments for call mode.\n  --steps-json <json-array>      JSON array of sequence steps.\n  --approval <mode>              ask, accept-once, or deny. Default for get-state: deny.\n  --include-image                Keep image blocks in JSON output. Default: omit.\n  --save-image <path>            Save the first returned image block to a file.\n  --max-text-chars <n>           Truncate each text block in output. Default: ${DEFAULT_MAX_TEXT_CHARS}\n  --tool-timeout-ms <ms>         Tool call timeout. Default: ${DEFAULT_TOOL_TIMEOUT_MS}\n  --startup-timeout-ms <ms>      initialize timeout. Default: ${DEFAULT_STARTUP_TIMEOUT_MS}\n  --thread-timeout-ms <ms>       thread/start timeout. Default: ${DEFAULT_THREAD_TIMEOUT_MS}\n  --shutdown-timeout-ms <ms>     app-server shutdown grace period. Default: ${DEFAULT_SHUTDOWN_TIMEOUT_MS}\n  --allow-mutating               Permit call/sequence mode to invoke non-read-only tools.\n  --pretty                       Pretty-print JSON output.\n  --quiet                        Suppress stderr event logs.\n  -h, --help                     Show this help.\n\nExit codes:\n  0  success\n  1  bridge/app-server failure\n  2  usage error\n  3  missing Codex app-server binary\n  4  timeout\n  5  child process exited unexpectedly\n\nSafety:\n  list-apps and get-state are read-only Computer Use tools, though get-state can\n  reveal screen/app contents and may launch or foreground an app. Mutating tools\n  are blocked unless --allow-mutating is explicitly passed.\n\nExamples:\n  node tools/codex-computer-use-appserver.mjs status --pretty\n  node tools/codex-computer-use-appserver.mjs list-apps --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approval accept-once --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approval accept-once --include-image --save-image .scratch/calculator.jpg\n  node tools/codex-computer-use-appserver.mjs call --tool list_apps --arguments-json '{}' --pretty\n  node tools/codex-computer-use-appserver.mjs sequence --allow-mutating --approval accept-once --steps-json '[{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}},{\"tool\":\"click\",\"arguments\":{\"app\":\"Calculator\",\"element_index\":\"17\"}},{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}}]'\n`);
+  process.stdout.write(`Codex Computer Use app-server bridge ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver.mjs status [options]\n  node tools/codex-computer-use-appserver.mjs list-apps [options]\n  node tools/codex-computer-use-appserver.mjs get-state --app <app> --approval ask|accept-once|deny [options]\n  node tools/codex-computer-use-appserver.mjs call --tool <tool> --arguments-json <json> [options]\n  node tools/codex-computer-use-appserver.mjs sequence --steps-json <json-array> [options]\n\nModes:\n  status\n      Start Codex app-server and print MCP server status. This proves the\n      app-server can discover the Computer Use MCP server and its tools.\n\n  list-apps\n      Call the read-only Computer Use list_apps tool through Codex app-server.\n      This is the safest positive service-backed regression probe.\n\n  get-state --app <app> --approval ask|accept-once|deny\n      Call the read-only get_app_state tool through Codex app-server.\n      The CLI is non-interactive; approval=ask is rejected here and is meant for\n      the pi extension wrapper, which can ask through pi UI and then pass either\n      accept-once or deny.\n\n  call --tool <tool> --arguments-json <json>\n      Generic app-server-backed tool call. By default only read-only Computer\n      Use tools are allowed. Pass --allow-mutating to call click/type/scroll/etc.\n      Do not use mutating tools without an explicit task-level safety policy.\n\n  sequence --steps-json <json-array>\n      Run multiple Computer Use tool calls in one app-server thread. Each step\n      is {\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}}.\n      Steps may include label, expectText, expectAbsentText, and allowError.\n      Use this for get_app_state -> action -> get_app_state validation.\n\nOptions:\n  --codex <path>                 Codex CLI/app-server binary.\n                                 Default: ${DEFAULT_CODEX_BIN}\n                                 Env: CODEX_BIN\n  --cwd <path>                   Thread cwd. Default: current directory.\n  --app <name|bundle|path>       App for get-state.\n  --tool <name>                  Computer Use tool for call mode.\n  --arguments-json <json>        JSON object arguments for call mode.\n  --steps-json <json-array>      JSON array of sequence steps.\n  --approval <mode>              ask, accept-once, or deny. Default for get-state: deny.\n  --include-image                Keep image blocks in JSON output. Default: omit.\n  --save-image <path>            Save the first returned image block to a file.\n  --max-text-chars <n>           Truncate each text block in output. Default: ${DEFAULT_MAX_TEXT_CHARS}\n  --tool-timeout-ms <ms>         Tool call timeout. Default: ${DEFAULT_TOOL_TIMEOUT_MS}\n  --startup-timeout-ms <ms>      initialize timeout. Default: ${DEFAULT_STARTUP_TIMEOUT_MS}\n  --thread-timeout-ms <ms>       thread/start timeout. Default: ${DEFAULT_THREAD_TIMEOUT_MS}\n  --shutdown-timeout-ms <ms>     app-server shutdown grace period. Default: ${DEFAULT_SHUTDOWN_TIMEOUT_MS}\n  --allow-mutating               Permit call/sequence mode to invoke non-read-only tools.\n  --preserve-mouse               Restore mouse cursor position after the call/sequence.\n  --pretty                       Pretty-print JSON output.\n  --quiet                        Suppress stderr event logs.\n  -h, --help                     Show this help.\n\nExit codes:\n  0  success\n  1  bridge/app-server failure\n  2  usage error\n  3  missing Codex app-server binary\n  4  timeout\n  5  child process exited unexpectedly\n\nSafety:\n  list-apps and get-state are read-only Computer Use tools, though get-state can\n  reveal screen/app contents and may launch or foreground an app. Mutating tools\n  are blocked unless --allow-mutating is explicitly passed.\n\nExamples:\n  node tools/codex-computer-use-appserver.mjs status --pretty\n  node tools/codex-computer-use-appserver.mjs list-apps --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approval accept-once --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approval accept-once --include-image --save-image .scratch/calculator.jpg\n  node tools/codex-computer-use-appserver.mjs call --tool list_apps --arguments-json '{}' --pretty\n  node tools/codex-computer-use-appserver.mjs sequence --allow-mutating --approval accept-once --steps-json '[{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}},{\"tool\":\"click\",\"arguments\":{\"app\":\"Calculator\",\"element_index\":\"17\"}},{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}}]'\n`);
 }
 function normalizeArgTokens(argv) {
   const tokens = [];
@@ -174,6 +174,7 @@ function parseArgs(argv) {
     toolTimeoutMs: DEFAULT_TOOL_TIMEOUT_MS,
     shutdownTimeoutMs: DEFAULT_SHUTDOWN_TIMEOUT_MS,
     allowMutating: false,
+    preserveMouse: false,
     pretty: false,
     quiet: false,
   };
@@ -201,6 +202,7 @@ function parseArgs(argv) {
       case '--tool-timeout-ms': opts.toolTimeoutMs = parsePositiveInt('--tool-timeout-ms', next()); break;
       case '--shutdown-timeout-ms': opts.shutdownTimeoutMs = parsePositiveInt('--shutdown-timeout-ms', next()); break;
       case '--allow-mutating': opts.allowMutating = true; break;
+      case '--preserve-mouse': opts.preserveMouse = true; break;
       case '--pretty': opts.pretty = true; break;
       case '--quiet': opts.quiet = true; break;
       default: throw new UsageError(`unknown option: ${token}`);
@@ -247,6 +249,22 @@ function truncateString(value, max) {
   if (typeof value !== 'string') return value;
   if (value.length <= max) return value;
   return `${value.slice(0, max)}…[${value.length} chars]`;
+}
+
+function getMousePosition() {
+  const script = 'import CoreGraphics; if let e = CGEvent(source: nil) { let p = e.location; print(Int(p.x), Int(p.y)) }';
+  const result = spawnSync('swift', ['-e', script], { encoding: 'utf8', timeout: 10000 });
+  if (result.status !== 0) return null;
+  const [x, y] = result.stdout.trim().split(/\s+/).map((part) => Number(part));
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+}
+
+function restoreMousePosition(position) {
+  if (!position) return false;
+  const script = `import CoreGraphics; CGWarpMouseCursorPosition(CGPoint(x: ${Math.trunc(position.x)}, y: ${Math.trunc(position.y)})); CGAssociateMouseAndMouseCursorPosition(1)`;
+  const result = spawnSync('swift', ['-e', script], { encoding: 'utf8', timeout: 10000 });
+  return result.status === 0;
 }
 
 function redactHeavyForLog(value, depth = 0) {
@@ -626,9 +644,15 @@ async function main() {
     return;
   }
   let output;
-  if (opts.mode === 'status') output = await runStatus(opts);
-  else if (opts.mode === 'sequence') output = await runSequence(opts);
-  else output = await runTool(opts);
+  const mouseBefore = opts.preserveMouse ? getMousePosition() : null;
+  try {
+    if (opts.mode === 'status') output = await runStatus(opts);
+    else if (opts.mode === 'sequence') output = await runSequence(opts);
+    else output = await runTool(opts);
+  } finally {
+    if (mouseBefore) restoreMousePosition(mouseBefore);
+  }
+  if (output && mouseBefore) output.mousePreservation = { before: mouseBefore, restored: getMousePosition() };
   writeJson(output, opts.pretty);
 }
 

@@ -497,9 +497,11 @@ the extension requires `allowMutating: true`, a concrete `safetyNote`, and UI
 confirmation. Sequence steps can include `expectText`, `expectAbsentText`, and
 `allowError` so the bridge can stop on unexpected state or tool errors.
 Pointer-based `click` steps additionally require
-`allowPointerClick: true`; prefer `perform_secondary_action` with
-`action: "Press"`, `press_key`, `set_value`, or element-targeted `scroll` when
-possible to preserve the user's mouse/system focus.
+`allowPointerClick: true`; pointer-based `drag` steps require
+`allowPointerDrag: true` and use bridge-level `--preserve-mouse` restoration.
+Prefer `perform_secondary_action` with `action: "Press"`, `press_key`,
+`set_value`, or element-targeted `scroll` when possible to preserve the user's
+mouse/system focus.
 
 ### Rerun after Codex or Computer Use updates
 

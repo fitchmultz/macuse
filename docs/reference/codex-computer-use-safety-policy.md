@@ -142,9 +142,11 @@ Prefer one guarded mutating tool surface over many always-on tools. The current
 - optional per-step `expectText` and `expectAbsentText` assertions to stop the
   sequence when state evidence does not match expectations
 - `allowMutating: true` when any step is not read-only
-- `allowPointerClick: true` for pointer-based `click` steps; prefer
+- `allowPointerClick: true` for pointer-based `click` steps and
+  `allowPointerDrag: true` for pointer-based `drag` steps; prefer
   `perform_secondary_action` with `action: "Press"`, `press_key`, `set_value`,
-  or element-targeted `scroll` when possible to preserve mouse/system focus
+  or element-targeted `scroll` when possible to preserve mouse/system focus.
+  Pointer drag/click sequences use bridge-level `--preserve-mouse` restoration.
 - a `safetyNote` that states target app, intended effect, and stop boundary
 - UI confirmation for mutating sequences
 - bridge-level refusal of mutating calls unless `--allow-mutating` is passed
