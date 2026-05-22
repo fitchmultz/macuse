@@ -34,7 +34,7 @@ Run `/reload` in pi after changing `.pi/extensions/codex-computer-use.ts`.
 
 ## Standard MCP wrapper
 
-For Cursor or another MCP-capable client, use the app-server-backed wrapper rather than raw `SkyComputerUseClient mcp`:
+For Cursor or another MCP-capable client, use the app-server-backed wrapper rather than raw `SkyComputerUseClient mcp`. See [`docs/reference/cursor-mcp-setup.md`](docs/reference/cursor-mcp-setup.md) or copy [`configs/cursor-mcp.example.json`](configs/cursor-mcp.example.json):
 
 ```json
 {

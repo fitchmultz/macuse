@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "macuse-codex-computer-use": {
+      "command": "node",
+      "args": [
+        "/Users/yourname/Projects/AI/macuse/tools/codex-computer-use-appserver-mcp.mjs"
+      ],
+      "env": {
+        "CODEX_CU_MCP_CWD": "/Users/yourname/Projects/AI/macuse"
+      }
+    }
+  }
+}
