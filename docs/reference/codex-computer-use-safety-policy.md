@@ -130,6 +130,8 @@ Separate controlled TextEdit probes were also run:
 - `/tmp/macuse-set-value-test.txt`: `set_value` on text entry element `2`,
   `get_app_state`, and `press_key super+s` produced and saved
   `macuse set value ok`.
+- `/tmp/macuse-select-test.txt`: `select_text` with prefix/suffix
+  disambiguation selected the intended text and left file contents unchanged.
 
 ## Implementation guidance
 

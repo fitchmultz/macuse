@@ -165,8 +165,8 @@ Copies also exist inside the bundled `SkyComputerUseClient.app` and
 ## Use from non-Codex harnesses
 
 Current status: read-only operation plus guarded Calculator click/key and
-controlled TextEdit scroll/type/set-value smoke tests are proven through the
-Codex app-server bridge; direct raw MCP remains useful
+controlled TextEdit scroll/type/set-value/select smoke tests are proven through
+the Codex app-server bridge; direct raw MCP remains useful
 for discovery and denial-path probes but still hangs for accepted service-backed
 calls. See
 [`codex-computer-use-external-harness.md`](./codex-computer-use-external-harness.md)
@@ -275,7 +275,7 @@ Practical limits:
   Codex thread/session/lifecycle wrapping rather than the low-level Computer Use
   service alone.
 - A guarded app-server-mediated Calculator click/key sequence and controlled
-  TextEdit scroll/type/set-value sequences are validated. The sequence path is
+  TextEdit scroll/type/set-value/select sequences are validated. The sequence path is
   exposed through `codex_cu_sequence`. Broader mutating workflows should stay
   guarded by the local safety policy and before/after `get_app_state` evidence.
 

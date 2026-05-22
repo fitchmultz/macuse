@@ -38,6 +38,7 @@ What is proven:
 - A guarded app-server sequence successfully clicked Calculator digit `1`, verified display `1`, pressed key `2`, verified display `2`, then restored the display to `0`.
 - A controlled TextEdit scroll probe against `/tmp/macuse-scroll-test.txt` returned successful `scroll down` and `scroll up` steps for scroll area element `1`; screenshot hashes changed across the sequence.
 - Controlled TextEdit probes against disposable `/tmp/macuse-type-test.txt` and `/tmp/macuse-set-value-test.txt` succeeded for `type_text` and `set_value`, with saved file contents matching the expected probe strings.
+- A controlled TextEdit selection probe against `/tmp/macuse-select-test.txt` succeeded for `select_text` with prefix/suffix disambiguation; file contents were unchanged.
 - This repository now includes both a CLI bridge and a project-local pi extension
   that expose the working app-server path, including a guarded sequence wrapper
   for mutating flows.
@@ -46,7 +47,7 @@ What is **not** proven yet:
 
 - Direct raw MCP `list_apps` / accepted `get_app_state` completing without the
   Codex app-server thread/session wrapper.
-- Drag workflows and high-stakes click/scroll/type/set-value workflows beyond the controlled Calculator/TextEdit smoke tests.
+- Drag workflows and high-stakes click/scroll/type/set-value/select workflows beyond the controlled Calculator/TextEdit smoke tests.
 - Whether the local safety policy fully covers Codex's native Computer Use task
   safeguards.
 - Whether app-server's `thread/start` + `mcpServer/tool/call` is a stable public
