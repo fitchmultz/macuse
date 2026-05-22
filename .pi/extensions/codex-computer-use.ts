@@ -173,13 +173,21 @@ function bridgeDetails(output: BridgeOutput, stderr: string, command: string[]):
 	};
 }
 
-function sequenceContent(output: BridgeOutput): ContentBlock[] {
+function sequenceContent(output: BridgeOutput, includeImages = false): ContentBlock[] {
 	if (!output.steps || output.steps.length === 0) return [{ type: "text", text: "Computer Use sequence returned no steps." }];
 	const text = output.steps.map((step) => {
 		const body = summarizeContent(step.result?.content);
 		return `Step ${step.index}: ${step.tool} (${step.durationMs}ms, isError=${step.result?.isError ?? false})\n${body}`;
 	}).join("\n\n---\n\n");
-	return [{ type: "text", text }];
+	const content: ContentBlock[] = [{ type: "text", text }];
+	if (includeImages) {
+		for (const step of output.steps) {
+			for (const block of step.result?.content || []) {
+				if (block.type === "image") content.push(block);
+			}
+		}
+	}
+	return content;
 }
 
 function hasMutatingSteps(steps: Array<{ tool: string }>): boolean {
@@ -352,7 +360,7 @@ export default function (pi: ExtensionAPI) {
 			if ((params as any).saveImagePath) args.push("--save-image", (params as any).saveImagePath);
 			const { output, stderr, command } = await runBridge(args, signal, toolTimeoutMs * steps.length + 15_000);
 			return {
-				content: sequenceContent(output),
+				content: sequenceContent(output, Boolean((params as any).includeImage)),
 				details: bridgeDetails(output, stderr, command),
 			};
 		},
