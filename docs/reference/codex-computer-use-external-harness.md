@@ -11,8 +11,8 @@ Observed metadata at refresh time: Codex host app `26.519.31651` build `3017`; C
 
 A working non-Codex path now exists through **Codex app-server**, not directly
 through the raw `SkyComputerUseClient mcp` process. Read-only calls are proven;
-a guarded Calculator click smoke test also proves at least one harmless mutating
-path works.
+a guarded Calculator click/key smoke test also proves harmless mutating paths
+work for button clicks and key presses.
 
 What is proven:
 
@@ -35,7 +35,8 @@ What is proven:
 - Through app-server, read-only `computer-use/get_app_state` for Calculator
   completed successfully and returned both accessibility-tree text and a JPEG
   screenshot block.
-- A guarded app-server sequence successfully ran `get_app_state -> click -> get_app_state` against Calculator, changed the display to `1`, then restored it to `0`.
+- A guarded app-server sequence successfully clicked Calculator digit `1`, verified display `1`, pressed key `2`, verified display `2`, then restored the display to `0`.
+- A controlled TextEdit scroll probe against `/tmp/macuse-scroll-test.txt` returned successful `scroll down` and `scroll up` steps for scroll area element `1`; screenshot hashes changed across the sequence.
 - This repository now includes both a CLI bridge and a project-local pi extension
   that expose the working app-server path, including a guarded sequence wrapper
   for mutating flows.
@@ -44,8 +45,7 @@ What is **not** proven yet:
 
 - Direct raw MCP `list_apps` / accepted `get_app_state` completing without the
   Codex app-server thread/session wrapper.
-- Broad click/type/scroll/drag/set-value workflows beyond the Calculator smoke
-  test.
+- Broad type/drag/set-value workflows and high-stakes click/scroll workflows beyond the Calculator click/key and TextEdit scroll smoke tests.
 - Whether the local safety policy fully covers Codex's native Computer Use task
   safeguards.
 - Whether app-server's `thread/start` + `mcpServer/tool/call` is a stable public
@@ -322,7 +322,8 @@ Observed results:
   text block plus one JPEG image block and saved the screenshot to disk.
 - `node tools/validate-macuse.mjs mutating` ran a guarded Calculator-only
   sequence that cleared the display, clicked digit `1`, verified display `1`,
-  cleared again, and verified display `0`.
+  pressed key `2`, verified display `2`, cleared again, and verified display
+  `0`.
 
 This proves a pi/Cursor-style integration can work today by wrapping Codex
 app-server. Mutating actions should still stay inside the guarded sequence path
@@ -582,7 +583,7 @@ The important regression signals are:
 5. App-server `get-state --app Calculator --approval accept-once` still returns
    a normal read-only accessibility tree and, when requested, an image block.
 6. `node tools/validate-macuse.mjs mutating` still completes the guarded
-   Calculator click-and-restore smoke test.
+   Calculator click/key-and-restore smoke test.
 7. Any direct raw-MCP accepted `state` probe either completes or produces enough
    JSON-RPC and macOS-log evidence to decide whether raw-MCP parity improved or
    still needs the app-server thread/session wrapper.

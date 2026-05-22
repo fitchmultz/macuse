@@ -4,7 +4,7 @@ Source: Local filesystem paths under `/Users/yourname/.codex/computer-use`, `/Us
 Author: [OpenAI](https://openai.com/)
 Posted: Not applicable; local installed app and plugin cache
 Scraped: May 22, 2026
-Refreshed: May 22, 2026 09:35 MDT after the Codex host app update, external-harness TCC probes, app-server bridge validation, and guarded Calculator click validation
+Refreshed: May 22, 2026 09:35 MDT after the Codex host app update, external-harness TCC probes, app-server bridge validation, and guarded Calculator click/key validation
 Observed install metadata at refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin still `1.0.799`; app bundle `com.openai.sky.CUAService`; notarized Developer ID app from OpenAI
 
 This system has the Codex Computer Use macOS app installed under the Codex home
@@ -164,8 +164,9 @@ Copies also exist inside the bundled `SkyComputerUseClient.app` and
 
 ## Use from non-Codex harnesses
 
-Current status: read-only operation and a guarded Calculator click smoke test
-are proven through the Codex app-server bridge; direct raw MCP remains useful
+Current status: read-only operation, a guarded Calculator click/key smoke test,
+and a controlled TextEdit scroll smoke test are proven through the Codex
+app-server bridge; direct raw MCP remains useful
 for discovery and denial-path probes but still hangs for accepted service-backed
 calls. See
 [`codex-computer-use-external-harness.md`](./codex-computer-use-external-harness.md)
@@ -273,8 +274,9 @@ Practical limits:
   probes succeeded, which means the missing direct-MCP contract is likely around
   Codex thread/session/lifecycle wrapping rather than the low-level Computer Use
   service alone.
-- A guarded app-server-mediated Calculator click sequence is validated and
-  exposed through `codex_cu_sequence`. Broader mutating workflows should stay
+- A guarded app-server-mediated Calculator click/key sequence and a controlled
+  TextEdit scroll sequence are validated. The sequence path is exposed through
+  `codex_cu_sequence`. Broader mutating workflows should stay
   guarded by the local safety policy and before/after `get_app_state` evidence.
 
 ## Related user-state paths found

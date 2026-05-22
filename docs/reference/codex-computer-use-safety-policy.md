@@ -101,13 +101,21 @@ harmless Calculator-only probe:
 4. Click digit `1` at element index `17`.
 5. Run `get_app_state` and verify display `1`.
 6. Click `All Clear` at element index `6`.
-7. Run `get_app_state` and verify display restored to `0`.
+7. Run `get_app_state` and verify display `0`.
+8. Press key `2`.
+9. Run `get_app_state` and verify display `2`.
+10. Click `All Clear` at element index `6`.
+11. Run `get_app_state` and verify display restored to `0`.
 
 Reusable command:
 
 ```bash
 node tools/validate-macuse.mjs mutating
 ```
+
+A separate controlled TextEdit scroll probe was also run against
+`/tmp/macuse-scroll-test.txt`; `scroll down` and `scroll up` on scroll area
+`element_index: "1"` returned successful results and changed screenshot hashes.
 
 ## Implementation guidance
 

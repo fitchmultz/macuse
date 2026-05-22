@@ -7,7 +7,7 @@ const DEFAULT_APP = 'Calculator';
 const DEFAULT_TIMEOUT_MS = 90_000;
 
 function help() {
-  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n\nModes:\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, run direct\n      raw-MCP discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only/denial probes: direct raw-MCP deny for\n      Finder, app-server list_apps, and app-server get_app_state for an app.\n\n  mutating\n      Run read-only plus a harmless Calculator mutation smoke test: clear,\n      click digit 1, verify display, clear, and verify restored display.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating intentionally clicks Calculator\n  buttons only and restores the display to 0.\n\nExamples:\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs read-only --app Calculator --tool-timeout-ms 120000\n`);
+  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n\nModes:\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, run direct\n      raw-MCP discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only/denial probes: direct raw-MCP deny for\n      Finder, app-server list_apps, and app-server get_app_state for an app.\n\n  mutating\n      Run read-only plus a harmless Calculator mutation smoke test: clear,\n      click digit 1, verify, press key 2, verify, clear, and verify restore.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating intentionally clicks Calculator\n  buttons/keys only and restores the display to 0.\n\nExamples:\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs read-only --app Calculator --tool-timeout-ms 120000\n`);
 }
 function parse(argv) {
   if (argv.includes('-h') || argv.includes('--help')) return { help: true };
@@ -118,6 +118,10 @@ function calculatorMutationSteps() {
     { tool: 'get_app_state', arguments: { app: 'Calculator' } },
     { tool: 'click', arguments: { app: 'Calculator', element_index: '6' } },
     { tool: 'get_app_state', arguments: { app: 'Calculator' } },
+    { tool: 'press_key', arguments: { app: 'Calculator', key: '2' } },
+    { tool: 'get_app_state', arguments: { app: 'Calculator' } },
+    { tool: 'click', arguments: { app: 'Calculator', element_index: '6' } },
+    { tool: 'get_app_state', arguments: { app: 'Calculator' } },
   ];
 }
 
@@ -178,15 +182,17 @@ async function main() {
       '--max-text-chars', '2500',
     ], { timeoutMs: opts.toolTimeoutMs + 60_000, verbose: opts.verbose }));
     requireOk('app-server Calculator mutation sequence', sequence);
-    if (sequence.steps?.length !== 7) throw new Error('Calculator mutation sequence returned unexpected step count');
+    if (sequence.steps?.length !== 11) throw new Error('Calculator mutation sequence returned unexpected step count');
     for (const step of sequence.steps) {
       if (step.result?.isError) throw new Error(`Calculator mutation step ${step.index} ${step.tool} returned isError`);
     }
     const afterOne = calculatorDisplay(sequence.steps[4]);
-    const afterRestore = calculatorDisplay(sequence.steps[6]);
-    if (afterOne !== '1') throw new Error(`Calculator mutation did not produce display 1; got ${JSON.stringify(afterOne)}`);
+    const afterKey = calculatorDisplay(sequence.steps[8]);
+    const afterRestore = calculatorDisplay(sequence.steps[10]);
+    if (afterOne !== '1') throw new Error(`Calculator click did not produce display 1; got ${JSON.stringify(afterOne)}`);
+    if (afterKey !== '2') throw new Error(`Calculator press_key did not produce display 2; got ${JSON.stringify(afterKey)}`);
     if (afterRestore !== '0') throw new Error(`Calculator restore did not produce display 0; got ${JSON.stringify(afterRestore)}`);
-    printPass('app-server Calculator click smoke', `afterOne=${afterOne}; afterRestore=${afterRestore}`);
+    printPass('app-server Calculator click/key smoke', `afterOne=${afterOne}; afterKey=${afterKey}; afterRestore=${afterRestore}`);
   }
 
   process.stdout.write(`OK ${opts.mode} validation complete.\n`);
