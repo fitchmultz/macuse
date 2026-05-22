@@ -7,12 +7,12 @@ const DEFAULT_APP = 'Calculator';
 const DEFAULT_TIMEOUT_MS = 90_000;
 
 function help() {
-  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n\nModes:\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, run direct\n      raw-MCP discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only/denial probes: direct raw-MCP deny for\n      Finder, app-server list_apps, and app-server get_app_state for an app.\n\n  mutating\n      Run read-only plus a harmless Calculator mutation smoke test: clear,\n      click digit 1, verify, press key 2, verify, clear, and verify restore.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating intentionally clicks Calculator\n  buttons/keys only and restores the display to 0.\n\nExamples:\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs read-only --app Calculator --tool-timeout-ms 120000\n`);
+  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n  node tools/validate-macuse.mjs focus [options]\n\nModes:\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, run direct\n      raw-MCP discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only/denial probes: direct raw-MCP deny for\n      Finder, app-server list_apps, and app-server get_app_state for an app.\n\n  mutating\n      Run read-only plus a harmless Calculator mutation smoke test: clear,\n      activate digit 1, verify, press key 2, verify, clear, and verify restore.\n\n  focus\n      Run mutating plus a frontmost-app preservation check. This fails if the\n      Calculator target is left frontmost after the sequence. Mouse position is\n      reported for operator review because humans may move it during the run.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating intentionally clicks Calculator\n  buttons/keys only and restores the display to 0.\n\nExamples:\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs focus\n  node tools/validate-macuse.mjs read-only --app Calculator --tool-timeout-ms 120000\n`);
 }
 function parse(argv) {
   if (argv.includes('-h') || argv.includes('--help')) return { help: true };
   const mode = argv.shift() || 'quick';
-  if (!['quick', 'read-only', 'mutating'].includes(mode)) throw new Error(`unknown mode: ${mode}`);
+  if (!['quick', 'read-only', 'mutating', 'focus'].includes(mode)) throw new Error(`unknown mode: ${mode}`);
   const opts = { mode, app: DEFAULT_APP, toolTimeoutMs: DEFAULT_TIMEOUT_MS, verbose: false };
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
@@ -97,6 +97,27 @@ function printPass(name, detail = '') {
   process.stdout.write(`PASS ${name}${detail ? ` — ${detail}` : ''}\n`);
 }
 
+function frontmostApp() {
+  const front = spawnSync('/usr/bin/lsappinfo', ['front'], { encoding: 'utf8', timeout: 5000 });
+  if (front.status !== 0 || !front.stdout.trim()) return null;
+  const asn = front.stdout.trim();
+  const bundle = spawnSync('/usr/bin/lsappinfo', ['info', '-only', 'bundleid', asn], { encoding: 'utf8', timeout: 5000 });
+  const name = spawnSync('/usr/bin/lsappinfo', ['info', '-only', 'name', asn], { encoding: 'utf8', timeout: 5000 });
+  return {
+    bundleId: (bundle.stdout.match(/="([^"]+)"/) || [])[1] || null,
+    name: (name.stdout.match(/="([^"]+)"/) || [])[1] || null,
+  };
+}
+
+function mousePosition() {
+  const script = 'import CoreGraphics; if let e = CGEvent(source: nil) { let p = e.location; print(Int(p.x), Int(p.y)) }';
+  const result = spawnSync('swift', ['-e', script], { encoding: 'utf8', timeout: 10000 });
+  if (result.status !== 0) return null;
+  const [x, y] = result.stdout.trim().split(/\s+/).map((value) => Number(value));
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+}
+
 function stepText(step) {
   return (step?.result?.content || [])
     .filter((block) => block?.type === 'text' && typeof block.text === 'string')
@@ -112,15 +133,15 @@ function calculatorDisplay(step) {
 function calculatorMutationSteps() {
   return [
     { tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { tool: 'click', arguments: { app: 'Calculator', element_index: '6' } },
+    { tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '6', action: 'Press' } },
     { tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { tool: 'click', arguments: { app: 'Calculator', element_index: '17' } },
+    { tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '17', action: 'Press' } },
     { tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { tool: 'click', arguments: { app: 'Calculator', element_index: '6' } },
+    { tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '6', action: 'Press' } },
     { tool: 'get_app_state', arguments: { app: 'Calculator' } },
     { tool: 'press_key', arguments: { app: 'Calculator', key: '2' } },
     { tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { tool: 'click', arguments: { app: 'Calculator', element_index: '6' } },
+    { tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '6', action: 'Press' } },
     { tool: 'get_app_state', arguments: { app: 'Calculator' } },
   ];
 }
@@ -131,6 +152,7 @@ async function main() {
     help();
     return;
   }
+  const focusBefore = opts.mode === 'focus' ? { frontmost: frontmostApp(), mouse: mousePosition() } : null;
   if (!existsSync('tools/probe-codex-computer-use-mcp.mjs')) throw new Error('missing tools/probe-codex-computer-use-mcp.mjs');
   if (!existsSync('tools/codex-computer-use-appserver.mjs')) throw new Error('missing tools/codex-computer-use-appserver.mjs');
 
@@ -153,7 +175,7 @@ async function main() {
   if (!computerUse) throw new Error('app-server status did not include computer-use');
   printPass('app-server status', `${computerUse.toolNames?.length || 0} tools`);
 
-  if (opts.mode === 'read-only' || opts.mode === 'mutating') {
+  if (opts.mode === 'read-only' || opts.mode === 'mutating' || opts.mode === 'focus') {
     const directDeny = run('direct raw-MCP deny', process.execPath, ['tools/probe-codex-computer-use-mcp.mjs', 'deny', '--app', 'Finder'], { timeoutMs: 120_000, verbose: opts.verbose });
     if (!directDeny.includes('"isError": true') && !directDeny.includes('approval denied')) throw new Error('direct deny did not return expected denial');
     printPass('direct raw-MCP deny', 'Finder denial path returned');
@@ -169,7 +191,7 @@ async function main() {
     printPass('app-server get_app_state', `${opts.app}; omittedImages=${state.result?.omittedImages ?? 0}`);
   }
 
-  if (opts.mode === 'mutating') {
+  if (opts.mode === 'mutating' || opts.mode === 'focus') {
     const stepsJson = JSON.stringify(calculatorMutationSteps());
     const sequence = parseJsonOutput('app-server Calculator mutation sequence', run('app-server Calculator mutation sequence', process.execPath, [
       'tools/codex-computer-use-appserver.mjs',
@@ -192,7 +214,20 @@ async function main() {
     if (afterOne !== '1') throw new Error(`Calculator click did not produce display 1; got ${JSON.stringify(afterOne)}`);
     if (afterKey !== '2') throw new Error(`Calculator press_key did not produce display 2; got ${JSON.stringify(afterKey)}`);
     if (afterRestore !== '0') throw new Error(`Calculator restore did not produce display 0; got ${JSON.stringify(afterRestore)}`);
-    printPass('app-server Calculator click/key smoke', `afterOne=${afterOne}; afterKey=${afterKey}; afterRestore=${afterRestore}`);
+    printPass('app-server Calculator action/key smoke', `afterOne=${afterOne}; afterKey=${afterKey}; afterRestore=${afterRestore}`);
+  }
+
+  if (opts.mode === 'focus') {
+    const focusAfter = { frontmost: frontmostApp(), mouse: mousePosition() };
+    const beforeBundle = focusBefore?.frontmost?.bundleId || 'unknown';
+    const afterBundle = focusAfter.frontmost?.bundleId || 'unknown';
+    if (beforeBundle !== 'com.apple.calculator' && afterBundle === 'com.apple.calculator') {
+      throw new Error(`focus preservation failed: Calculator was left frontmost; before=${beforeBundle}, after=${afterBundle}`);
+    }
+    const beforeMouse = focusBefore?.mouse ? `${focusBefore.mouse.x},${focusBefore.mouse.y}` : 'unknown';
+    const afterMouse = focusAfter.mouse ? `${focusAfter.mouse.x},${focusAfter.mouse.y}` : 'unknown';
+    printPass('frontmost app preservation', `before=${beforeBundle}; after=${afterBundle}`);
+    process.stdout.write(`INFO mouse position report — before=${beforeMouse}; after=${afterMouse}\n`);
   }
 
   process.stdout.write(`OK ${opts.mode} validation complete.\n`);

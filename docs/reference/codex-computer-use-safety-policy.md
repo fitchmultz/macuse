@@ -96,22 +96,28 @@ The first mutating validation was approved and run on May 22, 2026. It is a
 harmless Calculator-only probe:
 
 1. Run `get_app_state` for `Calculator`.
-2. Click `All Clear` at element index `6`.
+2. Activate `All Clear` at element index `6` using `perform_secondary_action` with `action: "Press"`.
 3. Run `get_app_state` and verify display `0`.
-4. Click digit `1` at element index `17`.
+4. Activate digit `1` at element index `17` using `perform_secondary_action` with `action: "Press"`.
 5. Run `get_app_state` and verify display `1`.
-6. Click `All Clear` at element index `6`.
+6. Activate `All Clear` at element index `6` using `perform_secondary_action` with `action: "Press"`.
 7. Run `get_app_state` and verify display `0`.
 8. Press key `2`.
 9. Run `get_app_state` and verify display `2`.
-10. Click `All Clear` at element index `6`.
+10. Activate `All Clear` at element index `6` using `perform_secondary_action` with `action: "Press"`.
 11. Run `get_app_state` and verify display restored to `0`.
 
-Reusable command:
+Reusable commands:
 
 ```bash
 node tools/validate-macuse.mjs mutating
+node tools/validate-macuse.mjs focus
 ```
+
+The focus validation records the frontmost app before/after the mutating probe
+and fails if Calculator is left frontmost when it was not frontmost at the start.
+Mouse coordinates are reported for operator review, not used as a hard failure,
+because the user may move the mouse during the run.
 
 Separate controlled TextEdit probes were also run:
 
@@ -132,6 +138,9 @@ Prefer one guarded mutating tool surface over many always-on tools. The current
 
 - ordered `steps`, preferably starting and ending with `get_app_state`
 - `allowMutating: true` when any step is not read-only
+- `allowPointerClick: true` for pointer-based `click` steps; prefer
+  `perform_secondary_action` with `action: "Press"`, `press_key`, `set_value`,
+  or element-targeted `scroll` when possible to preserve mouse/system focus
 - a `safetyNote` that states target app, intended effect, and stop boundary
 - UI confirmation for mutating sequences
 - bridge-level refusal of mutating calls unless `--allow-mutating` is passed

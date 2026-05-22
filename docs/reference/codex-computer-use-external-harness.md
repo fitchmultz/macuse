@@ -304,6 +304,7 @@ node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approva
 node tools/codex-computer-use-appserver.mjs get-state --app Finder --approval deny --quiet --max-text-chars 500 --pretty
 node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approval accept-once --include-image --save-image /tmp/macuse-calculator.jpg --quiet --max-text-chars 200 --pretty
 node tools/validate-macuse.mjs mutating
+node tools/validate-macuse.mjs focus
 ```
 
 Observed results:
@@ -322,9 +323,11 @@ Observed results:
 - `get-state --include-image --save-image /tmp/macuse-calculator.jpg` returned a
   text block plus one JPEG image block and saved the screenshot to disk.
 - `node tools/validate-macuse.mjs mutating` ran a guarded Calculator-only
-  sequence that cleared the display, clicked digit `1`, verified display `1`,
-  pressed key `2`, verified display `2`, cleared again, and verified display
-  `0`.
+  sequence that cleared the display, activated digit `1` using
+  `perform_secondary_action`, verified display `1`, pressed key `2`, verified
+  display `2`, cleared again, and verified display `0`.
+- `node tools/validate-macuse.mjs focus` repeated the mutating probe and passed
+  the frontmost-app preservation check: Calculator was not left frontmost.
 
 This proves a pi/Cursor-style integration can work today by wrapping Codex
 app-server. Mutating actions should still stay inside the guarded sequence path
@@ -448,6 +451,7 @@ Use it before shipping bridge or extension changes:
 node tools/validate-macuse.mjs quick
 node tools/validate-macuse.mjs read-only
 node tools/validate-macuse.mjs mutating
+node tools/validate-macuse.mjs focus
 ```
 
 The working app-server bridge is:
@@ -486,7 +490,10 @@ The pi extension wraps the app-server bridge. For `codex_cu_get_app_state`, the
 default `approval: "ask"` path uses pi UI confirmation before passing
 `accept-once` or `deny` to the bridge. For mutating `codex_cu_sequence` steps,
 the extension requires `allowMutating: true`, a concrete `safetyNote`, and UI
-confirmation.
+confirmation. Pointer-based `click` steps additionally require
+`allowPointerClick: true`; prefer `perform_secondary_action` with
+`action: "Press"`, `press_key`, `set_value`, or element-targeted `scroll` when
+possible to preserve the user's mouse/system focus.
 
 ### Rerun after Codex or Computer Use updates
 
@@ -584,8 +591,10 @@ The important regression signals are:
 5. App-server `get-state --app Calculator --approval accept-once` still returns
    a normal read-only accessibility tree and, when requested, an image block.
 6. `node tools/validate-macuse.mjs mutating` still completes the guarded
-   Calculator click/key-and-restore smoke test.
-7. Any direct raw-MCP accepted `state` probe either completes or produces enough
+   Calculator action/key-and-restore smoke test.
+7. `node tools/validate-macuse.mjs focus` still confirms Calculator is not left
+   frontmost after the mutating probe.
+8. Any direct raw-MCP accepted `state` probe either completes or produces enough
    JSON-RPC and macOS-log evidence to decide whether raw-MCP parity improved or
    still needs the app-server thread/session wrapper.
 

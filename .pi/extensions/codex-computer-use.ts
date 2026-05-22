@@ -234,7 +234,7 @@ export default function (pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use codex_cu_get_app_state for read-only inspection of a local macOS app when file, CLI, or browser tools are insufficient.",
 			"codex_cu_get_app_state can reveal visible app contents and may launch or foreground the app; keep the target app and scope explicit.",
-			"Do not use mutating Computer Use actions such as click, type, drag, scroll, key press, or set value unless the user explicitly approves a safety policy for that task.",
+			"Use codex_cu_sequence for mutating Computer Use actions, with before/after get_app_state evidence, allowMutating=true, and a concrete safetyNote.",
 		],
 		parameters: Type.Object({
 			app: Type.String({ description: "App name, full app path, or unambiguous bundle identifier, e.g. Calculator or com.apple.calculator." }),
@@ -287,6 +287,7 @@ export default function (pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use codex_cu_sequence only after codex_cu_get_app_state has identified the target app/window or when the first sequence step is get_app_state.",
 			"For mutating codex_cu_sequence steps, keep the flow narrow, include an explicit safetyNote, set allowMutating=true, and stop before purchases, sends, deletes, credential changes, account/security/privacy changes, or ambiguous windows.",
+			"Prefer perform_secondary_action with action=Press, press_key, set_value, or element-targeted scroll over pointer click when they can accomplish the same task, to preserve the user's mouse and system focus.",
 			"Prefer codex_cu_sequence over single raw mutating calls so each action can be paired with before/after get_app_state evidence.",
 		],
 		parameters: Type.Object({
@@ -296,6 +297,7 @@ export default function (pi: ExtensionAPI) {
 			}), { minItems: 1, description: "Ordered Computer Use tool calls to run in one app-server thread." }),
 			approval: approvalParam,
 			allowMutating: Type.Optional(Type.Boolean({ description: "Required when any step is not list_apps or get_app_state." })),
+			allowPointerClick: Type.Optional(Type.Boolean({ description: "Required to use the pointer-based click tool. Prefer perform_secondary_action action=Press when possible." })),
 			safetyNote: Type.Optional(Type.String({ description: "Required for mutating steps. State target app, intended effect, and stop boundary." })),
 			includeImage: Type.Optional(Type.Boolean({ description: "Attach screenshot image blocks returned by sequence steps. Default false." })),
 			saveImagePath: Type.Optional(Type.String({ description: "Optional filesystem path where the first returned screenshot should be saved." })),
@@ -309,6 +311,9 @@ export default function (pi: ExtensionAPI) {
 			}));
 			if (steps.length === 0) throw new Error("codex_cu_sequence requires at least one step.");
 			const mutating = hasMutatingSteps(steps);
+			if (steps.some((step: { tool: string }) => step.tool === "click") && !(params as any).allowPointerClick) {
+				throw new Error("codex_cu_sequence pointer click steps require allowPointerClick=true. Prefer perform_secondary_action with action=Press when possible to preserve mouse focus.");
+			}
 			if (mutating) {
 				if (!(params as any).allowMutating) {
 					throw new Error("codex_cu_sequence mutating steps require allowMutating=true.");

@@ -10,6 +10,7 @@ Run the reusable smoke suite:
 node tools/validate-macuse.mjs quick
 node tools/validate-macuse.mjs read-only
 node tools/validate-macuse.mjs mutating
+node tools/validate-macuse.mjs focus
 ```
 
 ## Working path
@@ -26,7 +27,7 @@ The project-local pi extension registers:
 
 - `codex_cu_list_apps`
 - `codex_cu_get_app_state`
-- `codex_cu_sequence` for guarded multi-step flows, including mutating steps with `allowMutating: true`, a `safetyNote`, and UI confirmation
+- `codex_cu_sequence` for guarded multi-step flows, including mutating steps with `allowMutating: true`, a `safetyNote`, and UI confirmation. Pointer `click` steps also require `allowPointerClick: true`; prefer accessibility actions/keys/values to preserve mouse focus.
 
 Run `/reload` in pi after changing `.pi/extensions/codex-computer-use.ts`.
 
