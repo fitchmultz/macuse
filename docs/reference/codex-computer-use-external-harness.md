@@ -443,6 +443,34 @@ The direct raw-MCP script only lists tools and calls read-only `list_apps` /
 `get_app_state`. It does **not** perform click/type/drag/scroll probes. Keep it
 as the discovery, elicitation, denial-path, and raw-MCP regression harness.
 
+This repository also includes an app-server-backed standard MCP wrapper for
+Cursor or other MCP-capable clients:
+
+```text
+tools/codex-computer-use-appserver-mcp.mjs
+```
+
+Example MCP config:
+
+```json
+{
+  "mcpServers": {
+    "macuse-codex-computer-use": {
+      "command": "node",
+      "args": ["/Users/yourname/Projects/AI/macuse/tools/codex-computer-use-appserver-mcp.mjs"],
+      "env": {
+        "CODEX_CU_MCP_CWD": "/Users/yourname/Projects/AI/macuse"
+      }
+    }
+  }
+}
+```
+
+The wrapper exposes the Computer Use tool family over MCP while routing execution
+through Codex app-server. It is stateful: call `get_app_state` for an app before
+mutating that app. Pointer `click` / `drag` require `allowPointer: true` and
+restore mouse position after the call.
+
 This repository also includes a validation wrapper for repeated checks:
 
 ```text
@@ -456,6 +484,7 @@ node tools/validate-macuse.mjs quick
 node tools/validate-macuse.mjs read-only
 node tools/validate-macuse.mjs mutating
 node tools/validate-macuse.mjs focus
+node tools/validate-macuse.mjs mcp
 ```
 
 The working app-server bridge is:

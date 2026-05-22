@@ -15,6 +15,7 @@ This repository records local investigation and tooling for reusing OpenAI Codex
 node tools/validate-macuse.mjs --help
 node tools/probe-codex-computer-use-mcp.mjs --help
 node tools/codex-computer-use-appserver.mjs --help
+node tools/codex-computer-use-appserver-mcp.mjs
 ```
 
 Use the validation wrapper for repeated checks:
@@ -24,6 +25,7 @@ node tools/validate-macuse.mjs quick
 node tools/validate-macuse.mjs read-only
 node tools/validate-macuse.mjs mutating
 node tools/validate-macuse.mjs focus
+node tools/validate-macuse.mjs mcp
 ```
 
 Project-local pi extension:

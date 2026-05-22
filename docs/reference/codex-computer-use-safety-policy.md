@@ -112,6 +112,7 @@ Reusable commands:
 ```bash
 node tools/validate-macuse.mjs mutating
 node tools/validate-macuse.mjs focus
+node tools/validate-macuse.mjs mcp
 ```
 
 The focus validation records the frontmost app before/after the mutating probe
@@ -150,6 +151,11 @@ Prefer one guarded mutating tool surface over many always-on tools. The current
 - a `safetyNote` that states target app, intended effect, and stop boundary
 - UI confirmation for mutating sequences
 - bridge-level refusal of mutating calls unless `--allow-mutating` is passed
+
+The app-server-backed standard MCP wrapper at
+`tools/codex-computer-use-appserver-mcp.mjs` uses the same focus policy for
+external MCP clients: pointer `click` / `drag` require `allowPointer: true`, and
+mouse position is restored after the pointer call.
 
 The wrapper should continue to refuse mutating calls unless the prompt and
 parameters make the risk boundary explicit. It should return before/after

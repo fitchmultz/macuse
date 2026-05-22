@@ -7,12 +7,12 @@ const DEFAULT_APP = 'Calculator';
 const DEFAULT_TIMEOUT_MS = 90_000;
 
 function help() {
-  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n  node tools/validate-macuse.mjs focus [options]\n\nModes:\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, run direct\n      raw-MCP discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only/denial probes: direct raw-MCP deny for\n      Finder, app-server list_apps, and app-server get_app_state for an app.\n\n  mutating\n      Run read-only plus a harmless Calculator mutation smoke test: clear,\n      activate digit 1, verify, press key 2, verify, clear, and verify restore.\n\n  focus\n      Run mutating plus a frontmost-app preservation check. This fails if the\n      Calculator target is left frontmost after the sequence. Mouse position is\n      reported for operator review because humans may move it during the run.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating intentionally clicks Calculator\n  buttons/keys only and restores the display to 0.\n\nExamples:\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs focus\n  node tools/validate-macuse.mjs read-only --app Calculator --tool-timeout-ms 120000\n`);
+  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n  node tools/validate-macuse.mjs focus [options]\n  node tools/validate-macuse.mjs mcp [options]\n\nModes:\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, run direct\n      raw-MCP discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only/denial probes: direct raw-MCP deny for\n      Finder, app-server list_apps, and app-server get_app_state for an app.\n\n  mutating\n      Run read-only plus a harmless Calculator mutation smoke test: clear,\n      activate digit 1, verify, press key 2, verify, clear, and verify restore.\n\n  focus\n      Run mutating plus a frontmost-app preservation check. This fails if the\n      Calculator target is left frontmost after the sequence. Mouse position is\n      reported for operator review because humans may move it during the run.\n\n  mcp\n      Smoke-test the Cursor/standard-MCP wrapper: initialize, tools/list,\n      get_app_state, perform_secondary_action, and restore Calculator.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating intentionally clicks Calculator\n  buttons/keys only and restores the display to 0.\n\nExamples:\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs focus\n  node tools/validate-macuse.mjs mcp\n  node tools/validate-macuse.mjs read-only --app Calculator --tool-timeout-ms 120000\n`);
 }
 function parse(argv) {
   if (argv.includes('-h') || argv.includes('--help')) return { help: true };
   const mode = argv.shift() || 'quick';
-  if (!['quick', 'read-only', 'mutating', 'focus'].includes(mode)) throw new Error(`unknown mode: ${mode}`);
+  if (!['quick', 'read-only', 'mutating', 'focus', 'mcp'].includes(mode)) throw new Error(`unknown mode: ${mode}`);
   const opts = { mode, app: DEFAULT_APP, toolTimeoutMs: DEFAULT_TIMEOUT_MS, verbose: false };
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
@@ -47,6 +47,64 @@ function run(name, command, args, opts = {}) {
   if (result.error) throw new Error(`${name} failed to start: ${result.error.message}`);
   if (result.status !== 0) throw new Error(`${name} exited ${result.status}${result.signal ? ` signal ${result.signal}` : ''}`);
   return result.stdout;
+}
+
+function runMcpServerSmoke(verbose) {
+  const script = String.raw`
+const { spawn } = require('node:child_process');
+const proc = spawn(process.execPath, ['tools/codex-computer-use-appserver-mcp.mjs'], { cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe'] });
+let nextId = 1;
+let buffer = '';
+const pending = new Map();
+function send(message) { proc.stdin.write(JSON.stringify(message) + '\n'); }
+function request(method, params = {}, timeoutMs = 120000) {
+  const id = nextId++;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error(method + ' timed out')); }, timeoutMs);
+    pending.set(id, { resolve, reject, timer });
+    send({ jsonrpc: '2.0', id, method, params });
+  });
+}
+proc.stdout.setEncoding('utf8');
+proc.stdout.on('data', (chunk) => {
+  buffer += chunk;
+  for (;;) {
+    const idx = buffer.indexOf('\n');
+    if (idx === -1) break;
+    const line = buffer.slice(0, idx).trim();
+    buffer = buffer.slice(idx + 1);
+    if (!line) continue;
+    const msg = JSON.parse(line);
+    if (pending.has(msg.id)) {
+      const p = pending.get(msg.id);
+      clearTimeout(p.timer);
+      pending.delete(msg.id);
+      if (msg.error) p.reject(new Error(msg.error.message));
+      else p.resolve(msg.result);
+    }
+  }
+});
+proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) process.stderr.write(chunk); });
+(async () => {
+  await request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'validate-macuse', version: '0' } }, 5000);
+  send({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
+  const listed = await request('tools/list', {}, 5000);
+  const names = listed.tools.map((tool) => tool.name);
+  for (const expected of ['list_apps', 'get_app_state', 'perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag']) {
+    if (!names.includes(expected)) throw new Error('missing MCP tool: ' + expected);
+  }
+  await request('tools/call', { name: 'get_app_state', arguments: { app: 'Calculator', approval: 'accept-once' } }, 120000);
+  await request('tools/call', { name: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '17', action: 'Press' } }, 120000);
+  await request('tools/call', { name: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '6', action: 'Press' } }, 120000);
+  console.log(names.join(','));
+})().then(() => { proc.kill('SIGTERM'); }).catch((error) => { proc.kill('SIGTERM'); console.error(error.stack || error.message); process.exitCode = 1; });
+`;
+  const stdout = run('appserver MCP wrapper smoke', process.execPath, ['-e', script], {
+    env: { MACUSE_VALIDATE_VERBOSE: verbose ? '1' : '' },
+    timeoutMs: 240_000,
+    verbose,
+  });
+  return stdout.trim();
 }
 
 function runPiExtensionSmoke(verbose) {
@@ -162,6 +220,9 @@ async function main() {
   run('node --check appserver', process.execPath, ['--check', 'tools/codex-computer-use-appserver.mjs'], { verbose: opts.verbose });
   printPass('node --check tools/codex-computer-use-appserver.mjs');
 
+  run('node --check appserver MCP wrapper', process.execPath, ['--check', 'tools/codex-computer-use-appserver-mcp.mjs'], { verbose: opts.verbose });
+  printPass('node --check tools/codex-computer-use-appserver-mcp.mjs');
+
   const piSmoke = runPiExtensionSmoke(opts.verbose);
   printPass('pi extension load smoke', piSmoke);
 
@@ -215,6 +276,11 @@ async function main() {
     if (afterKey !== '2') throw new Error(`Calculator press_key did not produce display 2; got ${JSON.stringify(afterKey)}`);
     if (afterRestore !== '0') throw new Error(`Calculator restore did not produce display 0; got ${JSON.stringify(afterRestore)}`);
     printPass('app-server Calculator action/key smoke', `afterOne=${afterOne}; afterKey=${afterKey}; afterRestore=${afterRestore}`);
+  }
+
+  if (opts.mode === 'mcp') {
+    const mcpSmoke = runMcpServerSmoke(opts.verbose);
+    printPass('app-server MCP wrapper smoke', mcpSmoke.split(',').length + ' tools');
   }
 
   if (opts.mode === 'focus') {

@@ -5,6 +5,7 @@ This repo investigates OpenAI Codex Computer Use reuse from non-Codex agents suc
 ## Canonical paths
 
 - Working app-server bridge: `tools/codex-computer-use-appserver.mjs`
+- Standard MCP wrapper for Cursor/non-pi clients: `tools/codex-computer-use-appserver-mcp.mjs`
 - Direct raw-MCP probe harness: `tools/probe-codex-computer-use-mcp.mjs`
 - Project-local pi extension: `.pi/extensions/codex-computer-use.ts`
 - Main findings: `docs/reference/codex-computer-use-external-harness.md`
@@ -26,6 +27,7 @@ node tools/validate-macuse.mjs quick
 node tools/validate-macuse.mjs read-only
 node tools/validate-macuse.mjs mutating
 node tools/validate-macuse.mjs focus
+node tools/validate-macuse.mjs mcp
 ```
 
 For focused checks, run the underlying commands directly:

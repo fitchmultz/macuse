@@ -11,6 +11,7 @@ node tools/validate-macuse.mjs quick
 node tools/validate-macuse.mjs read-only
 node tools/validate-macuse.mjs mutating
 node tools/validate-macuse.mjs focus
+node tools/validate-macuse.mjs mcp
 ```
 
 ## Working path
@@ -30,6 +31,26 @@ The project-local pi extension registers:
 - `codex_cu_sequence` for guarded multi-step flows, including mutating steps with `allowMutating: true`, a `safetyNote`, UI confirmation, and optional per-step `expectText` / `expectAbsentText` assertions. Pointer `click` steps also require `allowPointerClick: true`; pointer `drag` steps require `allowPointerDrag: true` and automatically restore mouse position. Prefer accessibility actions/keys/values to preserve mouse focus.
 
 Run `/reload` in pi after changing `.pi/extensions/codex-computer-use.ts`.
+
+## Standard MCP wrapper
+
+For Cursor or another MCP-capable client, use the app-server-backed wrapper rather than raw `SkyComputerUseClient mcp`:
+
+```json
+{
+  "mcpServers": {
+    "macuse-codex-computer-use": {
+      "command": "node",
+      "args": ["/Users/yourname/Projects/AI/macuse/tools/codex-computer-use-appserver-mcp.mjs"],
+      "env": {
+        "CODEX_CU_MCP_CWD": "/Users/yourname/Projects/AI/macuse"
+      }
+    }
+  }
+}
+```
+
+The wrapper exposes the Computer Use tool family over MCP while routing execution through Codex app-server. Pointer `click` / `drag` require `allowPointer: true` and restore mouse position afterward.
 
 ## Probe path
 
