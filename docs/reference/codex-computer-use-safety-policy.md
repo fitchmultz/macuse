@@ -139,6 +139,8 @@ Prefer one guarded mutating tool surface over many always-on tools. The current
 `codex_cu_sequence` wrapper requires or enforces:
 
 - ordered `steps`, preferably starting and ending with `get_app_state`
+- optional per-step `expectText` and `expectAbsentText` assertions to stop the
+  sequence when state evidence does not match expectations
 - `allowMutating: true` when any step is not read-only
 - `allowPointerClick: true` for pointer-based `click` steps; prefer
   `perform_secondary_action` with `action: "Press"`, `press_key`, `set_value`,

@@ -302,6 +302,10 @@ export default function (pi: ExtensionAPI) {
 			steps: Type.Array(Type.Object({
 				tool: Type.String({ description: "Computer Use tool name, e.g. get_app_state, click, scroll, press_key, type_text." }),
 				arguments: Type.Optional(Type.Any({ description: "Tool arguments object for this step." })),
+				label: Type.Optional(Type.String({ description: "Optional human-readable step label." })),
+				expectText: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], { description: "Text that must appear in this step's text result." })),
+				expectAbsentText: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], { description: "Text that must not appear in this step's text result." })),
+				allowError: Type.Optional(Type.Boolean({ description: "Allow this step to return isError without aborting the sequence." })),
 			}), { minItems: 1, description: "Ordered Computer Use tool calls to run in one app-server thread." }),
 			approval: approvalParam,
 			allowMutating: Type.Optional(Type.Boolean({ description: "Required when any step is not list_apps or get_app_state." })),
@@ -316,6 +320,10 @@ export default function (pi: ExtensionAPI) {
 			const steps = ((params as any).steps || []).map((step: any) => ({
 				tool: step.tool,
 				arguments: step.arguments || {},
+				label: step.label,
+				expectText: step.expectText,
+				expectAbsentText: step.expectAbsentText,
+				allowError: step.allowError,
 			}));
 			if (steps.length === 0) throw new Error("codex_cu_sequence requires at least one step.");
 			const mutating = hasMutatingSteps(steps);

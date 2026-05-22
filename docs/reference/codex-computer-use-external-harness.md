@@ -494,7 +494,9 @@ The pi extension wraps the app-server bridge. For `codex_cu_get_app_state`, the
 default `approval: "ask"` path uses pi UI confirmation before passing
 `accept-once` or `deny` to the bridge. For mutating `codex_cu_sequence` steps,
 the extension requires `allowMutating: true`, a concrete `safetyNote`, and UI
-confirmation. Pointer-based `click` steps additionally require
+confirmation. Sequence steps can include `expectText`, `expectAbsentText`, and
+`allowError` so the bridge can stop on unexpected state or tool errors.
+Pointer-based `click` steps additionally require
 `allowPointerClick: true`; prefer `perform_secondary_action` with
 `action: "Press"`, `press_key`, `set_value`, or element-targeted `scroll` when
 possible to preserve the user's mouse/system focus.
