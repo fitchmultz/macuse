@@ -94,6 +94,13 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
     if (!names.includes(expected)) throw new Error('missing MCP tool: ' + expected);
   }
   await request('tools/call', { name: 'get_app_state', arguments: { app: 'Calculator', approval: 'accept-once' } }, 120000);
+  let pointerGuarded = false;
+  try {
+    await request('tools/call', { name: 'click', arguments: { app: 'Calculator', element_index: '17' } }, 120000);
+  } catch (error) {
+    pointerGuarded = /allowPointer/.test(error.message || '');
+  }
+  if (!pointerGuarded) throw new Error('MCP wrapper did not guard pointer click without allowPointer:true');
   await request('tools/call', { name: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '17', action: 'Press' } }, 120000);
   await request('tools/call', { name: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '6', action: 'Press' } }, 120000);
   console.log(names.join(','));
