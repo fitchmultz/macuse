@@ -11,8 +11,8 @@ Observed metadata at refresh time: Codex host app `26.519.31651` build `3017`; C
 
 A working non-Codex path now exists through **Codex app-server**, not directly
 through the raw `SkyComputerUseClient mcp` process. Read-only calls are proven;
-a guarded Calculator click/key smoke test also proves harmless mutating paths
-work for button clicks and key presses.
+guarded smoke tests also prove harmless mutating paths work for button clicks,
+key presses, scrolling, typing, and set-value on controlled apps/files.
 
 What is proven:
 
@@ -37,6 +37,7 @@ What is proven:
   screenshot block.
 - A guarded app-server sequence successfully clicked Calculator digit `1`, verified display `1`, pressed key `2`, verified display `2`, then restored the display to `0`.
 - A controlled TextEdit scroll probe against `/tmp/macuse-scroll-test.txt` returned successful `scroll down` and `scroll up` steps for scroll area element `1`; screenshot hashes changed across the sequence.
+- Controlled TextEdit probes against disposable `/tmp/macuse-type-test.txt` and `/tmp/macuse-set-value-test.txt` succeeded for `type_text` and `set_value`, with saved file contents matching the expected probe strings.
 - This repository now includes both a CLI bridge and a project-local pi extension
   that expose the working app-server path, including a guarded sequence wrapper
   for mutating flows.
@@ -45,7 +46,7 @@ What is **not** proven yet:
 
 - Direct raw MCP `list_apps` / accepted `get_app_state` completing without the
   Codex app-server thread/session wrapper.
-- Broad type/drag/set-value workflows and high-stakes click/scroll workflows beyond the Calculator click/key and TextEdit scroll smoke tests.
+- Drag workflows and high-stakes click/scroll/type/set-value workflows beyond the controlled Calculator/TextEdit smoke tests.
 - Whether the local safety policy fully covers Codex's native Computer Use task
   safeguards.
 - Whether app-server's `thread/start` + `mcpServer/tool/call` is a stable public

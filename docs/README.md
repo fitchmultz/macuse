@@ -7,7 +7,7 @@ This repository records local investigation and tooling for reusing OpenAI Codex
 - Direct raw MCP (`SkyComputerUseClient mcp`) works for discovery and app-approval denial-path probes, but accepted service-backed read-only calls still hang in tested external hosts.
 - Codex app-server works as a compatibility bridge for Computer Use calls.
 - The project-local pi extension exposes standalone read-only tools (`codex_cu_list_apps`, `codex_cu_get_app_state`) and a guarded sequence tool (`codex_cu_sequence`).
-- Harmless Calculator click/key and TextEdit scroll probes have passed. Broader mutating GUI actions remain guarded by `allowMutating`, a `safetyNote`, and UI confirmation.
+- Harmless Calculator click/key and TextEdit scroll/type/set-value probes have passed. Broader mutating GUI actions remain guarded by `allowMutating`, a `safetyNote`, and UI confirmation.
 
 ## Tools
 

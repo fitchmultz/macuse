@@ -113,9 +113,17 @@ Reusable command:
 node tools/validate-macuse.mjs mutating
 ```
 
-A separate controlled TextEdit scroll probe was also run against
-`/tmp/macuse-scroll-test.txt`; `scroll down` and `scroll up` on scroll area
-`element_index: "1"` returned successful results and changed screenshot hashes.
+Separate controlled TextEdit probes were also run:
+
+- `/tmp/macuse-scroll-test.txt`: `scroll down` and `scroll up` on scroll area
+  `element_index: "1"` returned successful results and changed screenshot
+  hashes.
+- `/tmp/macuse-type-test.txt`: `click`, `press_key super+a`, `type_text`,
+  `get_app_state`, and `press_key super+s` produced and saved
+  `macuse typed text ok`.
+- `/tmp/macuse-set-value-test.txt`: `set_value` on text entry element `2`,
+  `get_app_state`, and `press_key super+s` produced and saved
+  `macuse set value ok`.
 
 ## Implementation guidance
 
