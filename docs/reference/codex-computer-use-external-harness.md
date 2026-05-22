@@ -4,13 +4,15 @@ Source: Local Codex Computer Use app/plugin files and direct MCP probes against 
 Author: [OpenAI](https://openai.com/) for the installed app/plugin; local investigation notes captured in this repository
 Posted: Not applicable; local installed app and plugin cache
 Scraped: May 22, 2026
-Refreshed: May 22, 2026 09:10 MDT
+Refreshed: May 22, 2026 09:35 MDT
 Observed metadata at refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin `1.0.799`; MCP server name `Computer Use`; MCP server version `d10a51766bb4d162ef1eed308e86a0f8f3816fb860896cb92c18e6de998142af`
 
 ## Bottom line
 
-A working read-only non-Codex path now exists, but it goes through **Codex
-app-server**, not directly through the raw `SkyComputerUseClient mcp` process.
+A working non-Codex path now exists through **Codex app-server**, not directly
+through the raw `SkyComputerUseClient mcp` process. Read-only calls are proven;
+a guarded Calculator click smoke test also proves at least one harmless mutating
+path works.
 
 What is proven:
 
@@ -33,27 +35,29 @@ What is proven:
 - Through app-server, read-only `computer-use/get_app_state` for Calculator
   completed successfully and returned both accessibility-tree text and a JPEG
   screenshot block.
+- A guarded app-server sequence successfully ran `get_app_state -> click -> get_app_state` against Calculator, changed the display to `1`, then restored it to `0`.
 - This repository now includes both a CLI bridge and a project-local pi extension
-  that expose the working read-only app-server path.
+  that expose the working app-server path, including a guarded sequence wrapper
+  for mutating flows.
 
 What is **not** proven yet:
 
 - Direct raw MCP `list_apps` / accepted `get_app_state` completing without the
   Codex app-server thread/session wrapper.
-- Click/type/scroll/drag/set-value tools completing from pi or another
-  non-Codex host.
-- A full mutating-action safety policy equivalent to Codex's native Computer Use
-  task safeguards.
+- Broad click/type/scroll/drag/set-value workflows beyond the Calculator smoke
+  test.
+- Whether the local safety policy fully covers Codex's native Computer Use task
+  safeguards.
 - Whether app-server's `thread/start` + `mcpServer/tool/call` is a stable public
   contract or an internal compatibility layer that may change with Codex app
   updates.
 
 The practical conclusion is: pi and Cursor should not recreate the low-level
 macOS automation stack. OpenAI ships that layer, and Codex app-server currently
-provides enough thread/session/lifecycle context for read-only Computer Use calls
-to work from a non-Codex harness. Treat direct raw MCP as useful for discovery
-and denial-path regression tests, but use the app-server bridge for positive
-read-only operation until raw-MCP parity is understood.
+provides enough thread/session/lifecycle context for Computer Use calls to work
+from a non-Codex harness. Treat direct raw MCP as useful for discovery and
+denial-path regression tests, but use the app-server bridge for positive
+operation until raw-MCP parity is understood.
 
 ## Current executable entrypoint
 
@@ -290,7 +294,7 @@ The host client must then:
 5. Answer any app-server `mcpServer/elicitation/request` server-to-client
    requests with an explicit `accept`, `decline`, or `cancel` response.
 
-Validated read-only app-server calls from this repo:
+Validated app-server calls from this repo:
 
 ```bash
 node tools/codex-computer-use-appserver.mjs status --quiet --pretty
@@ -298,6 +302,7 @@ node tools/codex-computer-use-appserver.mjs list-apps --quiet --max-text-chars 1
 node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approval accept-once --quiet --max-text-chars 1200 --pretty
 node tools/codex-computer-use-appserver.mjs get-state --app Finder --approval deny --quiet --max-text-chars 500 --pretty
 node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approval accept-once --include-image --save-image /tmp/macuse-calculator.jpg --quiet --max-text-chars 200 --pretty
+node tools/validate-macuse.mjs mutating
 ```
 
 Observed results:
@@ -315,11 +320,13 @@ Observed results:
   Computer Use denial text with `isError: true` instead of hanging.
 - `get-state --include-image --save-image /tmp/macuse-calculator.jpg` returned a
   text block plus one JPEG image block and saved the screenshot to disk.
+- `node tools/validate-macuse.mjs mutating` ran a guarded Calculator-only
+  sequence that cleared the display, clicked digit `1`, verified display `1`,
+  cleared again, and verified display `0`.
 
-This proves a read-only pi/Cursor-style integration can work today by wrapping
-Codex app-server. It does **not** prove mutating actions are safe or complete.
-Keep click/type/drag/scroll/set-value disabled until a task-specific safety
-policy and harmless regression probe are in place.
+This proves a pi/Cursor-style integration can work today by wrapping Codex
+app-server. Mutating actions should still stay inside the guarded sequence path
+with before/after state checks and hard stop boundaries from the safety policy.
 
 ## Codex source cross-check
 
@@ -438,6 +445,7 @@ Use it before shipping bridge or extension changes:
 ```bash
 node tools/validate-macuse.mjs quick
 node tools/validate-macuse.mjs read-only
+node tools/validate-macuse.mjs mutating
 ```
 
 The working app-server bridge is:
@@ -466,15 +474,17 @@ The project-local pi extension is:
 .pi/extensions/codex-computer-use.ts
 ```
 
-It registers two read-only pi tools:
+It registers two standalone read-only pi tools and one guarded sequence tool:
 
 - `codex_cu_list_apps`
 - `codex_cu_get_app_state`
+- `codex_cu_sequence`
 
 The pi extension wraps the app-server bridge. For `codex_cu_get_app_state`, the
 default `approval: "ask"` path uses pi UI confirmation before passing
-`accept-once` or `deny` to the bridge. The extension does not expose mutating
-Computer Use actions.
+`accept-once` or `deny` to the bridge. For mutating `codex_cu_sequence` steps,
+the extension requires `allowMutating: true`, a concrete `safetyNote`, and UI
+confirmation.
 
 ### Rerun after Codex or Computer Use updates
 
@@ -571,13 +581,15 @@ The important regression signals are:
 4. App-server `list-apps` still returns a normal read-only tool result.
 5. App-server `get-state --app Calculator --approval accept-once` still returns
    a normal read-only accessibility tree and, when requested, an image block.
-6. Any direct raw-MCP accepted `state` probe either completes or produces enough
+6. `node tools/validate-macuse.mjs mutating` still completes the guarded
+   Calculator click-and-restore smoke test.
+7. Any direct raw-MCP accepted `state` probe either completes or produces enough
    JSON-RPC and macOS-log evidence to decide whether raw-MCP parity improved or
    still needs the app-server thread/session wrapper.
 
 ## Implications for pi and Cursor agents
 
-Reusable now for read-only operation:
+Reusable now for guarded operation:
 
 - The low-level macOS app-control implementation already exists in OpenAI's
   Computer Use install.
@@ -586,19 +598,23 @@ Reusable now for read-only operation:
 - Codex app-server supplies the thread/session/lifecycle wrapper that direct raw
   MCP was missing in these probes.
 - The Codex skill and app-specific instruction files are available locally.
-- pi can load `.pi/extensions/codex-computer-use.ts` and expose read-only tools
-  backed by `tools/codex-computer-use-appserver.mjs`.
+- pi can load `.pi/extensions/codex-computer-use.ts` and expose standalone
+  read-only tools plus the guarded `codex_cu_sequence` tool backed by
+  `tools/codex-computer-use-appserver.mjs`.
+- A harmless Calculator mutating smoke test has passed through the app-server
+  sequence path.
 
-Still needed before mutating GUI operation:
+Still needed before broad mutating GUI operation:
 
-1. Adopt and enforce the draft safety policy in
+1. Keep enforcing
    [`codex-computer-use-safety-policy.md`](./codex-computer-use-safety-policy.md),
    including explicit stop boundaries for purchases, account/security/privacy
    settings, credentials, destructive actions, and wrong-window detection.
-2. A harmless mutating regression probe, such as a Calculator button click in a
-   clearly controlled state, after explicit user approval.
-3. A decision about whether mutating actions should be separate pi tools,
-   a single guarded generic tool, or remain disabled by default.
+2. Validate additional mutating tool shapes, such as scroll and text input, only
+   in controlled apps/states with before/after `get_app_state` evidence.
+3. Decide whether standalone mutating pi tools are ever worthwhile; the current
+   safer default is one guarded sequence tool rather than many always-on
+   mutating tools.
 4. A host-app permission setup story for macOS Automation/TCC. Current evidence
    shows the service checks the responsible host app, such as Repo Prompt or a
    terminal, when the MCP client sends Apple Events to `Codex Computer Use.app`.

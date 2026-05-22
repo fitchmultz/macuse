@@ -67,9 +67,8 @@ class ChildExitError extends CliError {
 }
 
 function printHelp() {
-  process.stdout.write(`Codex Computer Use app-server bridge ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver.mjs status [options]\n  node tools/codex-computer-use-appserver.mjs list-apps [options]\n  node tools/codex-computer-use-appserver.mjs get-state --app <app> --approval ask|accept-once|deny [options]\n  node tools/codex-computer-use-appserver.mjs call --tool <tool> --arguments-json <json> [options]\n\nModes:\n  status\n      Start Codex app-server and print MCP server status. This proves the\n      app-server can discover the Computer Use MCP server and its tools.\n\n  list-apps\n      Call the read-only Computer Use list_apps tool through Codex app-server.\n      This is the safest positive service-backed regression probe.\n\n  get-state --app <app> --approval ask|accept-once|deny\n      Call the read-only get_app_state tool through Codex app-server.\n      The CLI is non-interactive; approval=ask is rejected here and is meant for\n      the pi extension wrapper, which can ask through pi UI and then pass either\n      accept-once or deny.\n\n  call --tool <tool> --arguments-json <json>\n      Generic app-server-backed tool call. By default only read-only Computer\n      Use tools are allowed. Pass --allow-mutating to call click/type/scroll/etc.\n      Do not use mutating tools without an explicit task-level safety policy.\n\nOptions:\n  --codex <path>                 Codex CLI/app-server binary.\n                                 Default: ${DEFAULT_CODEX_BIN}\n                                 Env: CODEX_BIN\n  --cwd <path>                   Thread cwd. Default: current directory.\n  --app <name|bundle|path>       App for get-state.\n  --tool <name>                  Computer Use tool for call mode.\n  --arguments-json <json>        JSON object arguments for call mode.\n  --approval <mode>              ask, accept-once, or deny. Default for get-state: deny.\n  --include-image                Keep image blocks in JSON output. Default: omit.\n  --save-image <path>            Save the first returned image block to a file.\n  --max-text-chars <n>           Truncate each text block in output. Default: ${DEFAULT_MAX_TEXT_CHARS}\n  --tool-timeout-ms <ms>         Tool call timeout. Default: ${DEFAULT_TOOL_TIMEOUT_MS}\n  --startup-timeout-ms <ms>      initialize timeout. Default: ${DEFAULT_STARTUP_TIMEOUT_MS}\n  --thread-timeout-ms <ms>       thread/start timeout. Default: ${DEFAULT_THREAD_TIMEOUT_MS}\n  --shutdown-timeout-ms <ms>     app-server shutdown grace period. Default: ${DEFAULT_SHUTDOWN_TIMEOUT_MS}\n  --allow-mutating               Permit call mode to invoke non-read-only tools.\n  --pretty                       Pretty-print JSON output.\n  --quiet                        Suppress stderr event logs.\n  -h, --help                     Show this help.\n\nExit codes:\n  0  success\n  1  bridge/app-server failure\n  2  usage error\n  3  missing Codex app-server binary\n  4  timeout\n  5  child process exited unexpectedly\n\nSafety:\n  list-apps and get-state are read-only Computer Use tools, though get-state can\n  reveal screen/app contents and may launch or foreground an app. Mutating tools\n  are blocked unless --allow-mutating is explicitly passed.\n\nExamples:\n  node tools/codex-computer-use-appserver.mjs status --pretty\n  node tools/codex-computer-use-appserver.mjs list-apps --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approval accept-once --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approval accept-once --include-image --save-image .scratch/calculator.jpg\n  node tools/codex-computer-use-appserver.mjs call --tool list_apps --arguments-json '{}' --pretty\n`);
+  process.stdout.write(`Codex Computer Use app-server bridge ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver.mjs status [options]\n  node tools/codex-computer-use-appserver.mjs list-apps [options]\n  node tools/codex-computer-use-appserver.mjs get-state --app <app> --approval ask|accept-once|deny [options]\n  node tools/codex-computer-use-appserver.mjs call --tool <tool> --arguments-json <json> [options]\n  node tools/codex-computer-use-appserver.mjs sequence --steps-json <json-array> [options]\n\nModes:\n  status\n      Start Codex app-server and print MCP server status. This proves the\n      app-server can discover the Computer Use MCP server and its tools.\n\n  list-apps\n      Call the read-only Computer Use list_apps tool through Codex app-server.\n      This is the safest positive service-backed regression probe.\n\n  get-state --app <app> --approval ask|accept-once|deny\n      Call the read-only get_app_state tool through Codex app-server.\n      The CLI is non-interactive; approval=ask is rejected here and is meant for\n      the pi extension wrapper, which can ask through pi UI and then pass either\n      accept-once or deny.\n\n  call --tool <tool> --arguments-json <json>\n      Generic app-server-backed tool call. By default only read-only Computer\n      Use tools are allowed. Pass --allow-mutating to call click/type/scroll/etc.\n      Do not use mutating tools without an explicit task-level safety policy.\n\n  sequence --steps-json <json-array>\n      Run multiple Computer Use tool calls in one app-server thread. Each step\n      is {\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}}.\n      Use this for get_app_state -> action -> get_app_state validation.\n\nOptions:\n  --codex <path>                 Codex CLI/app-server binary.\n                                 Default: ${DEFAULT_CODEX_BIN}\n                                 Env: CODEX_BIN\n  --cwd <path>                   Thread cwd. Default: current directory.\n  --app <name|bundle|path>       App for get-state.\n  --tool <name>                  Computer Use tool for call mode.\n  --arguments-json <json>        JSON object arguments for call mode.\n  --steps-json <json-array>      JSON array of sequence steps.\n  --approval <mode>              ask, accept-once, or deny. Default for get-state: deny.\n  --include-image                Keep image blocks in JSON output. Default: omit.\n  --save-image <path>            Save the first returned image block to a file.\n  --max-text-chars <n>           Truncate each text block in output. Default: ${DEFAULT_MAX_TEXT_CHARS}\n  --tool-timeout-ms <ms>         Tool call timeout. Default: ${DEFAULT_TOOL_TIMEOUT_MS}\n  --startup-timeout-ms <ms>      initialize timeout. Default: ${DEFAULT_STARTUP_TIMEOUT_MS}\n  --thread-timeout-ms <ms>       thread/start timeout. Default: ${DEFAULT_THREAD_TIMEOUT_MS}\n  --shutdown-timeout-ms <ms>     app-server shutdown grace period. Default: ${DEFAULT_SHUTDOWN_TIMEOUT_MS}\n  --allow-mutating               Permit call/sequence mode to invoke non-read-only tools.\n  --pretty                       Pretty-print JSON output.\n  --quiet                        Suppress stderr event logs.\n  -h, --help                     Show this help.\n\nExit codes:\n  0  success\n  1  bridge/app-server failure\n  2  usage error\n  3  missing Codex app-server binary\n  4  timeout\n  5  child process exited unexpectedly\n\nSafety:\n  list-apps and get-state are read-only Computer Use tools, though get-state can\n  reveal screen/app contents and may launch or foreground an app. Mutating tools\n  are blocked unless --allow-mutating is explicitly passed.\n\nExamples:\n  node tools/codex-computer-use-appserver.mjs status --pretty\n  node tools/codex-computer-use-appserver.mjs list-apps --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approval accept-once --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approval accept-once --include-image --save-image .scratch/calculator.jpg\n  node tools/codex-computer-use-appserver.mjs call --tool list_apps --arguments-json '{}' --pretty\n  node tools/codex-computer-use-appserver.mjs sequence --allow-mutating --approval accept-once --steps-json '[{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}},{\"tool\":\"click\",\"arguments\":{\"app\":\"Calculator\",\"element_index\":\"17\"}},{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}}]'\n`);
 }
-
 function normalizeArgTokens(argv) {
   const tokens = [];
   for (const arg of argv) {
@@ -104,12 +103,43 @@ function parseJsonObject(name, value) {
   return parsed;
 }
 
+function parseJsonArray(name, value) {
+  if (value === undefined) throw new UsageError(`${name} requires a JSON array`);
+  let parsed;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new UsageError(`${name} must be valid JSON: ${error.message}`);
+  }
+  if (!Array.isArray(parsed)) throw new UsageError(`${name} must be a JSON array`);
+  return parsed;
+}
+
+function normalizeSequenceSteps(value) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new UsageError('--steps-json must contain at least one step');
+  }
+  return value.map((step, index) => {
+    if (!step || typeof step !== 'object' || Array.isArray(step)) {
+      throw new UsageError(`sequence step ${index} must be an object`);
+    }
+    if (typeof step.tool !== 'string' || step.tool.length === 0) {
+      throw new UsageError(`sequence step ${index} requires a non-empty tool string`);
+    }
+    const args = step.arguments ?? {};
+    if (!args || typeof args !== 'object' || Array.isArray(args)) {
+      throw new UsageError(`sequence step ${index} arguments must be a JSON object`);
+    }
+    return { tool: step.tool, arguments: args };
+  });
+}
+
 function parseArgs(argv) {
   const tokens = normalizeArgTokens(argv);
   if (tokens.includes('-h') || tokens.includes('--help')) return { help: true };
   const mode = tokens.shift();
   if (!mode) return { help: true };
-  if (!['status', 'list-apps', 'get-state', 'call'].includes(mode)) {
+  if (!['status', 'list-apps', 'get-state', 'call', 'sequence'].includes(mode)) {
     throw new UsageError(`unknown mode: ${mode}`);
   }
 
@@ -120,6 +150,7 @@ function parseArgs(argv) {
     app: undefined,
     tool: undefined,
     arguments: {},
+    steps: [],
     approval: undefined,
     includeImage: false,
     saveImage: undefined,
@@ -146,6 +177,7 @@ function parseArgs(argv) {
       case '--app': opts.app = next(); break;
       case '--tool': opts.tool = next(); break;
       case '--arguments-json': opts.arguments = parseJsonObject('--arguments-json', next()); break;
+      case '--steps-json': opts.steps = normalizeSequenceSteps(parseJsonArray('--steps-json', next())); break;
       case '--approval': opts.approval = next(); break;
       case '--include-image': opts.includeImage = true; break;
       case '--save-image': opts.saveImage = next(); break;
@@ -176,6 +208,10 @@ function parseArgs(argv) {
     if (!opts.tool) throw new UsageError('call requires --tool <tool>');
     opts.approval ??= 'deny';
   }
+  if (mode === 'sequence') {
+    if (opts.steps.length === 0) throw new UsageError('sequence requires --steps-json <json-array>');
+    opts.approval ??= 'deny';
+  }
   if (opts.approval && !['ask', 'accept-once', 'deny'].includes(opts.approval)) {
     throw new UsageError('--approval must be ask, accept-once, or deny');
   }
@@ -184,6 +220,11 @@ function parseArgs(argv) {
   }
   if (opts.tool && !READ_ONLY_TOOLS.has(opts.tool) && !opts.allowMutating) {
     throw new UsageError(`tool ${opts.tool} is not read-only; pass --allow-mutating only after explicit user approval and a safety policy`);
+  }
+  for (const [index, step] of opts.steps.entries()) {
+    if (!READ_ONLY_TOOLS.has(step.tool) && !opts.allowMutating) {
+      throw new UsageError(`sequence step ${index} tool ${step.tool} is not read-only; pass --allow-mutating only after explicit user approval and a safety policy`);
+    }
   }
   return opts;
 }
@@ -502,6 +543,33 @@ async function runTool(opts) {
   });
 }
 
+async function runSequence(opts) {
+  return runWithThread(opts, async (client, { initialized, threadStart, threadId }) => {
+    const steps = [];
+    for (const [index, step] of opts.steps.entries()) {
+      const started = Date.now();
+      const result = await client.request('mcpServer/tool/call', {
+        threadId,
+        server: 'computer-use',
+        tool: step.tool,
+        arguments: step.arguments,
+      }, opts.toolTimeoutMs);
+      steps.push({
+        index,
+        tool: step.tool,
+        arguments: step.arguments,
+        durationMs: Date.now() - started,
+        result: filterToolResult(result, opts),
+      });
+    }
+    return {
+      initialized,
+      thread: threadStart.thread,
+      steps,
+    };
+  });
+}
+
 function writeJson(value, pretty = false) {
   process.stdout.write(`${JSON.stringify(value, null, pretty ? 2 : 0)}\n`);
 }
@@ -514,6 +582,7 @@ async function main() {
   }
   let output;
   if (opts.mode === 'status') output = await runStatus(opts);
+  else if (opts.mode === 'sequence') output = await runSequence(opts);
   else output = await runTool(opts);
   writeJson(output, opts.pretty);
 }

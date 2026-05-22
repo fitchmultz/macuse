@@ -5,9 +5,9 @@ This repository records local investigation and tooling for reusing OpenAI Codex
 ## Current status
 
 - Direct raw MCP (`SkyComputerUseClient mcp`) works for discovery and app-approval denial-path probes, but accepted service-backed read-only calls still hang in tested external hosts.
-- Codex app-server works as a compatibility bridge for read-only Computer Use calls.
-- The project-local pi extension exposes read-only tools only: `codex_cu_list_apps` and `codex_cu_get_app_state`.
-- Mutating GUI actions (`click`, `type_text`, `drag`, `scroll`, `press_key`, `set_value`, etc.) are not enabled until a task-specific safety policy and harmless regression probe are approved.
+- Codex app-server works as a compatibility bridge for Computer Use calls.
+- The project-local pi extension exposes standalone read-only tools (`codex_cu_list_apps`, `codex_cu_get_app_state`) and a guarded sequence tool (`codex_cu_sequence`).
+- A harmless Calculator click regression probe has passed. Broader mutating GUI actions remain guarded by `allowMutating`, a `safetyNote`, and UI confirmation.
 
 ## Tools
 
@@ -22,6 +22,7 @@ Use the validation wrapper for repeated checks:
 ```bash
 node tools/validate-macuse.mjs quick
 node tools/validate-macuse.mjs read-only
+node tools/validate-macuse.mjs mutating
 ```
 
 Project-local pi extension:
@@ -41,5 +42,5 @@ Reload pi after adding or changing the extension:
 - [Codex Computer Use external harness investigation](reference/codex-computer-use-external-harness.md)
 - [Codex Computer Use local install](reference/codex-computer-use-local-install.md)
 - [OpenAI Codex app Computer Use docs](https://developers.openai.com/codex/app/computer-use)
-- [Non-Codex Computer Use safety policy draft](reference/codex-computer-use-safety-policy.md)
+- [Non-Codex Computer Use safety policy](reference/codex-computer-use-safety-policy.md)
 - [Bridge macOS background Computer Use reference](reference/bridge-macos-background-computer-use.md)

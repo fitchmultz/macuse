@@ -9,11 +9,13 @@ This repo investigates OpenAI Codex Computer Use reuse from non-Codex agents suc
 - Project-local pi extension: `.pi/extensions/codex-computer-use.ts`
 - Main findings: `docs/reference/codex-computer-use-external-harness.md`
 - Local install facts: `docs/reference/codex-computer-use-local-install.md`
+- Safety policy: `docs/reference/codex-computer-use-safety-policy.md`
 
 ## Safety
 
 - Read-only Computer Use probes are allowed: `list_apps` and `get_app_state`.
-- Do not run mutating GUI actions (`click`, `type_text`, `drag`, `scroll`, `press_key`, `set_value`, `select_text`, or secondary actions) without explicit user approval for that task and a stated safety policy.
+- Mutating GUI actions must use `codex_cu_sequence` or `tools/codex-computer-use-appserver.mjs sequence` with a narrow target, before/after state checks, `allowMutating: true`, and a safety note.
+- Do not perform purchases, sends, deletes, credential/account/security/privacy changes, installs, or ambiguous wrong-window actions without fresh explicit approval for that exact operation.
 - Keep direct raw-MCP probes non-mutating; use them for discovery, app-approval denial paths, and parity investigation.
 
 ## Validation commands
@@ -21,6 +23,7 @@ This repo investigates OpenAI Codex Computer Use reuse from non-Codex agents suc
 ```bash
 node tools/validate-macuse.mjs quick
 node tools/validate-macuse.mjs read-only
+node tools/validate-macuse.mjs mutating
 ```
 
 For focused checks, run the underlying commands directly:

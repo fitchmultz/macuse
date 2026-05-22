@@ -7,13 +7,12 @@ const DEFAULT_APP = 'Calculator';
 const DEFAULT_TIMEOUT_MS = 90_000;
 
 function help() {
-  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n\nModes:\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, run direct\n      raw-MCP discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only/denial probes: direct raw-MCP deny for\n      Finder, app-server list_apps, and app-server get_app_state for an app.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  -h, --help                     Show this help.\n\nSafety:\n  This script only runs syntax checks, discovery, app-approval denial,\n  list_apps, and get_app_state. It does not click, type, drag, scroll, press\n  keys, set values, or mutate GUI state. get_app_state may launch or foreground\n  the target app and can reveal visible app contents.\n\nExamples:\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs read-only --app Calculator --tool-timeout-ms 120000\n`);
+  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n\nModes:\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, run direct\n      raw-MCP discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only/denial probes: direct raw-MCP deny for\n      Finder, app-server list_apps, and app-server get_app_state for an app.\n\n  mutating\n      Run read-only plus a harmless Calculator mutation smoke test: clear,\n      click digit 1, verify display, clear, and verify restored display.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating intentionally clicks Calculator\n  buttons only and restores the display to 0.\n\nExamples:\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs read-only --app Calculator --tool-timeout-ms 120000\n`);
 }
-
 function parse(argv) {
   if (argv.includes('-h') || argv.includes('--help')) return { help: true };
   const mode = argv.shift() || 'quick';
-  if (!['quick', 'read-only'].includes(mode)) throw new Error(`unknown mode: ${mode}`);
+  if (!['quick', 'read-only', 'mutating'].includes(mode)) throw new Error(`unknown mode: ${mode}`);
   const opts = { mode, app: DEFAULT_APP, toolTimeoutMs: DEFAULT_TIMEOUT_MS, verbose: false };
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
@@ -62,7 +61,7 @@ factory({
   registerCommand() {},
   on() {},
 });
-for (const expected of ['codex_cu_list_apps', 'codex_cu_get_app_state']) {
+for (const expected of ['codex_cu_list_apps', 'codex_cu_get_app_state', 'codex_cu_sequence']) {
   if (!tools.includes(expected)) {
     throw new Error('missing extension tool: ' + expected + '; saw ' + tools.join(','));
   }
@@ -98,6 +97,30 @@ function printPass(name, detail = '') {
   process.stdout.write(`PASS ${name}${detail ? ` — ${detail}` : ''}\n`);
 }
 
+function stepText(step) {
+  return (step?.result?.content || [])
+    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text)
+    .join('\n');
+}
+
+function calculatorDisplay(step) {
+  const match = stepText(step).match(/(?:^|\n)\s*4 text\s+([^\n]+)/);
+  return match ? match[1].replace(/[\u200e\u200f]/g, '').trim() : '';
+}
+
+function calculatorMutationSteps() {
+  return [
+    { tool: 'get_app_state', arguments: { app: 'Calculator' } },
+    { tool: 'click', arguments: { app: 'Calculator', element_index: '6' } },
+    { tool: 'get_app_state', arguments: { app: 'Calculator' } },
+    { tool: 'click', arguments: { app: 'Calculator', element_index: '17' } },
+    { tool: 'get_app_state', arguments: { app: 'Calculator' } },
+    { tool: 'click', arguments: { app: 'Calculator', element_index: '6' } },
+    { tool: 'get_app_state', arguments: { app: 'Calculator' } },
+  ];
+}
+
 async function main() {
   const opts = parse(process.argv.slice(2));
   if (opts.help) {
@@ -126,7 +149,7 @@ async function main() {
   if (!computerUse) throw new Error('app-server status did not include computer-use');
   printPass('app-server status', `${computerUse.toolNames?.length || 0} tools`);
 
-  if (opts.mode === 'read-only') {
+  if (opts.mode === 'read-only' || opts.mode === 'mutating') {
     const directDeny = run('direct raw-MCP deny', process.execPath, ['tools/probe-codex-computer-use-mcp.mjs', 'deny', '--app', 'Finder'], { timeoutMs: 120_000, verbose: opts.verbose });
     if (!directDeny.includes('"isError": true') && !directDeny.includes('approval denied')) throw new Error('direct deny did not return expected denial');
     printPass('direct raw-MCP deny', 'Finder denial path returned');
@@ -140,6 +163,30 @@ async function main() {
     requireOk('app-server get-state', state);
     if (state.result?.isError) throw new Error('app-server get-state returned isError');
     printPass('app-server get_app_state', `${opts.app}; omittedImages=${state.result?.omittedImages ?? 0}`);
+  }
+
+  if (opts.mode === 'mutating') {
+    const stepsJson = JSON.stringify(calculatorMutationSteps());
+    const sequence = parseJsonOutput('app-server Calculator mutation sequence', run('app-server Calculator mutation sequence', process.execPath, [
+      'tools/codex-computer-use-appserver.mjs',
+      'sequence',
+      '--steps-json', stepsJson,
+      '--allow-mutating',
+      '--approval', 'accept-once',
+      '--quiet',
+      '--tool-timeout-ms', String(opts.toolTimeoutMs),
+      '--max-text-chars', '2500',
+    ], { timeoutMs: opts.toolTimeoutMs + 60_000, verbose: opts.verbose }));
+    requireOk('app-server Calculator mutation sequence', sequence);
+    if (sequence.steps?.length !== 7) throw new Error('Calculator mutation sequence returned unexpected step count');
+    for (const step of sequence.steps) {
+      if (step.result?.isError) throw new Error(`Calculator mutation step ${step.index} ${step.tool} returned isError`);
+    }
+    const afterOne = calculatorDisplay(sequence.steps[4]);
+    const afterRestore = calculatorDisplay(sequence.steps[6]);
+    if (afterOne !== '1') throw new Error(`Calculator mutation did not produce display 1; got ${JSON.stringify(afterOne)}`);
+    if (afterRestore !== '0') throw new Error(`Calculator restore did not produce display 0; got ${JSON.stringify(afterRestore)}`);
+    printPass('app-server Calculator click smoke', `afterOne=${afterOne}; afterRestore=${afterRestore}`);
   }
 
   process.stdout.write(`OK ${opts.mode} validation complete.\n`);

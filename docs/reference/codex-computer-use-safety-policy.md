@@ -3,7 +3,7 @@
 Source: Local policy for this `macuse` investigation, based on the installed Codex Computer Use skill, OpenAI's Computer Use docs snapshot, and local bridge behavior.
 Author: Local investigation notes
 Created: May 22, 2026
-Status: Draft for future mutating-tool enablement; read-only pi tools are already enabled
+Status: Active guardrails for the project-local pi extension; read-only tools and a guarded sequence tool are enabled
 
 ## Current allowed scope
 
@@ -13,8 +13,10 @@ Allowed today:
 - `get_app_state`
 - app-approval denial probes
 - app-server status/discovery probes
+- guarded `codex_cu_sequence` calls with explicit `allowMutating: true`, a
+  concrete `safetyNote`, and UI confirmation for mutating steps
 
-Not allowed by default:
+Not allowed as always-on standalone tools:
 
 - `click`
 - `type_text`
@@ -25,7 +27,8 @@ Not allowed by default:
 - `select_text`
 - `perform_secondary_action`
 
-The project-local pi extension intentionally exposes only read-only tools.
+The project-local pi extension exposes standalone read-only tools plus one
+guarded sequence tool. It does not expose standalone mutating tools.
 
 ## Preconditions before any mutating action
 
@@ -87,32 +90,36 @@ A non-Codex harness must:
 The current bridge uses `accept-once` or `deny`; the pi extension defaults to an
 interactive confirmation for `get_app_state`.
 
-## Minimal future mutating regression probe
+## Mutating regression probe
 
-The first mutating validation should be a harmless Calculator-only probe:
+The first mutating validation was approved and run on May 22, 2026. It is a
+harmless Calculator-only probe:
 
-1. Run `codex_cu_get_app_state` for `Calculator`.
-2. Verify the display is `0` and the expected keypad buttons are present.
-3. Click a single digit such as `1`.
-4. Run `get_app_state` again.
-5. Verify the display changed to `1`.
-6. Click `All Clear` only if needed to restore the original state.
+1. Run `get_app_state` for `Calculator`.
+2. Click `All Clear` at element index `6`.
+3. Run `get_app_state` and verify display `0`.
+4. Click digit `1` at element index `17`.
+5. Run `get_app_state` and verify display `1`.
+6. Click `All Clear` at element index `6`.
+7. Run `get_app_state` and verify display restored to `0`.
 
-Do not run this probe until the user explicitly approves mutating validation.
+Reusable command:
+
+```bash
+node tools/validate-macuse.mjs mutating
+```
 
 ## Implementation guidance
 
-Prefer one guarded mutating tool surface over many always-on tools. A future pi
-mutating wrapper should require:
+Prefer one guarded mutating tool surface over many always-on tools. The current
+`codex_cu_sequence` wrapper requires or enforces:
 
-- `app`
-- `tool`
-- `arguments`
-- `expectedCurrentState`
-- `intendedEffect`
-- `riskLevel`
-- `userApprovedMutatingAction: true`
+- ordered `steps`, preferably starting and ending with `get_app_state`
+- `allowMutating: true` when any step is not read-only
+- a `safetyNote` that states target app, intended effect, and stop boundary
+- UI confirmation for mutating sequences
+- bridge-level refusal of mutating calls unless `--allow-mutating` is passed
 
-The wrapper should refuse mutating calls unless the prompt and parameters make
-the risk boundary explicit. It should also return before/after `get_app_state`
-evidence for every mutating action.
+The wrapper should continue to refuse mutating calls unless the prompt and
+parameters make the risk boundary explicit. It should return before/after
+`get_app_state` evidence for every mutating action when practical.

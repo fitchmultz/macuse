@@ -9,11 +9,12 @@ Run the reusable smoke suite:
 ```bash
 node tools/validate-macuse.mjs quick
 node tools/validate-macuse.mjs read-only
+node tools/validate-macuse.mjs mutating
 ```
 
 ## Working path
 
-Use Codex app-server as the compatibility bridge for read-only Computer Use calls:
+Use Codex app-server as the compatibility bridge for Computer Use calls:
 
 ```bash
 node tools/codex-computer-use-appserver.mjs status --quiet --pretty
@@ -21,10 +22,11 @@ node tools/codex-computer-use-appserver.mjs list-apps --quiet --pretty
 node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approval accept-once --quiet --pretty
 ```
 
-The project-local pi extension registers read-only tools:
+The project-local pi extension registers:
 
 - `codex_cu_list_apps`
 - `codex_cu_get_app_state`
+- `codex_cu_sequence` for guarded multi-step flows, including mutating steps with `allowMutating: true`, a `safetyNote`, and UI confirmation
 
 Run `/reload` in pi after changing `.pi/extensions/codex-computer-use.ts`.
 
