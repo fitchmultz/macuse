@@ -50,7 +50,7 @@ For Cursor or another MCP-capable client, use the app-server-backed wrapper rath
 }
 ```
 
-The wrapper exposes the Computer Use tool family over MCP while routing execution through Codex app-server. Pointer `click` / `drag` require `allowPointer: true` and restore mouse position afterward.
+The wrapper exposes the Computer Use tool family over MCP while routing execution through Codex app-server. It proxies MCP `elicitation/create` app-approval prompts when the client supports elicitation. Pointer `click` / `drag` require `allowPointer: true` and restore mouse position afterward.
 
 ## Probe path
 

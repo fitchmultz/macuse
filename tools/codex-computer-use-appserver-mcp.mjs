@@ -25,7 +25,7 @@ const TOOL_SCHEMAS = {
       type: 'object', additionalProperties: false,
       properties: {
         app: { type: 'string', description: 'App name, bundle identifier, or full app path.' },
-        approval: { type: 'string', enum: ['deny', 'accept-once'], description: 'How to answer a Computer Use app-approval prompt. Default deny.' },
+        approval: { type: 'string', enum: ['ask', 'deny', 'accept-once'], description: 'How to answer a Computer Use app-approval prompt. Default ask when the client supports MCP elicitation; otherwise deny.' },
       },
       required: ['app'],
     },
@@ -118,7 +118,7 @@ function restoreMousePosition(position) {
 }
 
 class AppServerClient {
-  constructor({ codexBin, cwd }) {
+  constructor({ codexBin, cwd, elicitationHandler }) {
     this.codexBin = codexBin;
     this.cwd = cwd;
     this.proc = null;
@@ -128,6 +128,7 @@ class AppServerClient {
     this.threadId = null;
     this.currentApproval = 'deny';
     this.acceptedElicitations = 0;
+    this.elicitationHandler = elicitationHandler;
   }
 
   async ensureThread() {
@@ -176,21 +177,17 @@ class AppServerClient {
         if (msg.error) pending.reject(new Error(msg.error.message || 'app-server JSON-RPC error'));
         else pending.resolve(msg.result);
       } else if (Object.prototype.hasOwnProperty.call(msg, 'id') && msg.method) {
-        this.onServerRequest(msg);
+        void this.onServerRequest(msg);
       } else if (msg.method) {
         log('appserver.notification', { method: msg.method, params: msg.params });
       }
     }
   }
 
-  onServerRequest(request) {
+  async onServerRequest(request) {
     if (request.method === 'mcpServer/elicitation/request') {
-      let action = 'decline';
-      if (this.currentApproval === 'accept-once' && this.acceptedElicitations < 1) {
-        action = 'accept';
-        this.acceptedElicitations += 1;
-      }
-      this.write({ jsonrpc: '2.0', id: request.id, result: { action, content: action === 'accept' ? {} : null, _meta: null } });
+      const result = await this.elicitationHandler(request.params, this.currentApproval, this);
+      this.write({ jsonrpc: '2.0', id: request.id, result });
       return;
     }
     this.write({ jsonrpc: '2.0', id: request.id, error: { code: -32601, message: `not implemented: ${request.method}` } });
@@ -218,7 +215,7 @@ class AppServerClient {
 
   async callTool(tool, args = {}) {
     const threadId = await this.ensureThread();
-    this.currentApproval = args.approval || 'deny';
+    this.currentApproval = args.approval || 'ask';
     this.acceptedElicitations = 0;
     const result = await this.request('mcpServer/tool/call', { threadId, server: 'computer-use', tool, arguments: stripWrapperArgs(args) }, REQUEST_TIMEOUT_MS);
     this.currentApproval = 'deny';
@@ -237,14 +234,55 @@ function stripWrapperArgs(args) {
   return out;
 }
 
-const appServer = new AppServerClient({ codexBin: process.env.CODEX_BIN || DEFAULT_CODEX_BIN, cwd: process.env.CODEX_CU_MCP_CWD || DEFAULT_CWD });
+let clientSupportsElicitation = false;
+let clientNextId = 1;
+const clientPending = new Map();
+
+async function handleElicitation(params, mode, appServerClient) {
+  if (mode === 'accept-once' && appServerClient.acceptedElicitations < 1) {
+    appServerClient.acceptedElicitations += 1;
+    return { action: 'accept', content: {}, _meta: null };
+  }
+  if (mode === 'ask' && clientSupportsElicitation) {
+    try {
+      const response = await clientRequest('elicitation/create', {
+        _meta: params?._meta,
+        message: params?.message || 'Allow Codex Computer Use?',
+        requestedSchema: params?.requestedSchema || { type: 'object', properties: {} },
+      }, REQUEST_TIMEOUT_MS);
+      return {
+        action: response?.action || 'decline',
+        content: response?.content ?? null,
+        _meta: response?._meta ?? null,
+      };
+    } catch (error) {
+      log('client.elicitation_failed', error.message || String(error));
+    }
+  }
+  return { action: 'decline', content: null, _meta: null };
+}
+
+function clientRequest(method, params, timeoutMs = REQUEST_TIMEOUT_MS) {
+  const id = `macuse-${clientNextId++}`;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      clientPending.delete(id);
+      reject(new Error(`${method} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    clientPending.set(id, { resolve, reject, timer });
+    send({ jsonrpc: '2.0', id, method, params });
+  });
+}
+
+const appServer = new AppServerClient({ codexBin: process.env.CODEX_BIN || DEFAULT_CODEX_BIN, cwd: process.env.CODEX_CU_MCP_CWD || DEFAULT_CWD, elicitationHandler: handleElicitation });
 let stdinBuffer = '';
 
 async function handleRequest(message) {
   const { id, method, params = {} } = message;
   try {
     if (method === 'initialize') {
-      send({ jsonrpc: '2.0', id, result: { protocolVersion: params.protocolVersion || '2025-06-18', capabilities: { tools: { listChanged: false } }, serverInfo: { name: 'macuse-codex-computer-use', version: VERSION } } });
+      clientSupportsElicitation = Boolean(params?.capabilities?.elicitation);
+      send({ jsonrpc: '2.0', id, result: { protocolVersion: params.protocolVersion || '2025-06-18', capabilities: { tools: { listChanged: false }, elicitation: clientSupportsElicitation ? { form: {} } : undefined }, serverInfo: { name: 'macuse-codex-computer-use', version: VERSION } } });
       return;
     }
     if (method === 'tools/list') {
@@ -284,7 +322,15 @@ process.stdin.on('data', (chunk) => {
     if (!line) continue;
     let msg;
     try { msg = JSON.parse(line); } catch (error) { rpcError(null, -32700, `parse error: ${error.message}`); continue; }
-    if (Object.prototype.hasOwnProperty.call(msg, 'id')) void handleRequest(msg);
+    if (Object.prototype.hasOwnProperty.call(msg, 'id') && (Object.prototype.hasOwnProperty.call(msg, 'result') || Object.prototype.hasOwnProperty.call(msg, 'error')) && clientPending.has(msg.id)) {
+      const pending = clientPending.get(msg.id);
+      clearTimeout(pending.timer);
+      clientPending.delete(msg.id);
+      if (msg.error) pending.reject(new Error(msg.error.message || 'client JSON-RPC error'));
+      else pending.resolve(msg.result);
+    } else if (Object.prototype.hasOwnProperty.call(msg, 'id')) {
+      void handleRequest(msg);
+    }
   }
 });
 

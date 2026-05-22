@@ -55,6 +55,7 @@ const { spawn } = require('node:child_process');
 const proc = spawn(process.execPath, ['tools/codex-computer-use-appserver-mcp.mjs'], { cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe'] });
 let nextId = 1;
 let buffer = '';
+let sawElicitation = false;
 const pending = new Map();
 function send(message) { proc.stdin.write(JSON.stringify(message) + '\n'); }
 function request(method, params = {}, timeoutMs = 120000) {
@@ -75,6 +76,11 @@ proc.stdout.on('data', (chunk) => {
     buffer = buffer.slice(idx + 1);
     if (!line) continue;
     const msg = JSON.parse(line);
+    if (msg.method === 'elicitation/create' && msg.id) {
+      sawElicitation = true;
+      send({ jsonrpc: '2.0', id: msg.id, result: { action: 'decline', content: null } });
+      continue;
+    }
     if (pending.has(msg.id)) {
       const p = pending.get(msg.id);
       clearTimeout(p.timer);
@@ -86,13 +92,15 @@ proc.stdout.on('data', (chunk) => {
 });
 proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) process.stderr.write(chunk); });
 (async () => {
-  await request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'validate-macuse', version: '0' } }, 5000);
+  await request('initialize', { protocolVersion: '2025-06-18', capabilities: { elicitation: { form: {} } }, clientInfo: { name: 'validate-macuse', version: '0' } }, 5000);
   send({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
   const listed = await request('tools/list', {}, 5000);
   const names = listed.tools.map((tool) => tool.name);
   for (const expected of ['list_apps', 'get_app_state', 'perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag']) {
     if (!names.includes(expected)) throw new Error('missing MCP tool: ' + expected);
   }
+  const finder = await request('tools/call', { name: 'get_app_state', arguments: { app: 'Finder', approval: 'ask' } }, 120000);
+  if (!sawElicitation || finder.isError !== true) throw new Error('MCP elicitation proxy did not decline Finder as expected');
   await request('tools/call', { name: 'get_app_state', arguments: { app: 'Calculator', approval: 'accept-once' } }, 120000);
   let pointerGuarded = false;
   try {

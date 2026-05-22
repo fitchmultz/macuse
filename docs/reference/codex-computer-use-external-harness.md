@@ -467,9 +467,11 @@ Example MCP config:
 ```
 
 The wrapper exposes the Computer Use tool family over MCP while routing execution
-through Codex app-server. It is stateful: call `get_app_state` for an app before
-mutating that app. Pointer `click` / `drag` require `allowPointer: true` and
-restore mouse position after the call.
+through Codex app-server. It proxies MCP `elicitation/create` app-approval
+prompts when the client advertises elicitation support; otherwise approval mode
+`ask` falls back to decline. It is stateful: call `get_app_state` for an app
+before mutating that app. Pointer `click` / `drag` require `allowPointer: true`
+and restore mouse position after the call.
 
 This repository also includes a validation wrapper for repeated checks:
 

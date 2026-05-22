@@ -34,7 +34,7 @@ The app-server-backed path provides:
 | Element scrolling | `scroll` | `codex_cu_sequence` | `scroll` | TextEdit `/tmp/macuse-scroll-test.txt` |
 | Pointer click | `click` | guarded sequence only; `allowPointerClick` required | guarded; `allowPointer` required | Pointer guard validated; prefer `perform_secondary_action` |
 | Pointer drag | `drag` | guarded sequence only; `allowPointerDrag` required | guarded; `allowPointer` required | TextEdit drag returned success; mouse restore validated |
-| App approval prompt | Codex UI | pi UI confirmation or explicit approval arg | explicit `approval` tool arg | accept-once and deny probes |
+| App approval prompt | Codex UI | pi UI confirmation or explicit approval arg | MCP `elicitation/create` proxy when supported, explicit `approval` arg otherwise | accept-once, deny, and MCP elicitation proxy probes |
 | Direct raw MCP positive execution | internal/unknown | not used | not used | still times out, even with a live app-server thread ID |
 
 ## User-experience coverage

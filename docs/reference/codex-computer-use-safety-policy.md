@@ -153,9 +153,10 @@ Prefer one guarded mutating tool surface over many always-on tools. The current
 - bridge-level refusal of mutating calls unless `--allow-mutating` is passed
 
 The app-server-backed standard MCP wrapper at
-`tools/codex-computer-use-appserver-mcp.mjs` uses the same focus policy for
-external MCP clients: pointer `click` / `drag` require `allowPointer: true`, and
-mouse position is restored after the pointer call.
+`tools/codex-computer-use-appserver-mcp.mjs` proxies MCP `elicitation/create`
+app-approval prompts when the client advertises elicitation support. It also uses
+the same focus policy for external MCP clients: pointer `click` / `drag` require
+`allowPointer: true`, and mouse position is restored after the pointer call.
 
 The wrapper should continue to refuse mutating calls unless the prompt and
 parameters make the risk boundary explicit. It should return before/after
