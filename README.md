@@ -65,4 +65,4 @@ Direct raw-MCP accepted `list_apps` / `get_app_state` still hangs in tested exte
 
 ## Docs
 
-Start at [`docs/README.md`](docs/README.md), then see [`docs/reference/codex-computer-use-external-harness.md`](docs/reference/codex-computer-use-external-harness.md) for the latest findings and refresh commands.
+Start at [`docs/README.md`](docs/README.md), then see [`docs/reference/parity-matrix.md`](docs/reference/parity-matrix.md) and [`docs/reference/codex-computer-use-external-harness.md`](docs/reference/codex-computer-use-external-harness.md) for the latest findings and refresh commands.
