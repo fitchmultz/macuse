@@ -591,9 +591,10 @@ Reusable now for read-only operation:
 
 Still needed before mutating GUI operation:
 
-1. A local safety policy equivalent to the Codex Computer Use skill, including
-   explicit stop boundaries for purchases, account/security/privacy settings,
-   credentials, destructive actions, and wrong-window detection.
+1. Adopt and enforce the draft safety policy in
+   [`codex-computer-use-safety-policy.md`](./codex-computer-use-safety-policy.md),
+   including explicit stop boundaries for purchases, account/security/privacy
+   settings, credentials, destructive actions, and wrong-window detection.
 2. A harmless mutating regression probe, such as a Calculator button click in a
    clearly controlled state, after explicit user approval.
 3. A decision about whether mutating actions should be separate pi tools,

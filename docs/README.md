@@ -41,4 +41,5 @@ Reload pi after adding or changing the extension:
 - [Codex Computer Use external harness investigation](reference/codex-computer-use-external-harness.md)
 - [Codex Computer Use local install](reference/codex-computer-use-local-install.md)
 - [OpenAI Codex app Computer Use docs](https://developers.openai.com/codex/app/computer-use)
+- [Non-Codex Computer Use safety policy draft](reference/codex-computer-use-safety-policy.md)
 - [Bridge macOS background Computer Use reference](reference/bridge-macos-background-computer-use.md)
