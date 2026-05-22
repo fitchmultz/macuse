@@ -1,0 +1,25 @@
+{
+  "name": "macuse",
+  "version": "0.1.0",
+  "private": true,
+  "description": "External harness for reusing OpenAI Codex Computer Use from non-Codex agents.",
+  "bin": {
+    "macuse-doctor": "tools/macuse-doctor.mjs",
+    "macuse-demo": "tools/macuse-demo.mjs",
+    "macuse-config": "tools/macuse-config.mjs"
+  },
+  "scripts": {
+    "doctor": "node tools/macuse-doctor.mjs",
+    "doctor:full": "node tools/macuse-doctor.mjs --full",
+    "demo": "node tools/macuse-demo.mjs",
+    "config:cursor": "node tools/macuse-config.mjs cursor --pretty",
+    "validate": "node tools/validate-macuse.mjs quick",
+    "validate:read-only": "node tools/validate-macuse.mjs read-only",
+    "validate:mutating": "node tools/validate-macuse.mjs mutating",
+    "validate:focus": "node tools/validate-macuse.mjs focus",
+    "validate:mcp": "node tools/validate-macuse.mjs mcp"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

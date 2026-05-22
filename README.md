@@ -2,6 +2,34 @@
 
 Local tooling and notes for testing whether OpenAI Codex Computer Use can be reused from non-Codex agents such as pi.
 
+## One-command wow path
+
+Run a full live demo with receipts:
+
+```bash
+node tools/macuse-demo.mjs --out .scratch/macuse-demo
+```
+
+The demo writes:
+
+- `report.md` — human-readable proof
+- `index.html` — visual dashboard with before/during/after screenshots
+- `transcript.json` — exact command/result evidence
+- `cursor-mcp.json` — ready-to-copy MCP config
+
+Run a health audit without the demo artifacts:
+
+```bash
+node tools/macuse-doctor.mjs --out .scratch/doctor
+node tools/macuse-doctor.mjs --out .scratch/doctor-full --full
+```
+
+Generate client config for the current checkout:
+
+```bash
+node tools/macuse-config.mjs cursor --pretty
+```
+
 ## Validation
 
 Run the reusable smoke suite:
@@ -12,6 +40,15 @@ node tools/validate-macuse.mjs read-only
 node tools/validate-macuse.mjs mutating
 node tools/validate-macuse.mjs focus
 node tools/validate-macuse.mjs mcp
+```
+
+Or via npm scripts:
+
+```bash
+npm run doctor
+npm run demo
+npm run validate:focus
+npm run validate:mcp
 ```
 
 ## Working path

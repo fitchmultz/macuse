@@ -12,10 +12,13 @@ This repository records local investigation and tooling for reusing OpenAI Codex
 ## Tools
 
 ```bash
+node tools/macuse-demo.mjs --out .scratch/macuse-demo
+node tools/macuse-doctor.mjs --out .scratch/doctor
+node tools/macuse-config.mjs cursor --pretty
 node tools/validate-macuse.mjs --help
 node tools/probe-codex-computer-use-mcp.mjs --help
 node tools/codex-computer-use-appserver.mjs --help
-node tools/codex-computer-use-appserver-mcp.mjs
+node tools/codex-computer-use-appserver-mcp.mjs --help
 ```
 
 Use the validation wrapper for repeated checks:
@@ -45,6 +48,7 @@ Reload pi after adding or changing the extension:
 - [Codex Computer Use external harness investigation](reference/codex-computer-use-external-harness.md)
 - [Codex Computer Use local install](reference/codex-computer-use-local-install.md)
 - [OpenAI Codex app Computer Use docs](https://developers.openai.com/codex/app/computer-use)
+- [Doctor, demo, and config tools](reference/demo-and-doctor.md)
 - [Computer Use parity matrix](reference/parity-matrix.md)
 - [Cursor MCP setup](reference/cursor-mcp-setup.md)
 - [Non-Codex Computer Use safety policy](reference/codex-computer-use-safety-policy.md)

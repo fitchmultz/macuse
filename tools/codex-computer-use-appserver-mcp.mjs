@@ -11,6 +11,11 @@ const REQUEST_TIMEOUT_MS = Number(process.env.CODEX_CU_MCP_TIMEOUT_MS || 90_000)
 const READ_ONLY_TOOLS = new Set(['list_apps', 'get_app_state']);
 const POINTER_TOOLS = new Set(['click', 'drag']);
 
+if (process.argv.includes('-h') || process.argv.includes('--help')) {
+  process.stdout.write(`macuse Codex Computer Use MCP wrapper ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver-mcp.mjs\n\nThis is a stdio MCP server. Configure it in Cursor or another MCP client; do\nnot run it directly except for --help or syntax checks.\n\nEnvironment:\n  CODEX_BIN          Codex app-server binary. Default: ${DEFAULT_CODEX_BIN}\n  CODEX_CU_MCP_CWD  Thread cwd. Default: current working directory.\n\nGenerate client config:\n  node tools/macuse-config.mjs cursor --pretty\n\nValidate:\n  node tools/validate-macuse.mjs mcp\n`);
+  process.exit(0);
+}
+
 const TOOL_SCHEMAS = {
   list_apps: {
     name: 'list_apps',

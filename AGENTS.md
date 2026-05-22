@@ -4,6 +4,9 @@ This repo investigates OpenAI Codex Computer Use reuse from non-Codex agents suc
 
 ## Canonical paths
 
+- High-level live demo: `tools/macuse-demo.mjs`
+- Health audit: `tools/macuse-doctor.mjs`
+- Client config generator: `tools/macuse-config.mjs`
 - Working app-server bridge: `tools/codex-computer-use-appserver.mjs`
 - Standard MCP wrapper for Cursor/non-pi clients: `tools/codex-computer-use-appserver-mcp.mjs`
 - Direct raw-MCP probe harness: `tools/probe-codex-computer-use-mcp.mjs`
@@ -23,6 +26,8 @@ This repo investigates OpenAI Codex Computer Use reuse from non-Codex agents suc
 ## Validation commands
 
 ```bash
+node tools/macuse-doctor.mjs --out .scratch/doctor
+node tools/macuse-demo.mjs --out .scratch/macuse-demo
 node tools/validate-macuse.mjs quick
 node tools/validate-macuse.mjs read-only
 node tools/validate-macuse.mjs mutating

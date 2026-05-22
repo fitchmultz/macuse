@@ -12,6 +12,7 @@ execution, because raw accepted service-backed calls still hang in local probes.
 
 The app-server-backed path provides:
 
+- one-command doctor/demo/config entrypoints for operator-grade proof artifacts
 - pi extension tools for read-only state/listing and guarded sequences
 - a standard MCP wrapper for Cursor or other MCP-capable clients
 - focus-preserving defaults that prefer accessibility actions, keys, values, and
@@ -48,7 +49,8 @@ The app-server-backed path provides:
 | State assertions | Implemented | sequence steps support `expectText`, `expectAbsentText`, and `allowError` |
 | Screenshots available to agent | Implemented | `includeImage` and `saveImagePath` in bridge/pi flow; MCP wrapper returns image blocks from app-server |
 | Non-Codex MCP client support | Implemented | `tools/codex-computer-use-appserver-mcp.mjs` |
-| Durable refresh commands/docs | Implemented | `docs/reference/codex-computer-use-external-harness.md` and local install doc |
+| Durable refresh commands/docs | Implemented | `docs/reference/codex-computer-use-external-harness.md`, local install doc, and `docs/reference/demo-and-doctor.md` |
+| One-command proof artifact | Implemented | `node tools/macuse-demo.mjs --out .scratch/macuse-demo` writes Markdown, HTML, screenshots, transcript, and MCP config |
 
 ## Known gaps
 

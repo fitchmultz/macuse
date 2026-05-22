@@ -30,6 +30,13 @@ A copy is stored at:
 configs/cursor-mcp.example.json
 ```
 
+Generate a path-correct config for the current checkout:
+
+```bash
+node tools/macuse-config.mjs cursor --pretty
+node tools/macuse-config.mjs cursor --pretty --out configs/cursor-mcp.local.json
+```
+
 ## Behavior
 
 The wrapper:
