@@ -241,6 +241,9 @@ The accepted direct raw-MCP service-backed calls still did **not** complete:
 - Adding Codex-style turn metadata under `params._meta["x-codex-turn-metadata"]`
   did not make `list_apps` return.
 - Adding `_meta.threadId` did not make `list_apps` return.
+- Starting Codex app-server, creating a real ephemeral thread, keeping app-server
+  running, and then calling direct raw-MCP `list_apps` with `_meta.threadId` set
+  to that real thread ID still timed out after 45 seconds.
 - Launching the host-app bundled executable/cwd did not change behavior.
 
 Fresh macOS unified-log evidence shows at least one host-app security gate, but
@@ -528,6 +531,11 @@ app-server bridge:
 node tools/probe-codex-computer-use-mcp.mjs apps --tool-timeout-ms 90000
 node tools/probe-codex-computer-use-mcp.mjs state --app Calculator --approval accept-once --tool-timeout-ms 90000
 ```
+
+A live app-server thread ID alone is not enough for raw-MCP parity. A one-off
+probe started app-server with Computer Use features, created an ephemeral thread,
+kept app-server running, then called direct raw-MCP `list_apps` with
+`_meta.threadId` set to that real thread ID; it still timed out after 45 seconds.
 
 If the paths changed, pass the updated executable and plugin cwd explicitly:
 
