@@ -231,6 +231,13 @@ function normalizeToolArguments(args: Record<string, JsonValue>): Record<string,
 	return normalized;
 }
 
+function elementSummary(elements: ElementInfo[], limit = 40): string {
+	if (elements.length === 0) return "No cached elements for this app.";
+	const shown = elements.slice(0, limit).map((element) => element.line).join("\n");
+	const remaining = elements.length > limit ? `\n…${elements.length - limit} more elements omitted` : "";
+	return `${shown}${remaining}`;
+}
+
 function resolveElementId(args: Record<string, JsonValue>, cache: Map<string, ElementInfo[]>): Record<string, JsonValue> {
 	const normalized = normalizeToolArguments(args);
 	const elementId = normalized.elementId ?? normalized.element_id;
@@ -240,7 +247,7 @@ function resolveElementId(args: Record<string, JsonValue>, cache: Map<string, El
 	const match = elements.find((element) => element.id === elementId);
 	if (!match) {
 		const knownIds = elements.map((element) => element.id).filter(Boolean).join(", ");
-		throw new Error(`No elementId ${elementId} found for ${normalized.app}. Refresh with get_app_state first.${knownIds ? ` Known IDs: ${knownIds}` : ""}`);
+		throw new Error(`No elementId ${elementId} found for ${normalized.app}.${knownIds ? ` Known IDs: ${knownIds}.` : ""}\nAvailable elements:\n${elementSummary(elements)}`);
 	}
 	normalized.element_index = match.index;
 	delete normalized.elementId;
@@ -254,15 +261,44 @@ function updateElementCache(cache: Map<string, ElementInfo[]>, app: JsonValue | 
 	if (elements.length > 0) cache.set(app, elements);
 }
 
+function appendText(result: FilteredToolResult, text: string): void {
+	result.content = [...result.content, { type: "text", text }];
+}
+
 function enrichActionError(result: FilteredToolResult, args: Record<string, JsonValue>, cache: Map<string, ElementInfo[]>): void {
 	if (!result.isError || typeof args.app !== "string" || typeof args.element_index !== "string") return;
 	const element = (cache.get(args.app) ?? []).find((item) => item.index === args.element_index);
 	if (!element) return;
 	const actions = element.secondaryActions.length > 0 ? element.secondaryActions.join(", ") : "none listed";
-	result.content = result.content.map((block) => {
+	appendText(result, `Target element ${element.index}: ${element.line}\nValid secondary actions: ${actions}`);
+}
+
+function filterAppListContent(content: ContentBlock[], opts: { runningOnly?: boolean; filter?: string; maxTextChars: number }): ContentBlock[] {
+	return content.map((block) => {
 		if (block.type !== "text" || typeof (block as any).text !== "string") return block;
-		return { ...block, text: `${(block as any).text}\n\nTarget element ${element.index}: ${element.line}\nValid secondary actions: ${actions}` };
+		let lines = (block as any).text.split("\n").filter(Boolean);
+		if (opts.runningOnly) lines = lines.filter((line: string) => /\[(?:[^\]]*,\s*)?(?:frontmost,\s*)?running(?:[,\]])/.test(line) || line.includes("[frontmost, running"));
+		if (opts.filter) {
+			const needle = opts.filter.toLowerCase();
+			lines = lines.filter((line: string) => line.toLowerCase().includes(needle));
+		}
+		const text = lines.join("\n") || "No apps matched the requested filter.";
+		return { ...block, text: truncateString(text, opts.maxTextChars) };
 	});
+}
+
+function failureResult(message: string, maxTextChars: number): FilteredToolResult {
+	return {
+		content: [{ type: "text", text: truncateString(message, maxTextChars) }],
+		isError: true,
+		meta: null,
+		omittedImages: 0,
+		savedImagePath: null,
+	};
+}
+
+function errorMessage(error: unknown): string {
+	return error instanceof Error ? error.message : String(error);
 }
 
 function bridgeDetails(base: Record<string, unknown>, stderrTail: string): Record<string, unknown> {
@@ -627,13 +663,15 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "codex_cu_list_apps",
 		label: "Codex CU List Apps",
-		description: "Read-only: list apps known to OpenAI Codex Computer Use through a persistent Codex app-server session.",
+		description: "Read-only: list apps known to OpenAI Codex Computer Use through a persistent Codex app-server session. Use runningOnly:true to return only currently running apps, and filter to substring-match app names, paths, or bundle IDs.",
 		promptSnippet: "List local macOS apps available to Codex Computer Use.",
 		promptGuidelines: [
 			"Use codex_cu_list_apps to discover the exact app name, bundle ID, or path before using codex_cu_get_app_state.",
 			"codex_cu_list_apps is read-only; it does not click, type, drag, scroll, or mutate GUI state.",
 		],
 		parameters: Type.Object({
+			runningOnly: Type.Optional(Type.Boolean({ description: "Return only currently running apps. Default false." })),
+			filter: Type.Optional(Type.String({ description: "Optional case-insensitive substring filter across each app list line." })),
 			maxTextChars: maxTextParam,
 			toolTimeoutMs: timeoutParam,
 		}),
@@ -643,13 +681,16 @@ export default function (pi: ExtensionAPI) {
 			const maxTextChars = asInt((params as any).maxTextChars, DEFAULT_MAX_TEXT_CHARS);
 			const call = await client.callTool("list_apps", {}, { approval: "inherit", timeoutMs: toolTimeoutMs, signal });
 			const result = filterToolResult(call.result, { maxTextChars });
+			const outputContent = filterAppListContent(result.content, { runningOnly: Boolean((params as any).runningOnly), filter: (params as any).filter, maxTextChars });
 			return {
-				content: result.content,
+				content: outputContent,
 				details: bridgeDetails({
 					tool: "list_apps",
 					threadId: client.status().threadId,
 					isError: result.isError,
 					omittedImages: result.omittedImages,
+					runningOnly: Boolean((params as any).runningOnly),
+					filter: (params as any).filter ?? null,
 					acceptedElicitations: call.acceptedElicitations,
 					elicitationCount: call.elicitationCount,
 					durationMs: call.durationMs,
@@ -720,11 +761,12 @@ export default function (pi: ExtensionAPI) {
 			"For mutating codex_cu_sequence steps, keep the flow narrow, include an explicit safetyNote, set allowMutating=true, and stop before purchases, sends, deletes, credential changes, account/security/privacy changes, or ambiguous windows.",
 			"App approval defaults to inherit, matching Codex's Any App setting by auto-accepting app approvals.",
 			"Prefer perform_secondary_action with action=Press, press_key, set_value, select_text, or element-targeted scroll over pointer click when possible to preserve mouse/system focus.",
+			"press_key uses xdotool-style key names. Examples: '5', 'Return', 'Escape', 'Tab', 'space', 'plus', 'minus', 'equal', 'ctrl+c'. For text entry, prefer type_text unless a real key event is required.",
 			"For element targeting, prefer stable elementId values from get_app_state when present. Otherwise pass element_index as a string; numeric element_index and element aliases are coerced for convenience.",
 		],
 		parameters: Type.Object({
 			steps: Type.Array(Type.Object({
-				tool: Type.String({ description: "Computer Use tool name: list_apps, get_app_state, perform_secondary_action, press_key, type_text, set_value, select_text, scroll, click, or drag." }),
+				tool: Type.String({ description: "Computer Use tool name: list_apps, get_app_state, perform_secondary_action, press_key, type_text, set_value, select_text, scroll, click, or drag. press_key keys use xdotool-style names such as '5', 'Return', 'Escape', 'plus', 'minus', 'equal', or 'ctrl+c'." }),
 				arguments: Type.Optional(Type.Any({ description: "Tool arguments object. Element-targeted tools accept element_index as string or number, element as an alias, or elementId/element_id resolved from the latest get_app_state tree for that app." })),
 				label: Type.Optional(Type.String({ description: "Optional human-readable step label." })),
 				expectText: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], { description: "Text that must appear in this step's text result." })),
@@ -766,34 +808,77 @@ export default function (pi: ExtensionAPI) {
 			const mouseBefore = hasPointerClick || hasPointerDrag ? getMousePosition() : null;
 			const results: SequencedResult[] = [];
 			const elementCache = new Map(sessionElementCache);
+			let failed: { index: number; tool: string; message: string } | null = null;
+			let implicitRefreshes = 0;
 			try {
 				for (const [index, step] of steps.entries()) {
-					const stepArgs = resolveElementId(step.arguments, elementCache);
-					const call = await client.callTool(step.tool, stepArgs, { approval, timeoutMs: toolTimeoutMs, signal });
-					const filtered = filterToolResult(call.result, {
-						includeImage: Boolean((params as any).includeImage),
-						saveImagePath: index === 0 ? (params as any).saveImagePath : undefined,
-						maxTextChars,
-					});
-					updateElementCache(elementCache, stepArgs.app, filtered.content);
-					updateElementCache(sessionElementCache, stepArgs.app, filtered.content);
-					enrichActionError(filtered, stepArgs, elementCache);
-					const row: SequencedResult = {
-						index,
-						label: step.label,
-						tool: step.tool,
-						arguments: stepArgs,
-						durationMs: call.durationMs,
-						result: filtered,
-						expectText: step.expectText,
-						expectAbsentText: step.expectAbsentText,
-						allowError: step.allowError,
-						acceptedElicitations: call.acceptedElicitations,
-						elicitationCount: call.elicitationCount,
-					};
-					validateStepResult(row);
-					if (detail === "compact") row.result.content = compactContent(row.result.content);
-					results.push(row);
+					let stepArgs = normalizeToolArguments(step.arguments);
+					try {
+						const elementId = stepArgs.elementId ?? stepArgs.element_id;
+						if (typeof elementId === "string" && stepArgs.element_index === undefined && typeof stepArgs.app === "string") {
+							try {
+								stepArgs = resolveElementId(stepArgs, elementCache);
+							} catch {
+								const refresh = await client.callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
+								const refreshed = filterToolResult(refresh.result, { maxTextChars });
+								updateElementCache(elementCache, stepArgs.app, refreshed.content);
+								updateElementCache(sessionElementCache, stepArgs.app, refreshed.content);
+								implicitRefreshes += 1;
+								stepArgs = resolveElementId(stepArgs, elementCache);
+							}
+						} else {
+							stepArgs = resolveElementId(stepArgs, elementCache);
+						}
+						const call = await client.callTool(step.tool, stepArgs, { approval, timeoutMs: toolTimeoutMs, signal });
+						const filtered = filterToolResult(call.result, {
+							includeImage: Boolean((params as any).includeImage),
+							saveImagePath: index === 0 ? (params as any).saveImagePath : undefined,
+							maxTextChars,
+						});
+						updateElementCache(elementCache, stepArgs.app, filtered.content);
+						updateElementCache(sessionElementCache, stepArgs.app, filtered.content);
+						enrichActionError(filtered, stepArgs, elementCache);
+						const row: SequencedResult = {
+							index,
+							label: step.label,
+							tool: step.tool,
+							arguments: stepArgs,
+							durationMs: call.durationMs,
+							result: filtered,
+							expectText: step.expectText,
+							expectAbsentText: step.expectAbsentText,
+							allowError: step.allowError,
+							acceptedElicitations: call.acceptedElicitations,
+							elicitationCount: call.elicitationCount,
+						};
+						try {
+							validateStepResult(row);
+						} catch (error) {
+							row.result.isError = true;
+							appendText(row.result, `Sequence stopped: ${errorMessage(error)}`);
+							failed = { index, tool: step.tool, message: errorMessage(error) };
+						}
+						if (detail === "compact") row.result.content = compactContent(row.result.content);
+						results.push(row);
+						if (failed) break;
+					} catch (error) {
+						const message = errorMessage(error);
+						failed = { index, tool: step.tool, message };
+						results.push({
+							index,
+							label: step.label,
+							tool: step.tool,
+							arguments: stepArgs,
+							durationMs: 0,
+							result: failureResult(`Sequence stopped before completing step ${index} (${step.tool}):\n${message}`, maxTextChars),
+							expectText: step.expectText,
+							expectAbsentText: step.expectAbsentText,
+							allowError: step.allowError,
+							acceptedElicitations: 0,
+							elicitationCount: 0,
+						});
+						break;
+					}
 				}
 			} finally {
 				if (mouseBefore) restoreMousePosition(mouseBefore);
@@ -805,6 +890,8 @@ export default function (pi: ExtensionAPI) {
 					tool: "sequence",
 					threadId: client.status().threadId,
 					detail,
+					failed,
+					implicitRefreshes,
 					steps: results.map((step) => ({
 						index: step.index,
 						tool: step.tool,

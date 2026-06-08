@@ -140,9 +140,11 @@ persistent `codex_cu_sequence` wrapper requires or enforces:
 - ordered `steps`, preferably starting and ending with `get_app_state`
 - element-targeted tools accept `element_index` as a string or number, `element`
   as an alias, or `elementId` / `element_id` resolved from the latest tree for
-  the app; prefer stable IDs when available because numeric indices can shift
+  the app; prefer stable IDs when available because numeric indices can shift,
+  and use failed elementId fallback hints when IDs are absent or stale
 - optional per-step `expectText` and `expectAbsentText` assertions to stop the
-  sequence when state evidence does not match expectations
+  sequence when state evidence does not match expectations; stopped sequences
+  return completed step evidence plus the failed-step diagnostic
 - `allowMutating: true` when any step is not read-only
 - `allowPointerClick: true` for pointer-based `click` steps and
   `allowPointerDrag: true` for pointer-based `drag` steps; prefer

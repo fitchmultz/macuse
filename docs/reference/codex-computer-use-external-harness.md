@@ -534,13 +534,18 @@ extension can stop on unexpected state or tool errors. Sequence output defaults
 to `detail: "compact"`; use `detail: "full"` when every raw tree is needed.
 Element-targeted tools accept `element_index` as a string or number, `element`
 as an alias, or `elementId` / `element_id` resolved from the latest
-`get_app_state` tree for that app.
+`get_app_state` tree for that app. Failed elementId lookups return available
+`element_index` lines so the agent can fall back without a separate state call.
+If a sequence fails after it starts, the result includes all completed steps plus
+a failed-step diagnostic instead of discarding partial evidence.
 Pointer-based `click` steps additionally require
 `allowPointerClick: true`; pointer-based `drag` steps require
 `allowPointerDrag: true` and use extension-level mouse restoration.
 Prefer `perform_secondary_action` with `action: "Press"`, `press_key`,
 `set_value`, or element-targeted `scroll` when possible to preserve the user's
-mouse/system focus.
+mouse/system focus. `press_key` uses xdotool-style key names, such as `5`,
+`Return`, `Escape`, `plus`, `minus`, `equal`, and `ctrl+c`; prefer `type_text`
+for literal text entry.
 
 ### Rerun after Codex or Computer Use updates
 
