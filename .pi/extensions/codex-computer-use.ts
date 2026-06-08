@@ -48,6 +48,7 @@ type DetailMode = "compact" | "full";
 type ElementInfo = {
 	index: string;
 	id?: string;
+	description?: string;
 	line: string;
 	secondaryActions: string[];
 };
@@ -187,25 +188,40 @@ function parseElementInfo(text: string): ElementInfo[] {
 		if (!match) continue;
 		const line = match[0].trim();
 		const id = line.match(/(?:^|[\s,])ID:\s*([^,\n]+)/)?.[1]?.trim();
+		const explicitDescription = line.match(/Description:\s*([^,\n]+)/)?.[1]?.trim();
+		const buttonLabel = line.match(/^\d+\s+button\s+([^,]+?)(?:,\s|$)/)?.[1]?.trim();
+		const description = explicitDescription ?? (buttonLabel && !buttonLabel.startsWith("Description:") ? buttonLabel : undefined);
 		const secondaryActions = line.match(/Secondary Actions:\s*([^\n]+)/)?.[1]
 			?.split(",")
 			.map((item) => item.trim())
 			.filter(Boolean) ?? [];
-		elements.push({ index: match[1], id, line, secondaryActions });
+		elements.push({ index: match[1], id, description, line, secondaryActions });
 	}
 	return elements;
+}
+
+function isInteractiveElement(element: ElementInfo): boolean {
+	return Boolean(element.id) ||
+		element.secondaryActions.length > 0 ||
+		/\b(button|text entry area|text field|edit field|field|menu|menu item|row|checkbox|radio|slider|scroll area|combo box|tab|link)\b/i.test(element.line) ||
+		/\btext\s+‎/.test(element.line);
+}
+
+function elementStabilityNote(text: string): string | null {
+	const interactive = parseElementInfo(text).filter(isInteractiveElement);
+	if (interactive.length === 0) return null;
+	const withoutIds = interactive.filter((element) => !element.id).length;
+	if (withoutIds === 0) return null;
+	return `Note: ${withoutIds} of ${interactive.length} interactive elements lack stable IDs. Prefer elementId when present, press_key/type_text when practical, or re-snapshot before using element_index after mutations.`;
 }
 
 function compactText(text: string): string {
 	const lines = text.split("\n");
 	const header = lines.filter((line) => /^(Computer Use state|<app_state>|App=|Window:)/.test(line.trim())).slice(0, 4);
-	const interactive = parseElementInfo(text).filter((element) =>
-		/\b(button|text|field|menu|row|checkbox|radio|slider|scroll area|combo box|tab|link)\b/i.test(element.line) ||
-		element.secondaryActions.length > 0 ||
-		Boolean(element.id),
-	);
+	const interactive = parseElementInfo(text).filter(isInteractiveElement);
+	const note = elementStabilityNote(text);
 	const body = interactive.map((element) => element.line);
-	return [...header, ...body].join("\n") || truncateString(text, DEFAULT_MAX_TEXT_CHARS);
+	return [...header, ...body, ...(note ? [note] : [])].join("\n") || truncateString(text, DEFAULT_MAX_TEXT_CHARS);
 }
 
 function compactContent(content: ContentBlock[]): ContentBlock[] {
@@ -213,6 +229,11 @@ function compactContent(content: ContentBlock[]): ContentBlock[] {
 		if (block.type === "text" && typeof (block as any).text === "string") return { ...block, text: compactText((block as any).text) };
 		return block;
 	});
+}
+
+function appendElementStabilityNote(result: FilteredToolResult): void {
+	const note = elementStabilityNote(contentText(result.content));
+	if (note) appendText(result, note);
 }
 
 function normalizeDetail(value: unknown, fallback: DetailMode): DetailMode {
@@ -255,6 +276,23 @@ function resolveElementId(args: Record<string, JsonValue>, cache: Map<string, El
 	return normalized;
 }
 
+function resolveElementDescription(args: Record<string, JsonValue>, cache: Map<string, ElementInfo[]>): Record<string, JsonValue> {
+	const normalized = normalizeToolArguments(args);
+	const elementDescription = normalized.elementDescription ?? normalized.element_description;
+	if (typeof elementDescription !== "string" || normalized.element_index !== undefined) return normalized;
+	if (typeof normalized.app !== "string") throw new Error("elementDescription targeting requires an app argument.");
+	const elements = cache.get(normalized.app) ?? [];
+	const matches = elements.filter((element) => element.description?.toLowerCase() === elementDescription.toLowerCase());
+	if (matches.length !== 1) {
+		const reason = matches.length === 0 ? "No" : `Ambiguous ${matches.length}`;
+		throw new Error(`${reason} elementDescription ${elementDescription} found for ${normalized.app}. Match is exact and case-insensitive.\nAvailable elements:\n${elementSummary(elements)}`);
+	}
+	normalized.element_index = matches[0].index;
+	delete normalized.elementDescription;
+	delete normalized.element_description;
+	return normalized;
+}
+
 function updateElementCache(cache: Map<string, ElementInfo[]>, app: JsonValue | undefined, content: ContentBlock[]): void {
 	if (typeof app !== "string") return;
 	const elements = parseElementInfo(contentText(content));
@@ -285,6 +323,11 @@ function filterAppListContent(content: ContentBlock[], opts: { runningOnly?: boo
 		const text = lines.join("\n") || "No apps matched the requested filter.";
 		return { ...block, text: truncateString(text, opts.maxTextChars) };
 	});
+}
+
+function appendImageWarning(result: FilteredToolResult, opts: { includeImage?: boolean; saveImagePath?: string }): void {
+	if (!opts.includeImage) return;
+	appendText(result, `Image blocks were requested. Display depends on the current model and pi host support; use saveImagePath for reliable screenshot artifacts${opts.saveImagePath ? ` (saved first image to ${path.resolve(opts.saveImagePath)})` : ""}.`);
 }
 
 function failureResult(message: string, maxTextChars: number): FilteredToolResult {
@@ -578,8 +621,9 @@ function normalizeSequenceSteps(value: unknown): SequenceStep[] {
 	return value.map((step: any, index) => {
 		if (!step || typeof step !== "object" || Array.isArray(step)) throw new Error(`sequence step ${index} must be an object.`);
 		if (typeof step.tool !== "string" || step.tool.length === 0) throw new Error(`sequence step ${index} requires a non-empty tool string.`);
-		const args = { ...(step.arguments || {}) };
-		if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error(`sequence step ${index} arguments must be an object.`);
+		const rawArgs = step.arguments || {};
+		if (!rawArgs || typeof rawArgs !== "object" || Array.isArray(rawArgs)) throw new Error(`sequence step ${index} arguments must be an object.`);
+		const args = { ...rawArgs };
 		if (step.tool === "set_value" && args.value === undefined && step.value !== undefined) args.value = step.value;
 		return {
 			tool: step.tool,
@@ -605,12 +649,15 @@ function validateStepResult(step: SequencedResult): void {
 	}
 }
 
-function sequenceContent(steps: SequencedResult[], includeImages = false): ContentBlock[] {
+function sequenceContent(steps: SequencedResult[], includeImages = false, failed: { index: number; tool: string; message: string } | null = null, totalSteps = steps.length): ContentBlock[] {
 	if (steps.length === 0) return [{ type: "text", text: "Computer Use sequence returned no steps." }];
-	const text = steps.map((step) => {
+	const summary = failed
+		? `Sequence failed at step ${failed.index + 1} of ${totalSteps} (${failed.tool}). Completed ${Math.max(0, failed.index)} step${failed.index === 1 ? "" : "s"}. To resume, start a new sequence from step ${failed.index} against current app state.`
+		: `Sequence completed ${steps.length} of ${totalSteps} step${totalSteps === 1 ? "" : "s"}.`;
+	const text = `${summary}\n\n${steps.map((step) => {
 		const body = summarizeContent(step.result.content);
 		return `Step ${step.index}: ${step.tool} (${step.durationMs}ms, isError=${step.result.isError}, elicitations=${step.elicitationCount}, accepted=${step.acceptedElicitations})\n${body}`;
-	}).join("\n\n---\n\n");
+	}).join("\n\n---\n\n")}`;
 	const content: ContentBlock[] = [{ type: "text", text }];
 	if (includeImages) {
 		for (const step of steps) {
@@ -713,7 +760,7 @@ export default function (pi: ExtensionAPI) {
 		parameters: Type.Object({
 			app: Type.String({ description: "App name, full app path, or unambiguous bundle identifier, e.g. Calculator or com.apple.calculator." }),
 			approval: approvalParam,
-			includeImage: Type.Optional(Type.Boolean({ description: "Attach the screenshot image returned by Computer Use. Default false to keep turns light." })),
+			includeImage: Type.Optional(Type.Boolean({ description: "Attach the screenshot image returned by Computer Use when the current model/host supports image blocks. Use saveImagePath for reliable screenshot artifacts. Default false to keep turns light." })),
 			saveImagePath: Type.Optional(Type.String({ description: "Optional filesystem path where the screenshot should be saved." })),
 			detail: detailParam,
 			maxTextChars: maxTextParam,
@@ -733,6 +780,8 @@ export default function (pi: ExtensionAPI) {
 				maxTextChars,
 			});
 			updateElementCache(sessionElementCache, app, result.content);
+			if (detail === "full") appendElementStabilityNote(result);
+			appendImageWarning(result, { includeImage: Boolean((params as any).includeImage), saveImagePath: (params as any).saveImagePath });
 			const outputContent = detail === "compact" ? compactContent(result.content) : result.content;
 			return {
 				content: outputContent,
@@ -743,6 +792,7 @@ export default function (pi: ExtensionAPI) {
 					isError: result.isError,
 					omittedImages: result.omittedImages,
 					savedImagePath: result.savedImagePath,
+					imageSupportNote: (params as any).includeImage ? "Image rendering is model/host dependent; saveImagePath is the reliable screenshot artifact path." : null,
 					detail,
 					acceptedElicitations: call.acceptedElicitations,
 					elicitationCount: call.elicitationCount,
@@ -755,7 +805,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "codex_cu_sequence",
 		label: "Codex CU Sequence",
-		description: "Run Codex Computer Use calls in one persistent app-server thread. Valid tools: list_apps, get_app_state, perform_secondary_action, press_key, type_text, set_value, select_text, scroll, click, drag. Element targets use element_index as a string; numbers are coerced, element is accepted as an alias, and elementId (for IDs like One or AllClear from get_app_state) resolves against the latest tree in the sequence. Example step: {tool:'perform_secondary_action', arguments:{app:'Calculator', elementId:'One', action:'Press'}}.",
+		description: "Run Codex Computer Use calls in one persistent app-server thread. Valid tools: list_apps, get_app_state, perform_secondary_action, press_key, type_text, set_value, select_text, scroll, click, drag. Element targets use element_index as a string; numbers are coerced, element is accepted as an alias, elementId resolves IDs like One or AllClear, and elementDescription exact-matches accessibility descriptions like Add. Example step: {tool:'perform_secondary_action', arguments:{app:'Calculator', elementDescription:'Add', action:'Press'}}.",
 		promptSnippet: "Run a sequence of local macOS Computer Use actions.",
 		promptGuidelines: [
 			"Use codex_cu_sequence only after codex_cu_get_app_state has identified the target app/window or when the first sequence step is get_app_state.",
@@ -764,23 +814,16 @@ export default function (pi: ExtensionAPI) {
 			"Prefer perform_secondary_action with action=Press, press_key, set_value, select_text, or element-targeted scroll over pointer click when possible to preserve mouse/system focus.",
 			"press_key uses xdotool-style key names. Examples: '5', 'Return', 'Escape', 'Tab', 'space', 'plus', 'minus', 'equal', 'ctrl+c'. For text entry, prefer type_text unless a real key event is required.",
 			"select_text requires a text string to match; start/end offset selection is not supported by the upstream Computer Use tool.",
-			"For element targeting, prefer stable elementId values from get_app_state when present. Otherwise pass element_index as a string; numeric element_index and element aliases are coerced for convenience. Numeric indices can shift after mutations; re-snapshot before index targeting when state changes.",
+			"For element targeting, prefer stable elementId values from get_app_state when present, then elementDescription exact matches, then element_index. Numeric indices can shift after mutations; the extension refreshes before element-targeted sequence steps, but description/ID targeting is still safer.",
 		],
 		parameters: Type.Object({
-			steps: Type.Array(Type.Object({
-				tool: Type.String({ description: "Computer Use tool name: list_apps, get_app_state, perform_secondary_action, press_key, type_text, set_value, select_text, scroll, click, or drag. press_key keys use xdotool-style names such as '5', 'Return', 'Escape', 'plus', 'minus', 'equal', or 'ctrl+c'. select_text selects by text string, not start/end offsets." }),
-				arguments: Type.Optional(Type.Any({ description: "Tool arguments object. Element-targeted tools accept element_index as string or number, element as an alias, or elementId/element_id resolved from the latest get_app_state tree for that app. set_value accepts value here; codex_cu_sequence also normalizes a top-level step.value into arguments.value." })),
-				label: Type.Optional(Type.String({ description: "Optional human-readable step label." })),
-				expectText: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], { description: "Text that must appear in this step's text result." })),
-				expectAbsentText: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], { description: "Text that must not appear in this step's text result." })),
-				allowError: Type.Optional(Type.Boolean({ description: "Allow this step to return isError without aborting the sequence." })),
-			}), { minItems: 1, description: "Ordered Computer Use tool calls to run in one persistent app-server thread." }),
+			steps: Type.Array(Type.Any({ description: "Ordered Computer Use tool calls. Each step must be an object with tool, optional arguments, optional label, expectText, expectAbsentText, and allowError. Element-targeted tools accept element_index as string or number, element as an alias, elementId/element_id, or elementDescription/element_description. set_value can put value inside arguments or as top-level step.value. select_text selects by text string, not start/end offsets." }), { minItems: 1, description: "Ordered Computer Use tool calls to run in one persistent app-server thread." }),
 			approval: approvalParam,
 			allowMutating: Type.Optional(Type.Boolean({ description: "Required when any step is not list_apps or get_app_state." })),
 			allowPointerClick: Type.Optional(Type.Boolean({ description: "Required to use the pointer-based click tool. Prefer perform_secondary_action action=Press when possible." })),
 			allowPointerDrag: Type.Optional(Type.Boolean({ description: "Required to use the pointer-based drag tool. The extension restores the mouse position afterward." })),
 			safetyNote: Type.Optional(Type.String({ description: "Required for mutating steps. State target app, intended effect, and stop boundary." })),
-			includeImage: Type.Optional(Type.Boolean({ description: "Attach screenshot image blocks returned by sequence steps. Default false." })),
+			includeImage: Type.Optional(Type.Boolean({ description: "Attach screenshot image blocks returned by sequence steps when the current model/host supports image blocks. Use saveImagePath for reliable screenshot artifacts. Default false." })),
 			saveImagePath: Type.Optional(Type.String({ description: "Optional filesystem path where the first returned screenshot should be saved." })),
 			detail: Type.Optional(Type.Union([Type.Literal("compact"), Type.Literal("full")], { description: "Output detail. Default compact for sequences. full returns full accessibility trees for every step." })),
 			maxTextChars: maxTextParam,
@@ -817,20 +860,21 @@ export default function (pi: ExtensionAPI) {
 					let stepArgs = normalizeToolArguments(step.arguments);
 					try {
 						const elementId = stepArgs.elementId ?? stepArgs.element_id;
-						if (typeof elementId === "string" && stepArgs.element_index === undefined && typeof stepArgs.app === "string") {
-							try {
-								stepArgs = resolveElementId(stepArgs, elementCache);
-							} catch {
-								const refresh = await client.callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
-								const refreshed = filterToolResult(refresh.result, { maxTextChars });
-								updateElementCache(elementCache, stepArgs.app, refreshed.content);
-								updateElementCache(sessionElementCache, stepArgs.app, refreshed.content);
-								implicitRefreshes += 1;
-								stepArgs = resolveElementId(stepArgs, elementCache);
-							}
-						} else {
-							stepArgs = resolveElementId(stepArgs, elementCache);
+						const elementDescription = stepArgs.elementDescription ?? stepArgs.element_description;
+						const targetsElement = step.tool !== "get_app_state" && typeof stepArgs.app === "string" && (
+							stepArgs.element_index !== undefined ||
+							typeof elementId === "string" ||
+							typeof elementDescription === "string"
+						);
+						if (targetsElement && typeof stepArgs.app === "string") {
+							const refresh = await client.callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
+							const refreshed = filterToolResult(refresh.result, { maxTextChars });
+							updateElementCache(elementCache, stepArgs.app, refreshed.content);
+							updateElementCache(sessionElementCache, stepArgs.app, refreshed.content);
+							implicitRefreshes += 1;
 						}
+						stepArgs = resolveElementId(stepArgs, elementCache);
+						stepArgs = resolveElementDescription(stepArgs, elementCache);
 						const call = await client.callTool(step.tool, stepArgs, { approval, timeoutMs: toolTimeoutMs, signal });
 						const filtered = filterToolResult(call.result, {
 							includeImage: Boolean((params as any).includeImage),
@@ -839,6 +883,8 @@ export default function (pi: ExtensionAPI) {
 						});
 						updateElementCache(elementCache, stepArgs.app, filtered.content);
 						updateElementCache(sessionElementCache, stepArgs.app, filtered.content);
+						if (detail === "full") appendElementStabilityNote(filtered);
+						appendImageWarning(filtered, { includeImage: Boolean((params as any).includeImage), saveImagePath: index === 0 ? (params as any).saveImagePath : undefined });
 						enrichActionError(filtered, stepArgs, elementCache);
 						const row: SequencedResult = {
 							index,
@@ -888,13 +934,14 @@ export default function (pi: ExtensionAPI) {
 			}
 			const mouseAfter = mouseBefore ? getMousePosition() : null;
 			return {
-				content: sequenceContent(results, Boolean((params as any).includeImage)),
+				content: sequenceContent(results, Boolean((params as any).includeImage), failed, steps.length),
 				details: bridgeDetails({
 					tool: "sequence",
 					threadId: client.status().threadId,
 					detail,
 					failed,
 					implicitRefreshes,
+					imageSupportNote: (params as any).includeImage ? "Image rendering is model/host dependent; saveImagePath is the reliable screenshot artifact path." : null,
 					steps: results.map((step) => ({
 						index: step.index,
 						tool: step.tool,

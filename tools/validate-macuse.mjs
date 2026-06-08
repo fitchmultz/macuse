@@ -223,6 +223,7 @@ factory({
   const sequence = await tools.get('codex_cu_sequence').execute('sequence', {
     steps: [
       { tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: 6, action: 'Press' } },
+      { tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementDescription: 'Add', action: 'NotARealAction' }, allowError: true },
       { tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'One', action: 'Press' } },
       { tool: 'get_app_state', arguments: { app: 'Calculator' }, expectText: '‎1' },
       { tool: 'perform_secondary_action', arguments: { app: 'Calculator', element: 6, action: 'Press' } },
@@ -235,8 +236,10 @@ factory({
     toolTimeoutMs: 90000,
   }, signal, () => {});
   if (sequence.details.computerUse.steps[0].arguments.element_index !== '6') throw new Error('pi extension did not coerce numeric element_index to string');
-  if (sequence.details.computerUse.steps[1].arguments.element_index !== '17') throw new Error('pi extension did not resolve Calculator elementId One to current element_index');
-  if (sequence.details.computerUse.steps[3].arguments.element_index !== '6') throw new Error('pi extension did not coerce element alias to element_index');
+  if (sequence.details.computerUse.steps[1].arguments.element_index !== '20') throw new Error('pi extension did not resolve Calculator elementDescription Add to current element_index');
+  if (sequence.details.computerUse.steps[2].arguments.element_index !== '17') throw new Error('pi extension did not resolve Calculator elementId One to current element_index');
+  if (sequence.details.computerUse.steps[4].arguments.element_index !== '6') throw new Error('pi extension did not coerce element alias to element_index');
+  if (sequence.details.computerUse.implicitRefreshes < 4) throw new Error('pi extension did not refresh before element-targeted sequence steps');
   const partial = await tools.get('codex_cu_sequence').execute('partial', {
     steps: [
       { tool: 'get_app_state', arguments: { app: 'Calculator' } },
@@ -280,6 +283,9 @@ factory({
     toolTimeoutMs: 90000,
   }, signal, () => {});
   if (textEdit.content[0].text.includes('No elementId First Text View')) throw new Error('pi extension failed to parse TextEdit ID preceded by whitespace');
+  const compact = await tools.get('codex_cu_get_app_state').execute('compact', { app: 'TextEdit', detail: 'compact', maxTextChars: 6000, toolTimeoutMs: 90000 }, signal, () => {});
+  if (/text 6\.5|text 7|text 7\.5/.test(compact.content[0].text)) throw new Error('pi extension compact mode kept TextEdit ruler marker text');
+  if (!compact.content[0].text.includes('First Text View')) throw new Error('pi extension compact mode omitted TextEdit text view ID');
   if (handlers.has('session_shutdown')) await handlers.get('session_shutdown')({ reason: 'test' }, {});
   console.log(sequence.details.computerUse.steps.map((step) => step.arguments.element_index).filter(Boolean).join(','));
 })().catch(async (error) => {

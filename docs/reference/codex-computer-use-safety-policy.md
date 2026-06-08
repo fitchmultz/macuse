@@ -139,9 +139,10 @@ persistent `codex_cu_sequence` wrapper requires or enforces:
 
 - ordered `steps`, preferably starting and ending with `get_app_state`
 - element-targeted tools accept `element_index` as a string or number, `element`
-  as an alias, or `elementId` / `element_id` resolved from the latest tree for
-  the app; prefer stable IDs when available because numeric indices can shift,
-  and use failed elementId fallback hints when IDs are absent or stale
+  as an alias, `elementId` / `element_id`, or exact `elementDescription` /
+  `element_description` matches; prefer stable IDs/descriptions when available
+  because numeric indices can shift, and use failed lookup fallback hints when
+  IDs or descriptions are absent or stale
 - optional per-step `expectText` and `expectAbsentText` assertions to stop the
   sequence when state evidence does not match expectations; stopped sequences
   return completed step evidence plus the failed-step diagnostic, and

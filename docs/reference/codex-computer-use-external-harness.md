@@ -533,13 +533,17 @@ steps can include `expectText`, `expectAbsentText`, and `allowError` so the
 extension can stop on unexpected state or tool errors. Sequence output defaults
 to `detail: "compact"`; use `detail: "full"` when every raw tree is needed.
 Element-targeted tools accept `element_index` as a string or number, `element`
-as an alias, or `elementId` / `element_id` resolved from the latest
-`get_app_state` tree for that app. Failed elementId lookups return available
-`element_index` lines so the agent can fall back without a separate state call.
-If a sequence fails after it starts, the result includes all completed steps plus
-a failed-step diagnostic instead of discarding partial evidence. Per-step
-`allowError: true` also covers elementId resolution errors, so optional/fallback
-steps can fail and the sequence can continue.
+as an alias, `elementId` / `element_id` resolved from the latest
+`get_app_state` tree, or exact `elementDescription` / `element_description`
+matches for descriptions such as Calculator `Add`. The extension refreshes app
+state before element-targeted sequence steps so stale numeric indices are easier
+to diagnose, but ID/description targeting remains safer. Failed ID/description
+lookups return available `element_index` lines so the agent can fall back without
+a separate state call. If a sequence fails after it starts, the result includes
+all completed steps plus a failed-step diagnostic and resume hint instead of
+discarding partial evidence. Per-step `allowError: true` also covers element
+resolution errors, so optional/fallback steps can fail and the sequence can
+continue.
 Pointer-based `click` steps additionally require
 `allowPointerClick: true`; pointer-based `drag` steps require
 `allowPointerDrag: true` and use extension-level mouse restoration.
@@ -550,7 +554,8 @@ mouse/system focus. `press_key` uses xdotool-style key names, such as `5`,
 for literal text entry. `select_text` selects by matching a text string; upstream
 Computer Use does not currently support start/end offset selection. `set_value`
 accepts `value` inside `arguments`, and pi sequences also normalize top-level
-step `value` into `arguments.value`.
+step `value` into `arguments.value`. `includeImage` is model/host dependent;
+use `saveImagePath` when screenshot artifacts must be reliable.
 
 ### Rerun after Codex or Computer Use updates
 
