@@ -101,7 +101,7 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
   }
   const finder = await request('tools/call', { name: 'get_app_state', arguments: { app: 'Finder', approval: 'ask' } }, 120000);
   if (!sawElicitation || finder.isError !== true) throw new Error('MCP elicitation proxy did not decline Finder as expected');
-  await request('tools/call', { name: 'get_app_state', arguments: { app: 'Calculator', approval: 'accept-once' } }, 120000);
+  await request('tools/call', { name: 'get_app_state', arguments: { app: 'Calculator' } }, 120000);
   let pointerGuarded = false;
   try {
     await request('tools/call', { name: 'click', arguments: { app: 'Calculator', element_index: '17' } }, 120000);
@@ -261,7 +261,7 @@ async function main() {
     if (list.result?.isError) throw new Error('app-server list-apps returned isError');
     printPass('app-server list_apps', `${list.result?.content?.[0]?.text?.length || 0} text chars`);
 
-    const state = parseJsonOutput('app-server get-state', run('app-server get-state', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'get-state', '--app', opts.app, '--approval', 'accept-once', '--quiet', '--tool-timeout-ms', String(opts.toolTimeoutMs), '--max-text-chars', '1000'], { timeoutMs: opts.toolTimeoutMs + 30_000, verbose: opts.verbose }));
+    const state = parseJsonOutput('app-server get-state', run('app-server get-state', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'get-state', '--app', opts.app, '--quiet', '--tool-timeout-ms', String(opts.toolTimeoutMs), '--max-text-chars', '1000'], { timeoutMs: opts.toolTimeoutMs + 30_000, verbose: opts.verbose }));
     requireOk('app-server get-state', state);
     if (state.result?.isError) throw new Error('app-server get-state returned isError');
     printPass('app-server get_app_state', `${opts.app}; omittedImages=${state.result?.omittedImages ?? 0}`);
@@ -274,7 +274,6 @@ async function main() {
       'sequence',
       '--steps-json', stepsJson,
       '--allow-mutating',
-      '--approval', 'accept-once',
       '--quiet',
       '--tool-timeout-ms', String(opts.toolTimeoutMs),
       '--max-text-chars', '2500',

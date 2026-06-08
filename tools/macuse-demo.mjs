@@ -134,7 +134,7 @@ async function main() {
   const duringImage = resolve(opts.out, 'during.jpg');
   const afterImage = resolve(opts.out, 'after.jpg');
 
-  const before = runJson('capture before screenshot', ['tools/codex-computer-use-appserver.mjs', 'get-state', '--app', 'Calculator', '--approval', 'accept-once', '--quiet', '--save-image', beforeImage, '--max-text-chars', '4000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 30_000 });
+  const before = runJson('capture before screenshot', ['tools/codex-computer-use-appserver.mjs', 'get-state', '--app', 'Calculator', '--quiet', '--save-image', beforeImage, '--max-text-chars', '4000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 30_000 });
   transcript.commands.push({ name: 'capture before screenshot', command: before.command, durationMs: before.durationMs, result: before.result });
 
   const sequenceOneSteps = [
@@ -144,10 +144,10 @@ async function main() {
     { label: 'Press digit 1 via accessibility Press', tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '17', action: 'Press' } },
     { label: 'Verify display is 1', tool: 'get_app_state', arguments: { app: 'Calculator' } },
   ];
-  const sequenceOne = runJson('focus-safe Calculator sequence: show 1', ['tools/codex-computer-use-appserver.mjs', 'sequence', '--steps-json', JSON.stringify(sequenceOneSteps), '--allow-mutating', '--approval', 'accept-once', '--preserve-mouse', '--quiet', '--max-text-chars', '5000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 90_000 });
+  const sequenceOne = runJson('focus-safe Calculator sequence: show 1', ['tools/codex-computer-use-appserver.mjs', 'sequence', '--steps-json', JSON.stringify(sequenceOneSteps), '--allow-mutating', '--preserve-mouse', '--quiet', '--max-text-chars', '5000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 90_000 });
   transcript.commands.push({ name: 'focus-safe Calculator sequence: show 1', command: sequenceOne.command, durationMs: sequenceOne.durationMs, result: sequenceOne.result });
 
-  const during = runJson('capture during screenshot', ['tools/codex-computer-use-appserver.mjs', 'get-state', '--app', 'Calculator', '--approval', 'accept-once', '--quiet', '--save-image', duringImage, '--max-text-chars', '4000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 30_000 });
+  const during = runJson('capture during screenshot', ['tools/codex-computer-use-appserver.mjs', 'get-state', '--app', 'Calculator', '--quiet', '--save-image', duringImage, '--max-text-chars', '4000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 30_000 });
   transcript.commands.push({ name: 'capture during screenshot', command: during.command, durationMs: during.durationMs, result: during.result });
 
   const sequenceTwoSteps = [
@@ -159,10 +159,10 @@ async function main() {
     { label: 'Restore Calculator to 0', tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '6', action: 'Press' } },
     { label: 'Verify restored display is 0', tool: 'get_app_state', arguments: { app: 'Calculator' } },
   ];
-  const sequenceTwo = runJson('focus-safe Calculator sequence: verify key and restore', ['tools/codex-computer-use-appserver.mjs', 'sequence', '--steps-json', JSON.stringify(sequenceTwoSteps), '--allow-mutating', '--approval', 'accept-once', '--preserve-mouse', '--quiet', '--max-text-chars', '5000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 90_000 });
+  const sequenceTwo = runJson('focus-safe Calculator sequence: verify key and restore', ['tools/codex-computer-use-appserver.mjs', 'sequence', '--steps-json', JSON.stringify(sequenceTwoSteps), '--allow-mutating', '--preserve-mouse', '--quiet', '--max-text-chars', '5000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 90_000 });
   transcript.commands.push({ name: 'focus-safe Calculator sequence: verify key and restore', command: sequenceTwo.command, durationMs: sequenceTwo.durationMs, result: sequenceTwo.result });
 
-  const after = runJson('capture after screenshot', ['tools/codex-computer-use-appserver.mjs', 'get-state', '--app', 'Calculator', '--approval', 'accept-once', '--quiet', '--save-image', afterImage, '--max-text-chars', '4000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 30_000 });
+  const after = runJson('capture after screenshot', ['tools/codex-computer-use-appserver.mjs', 'get-state', '--app', 'Calculator', '--quiet', '--save-image', afterImage, '--max-text-chars', '4000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 30_000 });
   transcript.commands.push({ name: 'capture after screenshot', command: after.command, durationMs: after.durationMs, result: after.result });
 
   let mcpValidated = null;

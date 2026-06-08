@@ -238,7 +238,7 @@ For positive operation, use the Codex app-server bridge instead of calling
 ```bash
 node tools/codex-computer-use-appserver.mjs status --quiet --pretty
 node tools/codex-computer-use-appserver.mjs list-apps --quiet --pretty
-node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approval accept-once --quiet --pretty
+node tools/codex-computer-use-appserver.mjs get-state --app Calculator --quiet --pretty
 node tools/validate-macuse.mjs mutating
 ```
 
@@ -266,10 +266,10 @@ Practical limits:
   and the service logged `TCC RESULT:SkCu/XpcB = rejected`. Later iTerm-hosted
   raw-MCP probes logged Apple Events acceptance but still timed out, so TCC
   acceptance is required for some hosts but not the whole direct raw-MCP contract.
-- A non-Codex harness must implement its own confirmation and safety policy for
-  risky UI actions. The cached plugin skill contains Codex's policy, but another
-  harness will not automatically enforce it unless it imports or reproduces that
-  policy.
+- A non-Codex harness must implement its own safety policy for risky UI actions.
+  This bridge intentionally does not add a second per-app confirmation layer when
+  Codex's Any App setting is enabled; it defaults to `approval: "inherit"` and
+  still keeps hard stop boundaries for high-risk actions.
 - Direct accepted raw-MCP service-backed probes (`get_app_state` for Calculator
   and `list_apps`) timed out from external hosts. App-server-mediated read-only
   probes succeeded, which means the missing direct-MCP contract is likely around

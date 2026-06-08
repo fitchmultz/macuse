@@ -44,8 +44,8 @@ The wrapper:
 - starts Codex app-server with Computer Use feature flags,
 - creates an ephemeral app-server thread,
 - exposes the Computer Use tool family over standard MCP,
-- proxies MCP `elicitation/create` app-approval prompts when the client supports
-  elicitation,
+- defaults to `approval: "inherit"`, auto-accepting Computer Use app approvals
+  to match Codex's Any App setting,
 - routes tool execution through app-server `mcpServer/tool/call`, and
 - restores mouse position after pointer `click` / `drag` calls.
 
@@ -55,11 +55,9 @@ The wrapper:
 2. Prefer `perform_secondary_action` with `action: "Press"`, `press_key`,
    `set_value`, `select_text`, or element-targeted `scroll` over pointer tools.
 3. Pointer `click` and `drag` require `allowPointer: true`.
-4. For app approval, use:
-   - `approval: "ask"` to let the MCP client surface an elicitation prompt when
-     supported,
-   - `approval: "accept-once"` only when the user has authorized the app, or
-   - `approval: "deny"` for denial-path tests.
+4. App approval defaults to `approval: "inherit"`. Use `approval: "ask"` only
+   when a client should surface MCP elicitation prompts, or `approval: "deny"`
+   for denial-path tests.
 5. Stop before purchases, sends, deletes, credential/account/security/privacy
    changes, installs, or ambiguous wrong-window actions unless the user gives
    fresh explicit approval for that exact operation.

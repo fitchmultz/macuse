@@ -58,14 +58,14 @@ Use Codex app-server as the compatibility bridge for Computer Use calls:
 ```bash
 node tools/codex-computer-use-appserver.mjs status --quiet --pretty
 node tools/codex-computer-use-appserver.mjs list-apps --quiet --pretty
-node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approval accept-once --quiet --pretty
+node tools/codex-computer-use-appserver.mjs get-state --app Calculator --quiet --pretty
 ```
 
 The project-local pi extension registers:
 
 - `codex_cu_list_apps`
 - `codex_cu_get_app_state`
-- `codex_cu_sequence` for guarded multi-step flows, including mutating steps with `allowMutating: true`, a `safetyNote`, UI confirmation, and optional per-step `expectText` / `expectAbsentText` assertions. Pointer `click` steps also require `allowPointerClick: true`; pointer `drag` steps require `allowPointerDrag: true` and automatically restore mouse position. Prefer accessibility actions/keys/values to preserve mouse focus.
+- `codex_cu_sequence` for multi-step flows, including mutating steps with `allowMutating: true`, a `safetyNote`, and optional per-step `expectText` / `expectAbsentText` assertions. App approval defaults to `inherit`, which auto-accepts Computer Use app approvals to match Codex's Any App setting. Pointer `click` steps also require `allowPointerClick: true`; pointer `drag` steps require `allowPointerDrag: true` and automatically restore mouse position. Prefer accessibility actions/keys/values to preserve mouse focus.
 
 Run `/reload` in pi after changing `.pi/extensions/codex-computer-use.ts`.
 
@@ -87,7 +87,7 @@ For Cursor or another MCP-capable client, use the app-server-backed wrapper rath
 }
 ```
 
-The wrapper exposes the Computer Use tool family over MCP while routing execution through Codex app-server. It proxies MCP `elicitation/create` app-approval prompts when the client supports elicitation. Pointer `click` / `drag` require `allowPointer: true` and restore mouse position afterward.
+The wrapper exposes the Computer Use tool family over MCP while routing execution through Codex app-server. It defaults to `approval: "inherit"`, auto-accepting app approvals to match Codex's Any App setting; `approval: "ask"` is still available for clients that want MCP elicitation prompts. Pointer `click` / `drag` require `allowPointer: true` and restore mouse position afterward.
 
 ## Probe path
 

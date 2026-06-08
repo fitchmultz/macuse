@@ -169,7 +169,7 @@ async function main() {
   const listApps = commandCheck('app-server list_apps', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'list-apps', '--quiet', '--codex', opts.codex, '--max-text-chars', '1000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 30_000 });
   addCheck(checks, listApps.check);
 
-  const getState = commandCheck(`app-server get_app_state ${opts.app}`, process.execPath, ['tools/codex-computer-use-appserver.mjs', 'get-state', '--app', opts.app, '--approval', 'accept-once', '--quiet', '--codex', opts.codex, '--max-text-chars', '1000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 30_000 });
+  const getState = commandCheck(`app-server get_app_state ${opts.app}`, process.execPath, ['tools/codex-computer-use-appserver.mjs', 'get-state', '--app', opts.app, '--quiet', '--codex', opts.codex, '--max-text-chars', '1000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 30_000 });
   addCheck(checks, getState.check);
 
   const config = commandCheck('config generator', process.execPath, ['tools/macuse-config.mjs', 'cursor', '--pretty']);

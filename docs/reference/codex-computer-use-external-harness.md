@@ -305,9 +305,9 @@ Validated app-server calls from this repo:
 ```bash
 node tools/codex-computer-use-appserver.mjs status --quiet --pretty
 node tools/codex-computer-use-appserver.mjs list-apps --quiet --max-text-chars 1000 --pretty
-node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approval accept-once --quiet --max-text-chars 1200 --pretty
+node tools/codex-computer-use-appserver.mjs get-state --app Calculator --quiet --max-text-chars 1200 --pretty
 node tools/codex-computer-use-appserver.mjs get-state --app Finder --approval deny --quiet --max-text-chars 500 --pretty
-node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approval accept-once --include-image --save-image /tmp/macuse-calculator.jpg --quiet --max-text-chars 200 --pretty
+node tools/codex-computer-use-appserver.mjs get-state --app Calculator --include-image --save-image /tmp/macuse-calculator.jpg --quiet --max-text-chars 200 --pretty
 node tools/validate-macuse.mjs mutating
 node tools/validate-macuse.mjs focus
 ```
@@ -319,7 +319,7 @@ Observed results:
   `press_key`, `scroll`, `select_text`, `set_value`, and `type_text`.
 - `list-apps` returned a normal text result with running/recent apps and no
   elicitation.
-- `get-state --app Calculator --approval accept-once` returned a normal text
+- `get-state --app Calculator` returned a normal text
   result containing Calculator's accessibility tree plus one omitted image block
   when `--include-image` was not passed.
 - `get-state --app Finder --approval deny` received one app-server
@@ -410,8 +410,8 @@ node tools/probe-codex-computer-use-mcp.mjs discover
 node tools/probe-codex-computer-use-mcp.mjs apps --tool-timeout-ms 90000
 node tools/probe-codex-computer-use-mcp.mjs deny --app Finder
 node tools/probe-codex-computer-use-mcp.mjs state --app Calculator --approval interactive
-node tools/probe-codex-computer-use-mcp.mjs state --app Calculator --approval accept-once --tool-timeout-ms 90000
-node tools/probe-codex-computer-use-mcp.mjs state --app Calculator --approval accept-once --with-turn-metadata
+node tools/probe-codex-computer-use-mcp.mjs state --app Calculator --tool-timeout-ms 90000
+node tools/probe-codex-computer-use-mcp.mjs state --app Calculator --with-turn-metadata
 node tools/probe-codex-computer-use-mcp.mjs logs --since 5m
 ```
 
@@ -507,7 +507,7 @@ Useful commands:
 node tools/codex-computer-use-appserver.mjs --help
 node tools/codex-computer-use-appserver.mjs status --quiet --pretty
 node tools/codex-computer-use-appserver.mjs list-apps --quiet --pretty
-node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approval accept-once --quiet --pretty
+node tools/codex-computer-use-appserver.mjs get-state --app Calculator --quiet --pretty
 ```
 
 The project-local pi extension is:
@@ -522,12 +522,13 @@ It registers two standalone read-only pi tools and one guarded sequence tool:
 - `codex_cu_get_app_state`
 - `codex_cu_sequence`
 
-The pi extension wraps the app-server bridge. For `codex_cu_get_app_state`, the
-default `approval: "ask"` path uses pi UI confirmation before passing
-`accept-once` or `deny` to the bridge. For mutating `codex_cu_sequence` steps,
-the extension requires `allowMutating: true`, a concrete `safetyNote`, and UI
-confirmation. Sequence steps can include `expectText`, `expectAbsentText`, and
-`allowError` so the bridge can stop on unexpected state or tool errors.
+The pi extension wraps the app-server bridge. `codex_cu_get_app_state` and
+`codex_cu_sequence` default to `approval: "inherit"`, which auto-accepts
+Computer Use app-approval elicitations to match Codex's Any App setting. For
+mutating `codex_cu_sequence` steps, the extension requires
+`allowMutating: true` and a concrete `safetyNote`. Sequence steps can include
+`expectText`, `expectAbsentText`, and `allowError` so the bridge can stop on
+unexpected state or tool errors.
 Pointer-based `click` steps additionally require
 `allowPointerClick: true`; pointer-based `drag` steps require
 `allowPointerDrag: true` and use bridge-level `--preserve-mouse` restoration.
@@ -556,7 +557,7 @@ node tools/probe-codex-computer-use-mcp.mjs logs --since 5m
 # App-server-backed positive read-only checks.
 node tools/codex-computer-use-appserver.mjs status --quiet --pretty
 node tools/codex-computer-use-appserver.mjs list-apps --quiet --pretty
-node tools/codex-computer-use-appserver.mjs get-state --app Calculator --approval accept-once --quiet --pretty
+node tools/codex-computer-use-appserver.mjs get-state --app Calculator --quiet --pretty
 ```
 
 Keep direct raw-MCP `apps` / accepted `state` timeout probes available when
@@ -565,7 +566,7 @@ app-server bridge:
 
 ```bash
 node tools/probe-codex-computer-use-mcp.mjs apps --tool-timeout-ms 90000
-node tools/probe-codex-computer-use-mcp.mjs state --app Calculator --approval accept-once --tool-timeout-ms 90000
+node tools/probe-codex-computer-use-mcp.mjs state --app Calculator --tool-timeout-ms 90000
 ```
 
 A live app-server thread ID alone is not enough for raw-MCP parity. A one-off
@@ -633,7 +634,7 @@ The important regression signals are:
 3. App-server `status` still discovers `computer-use` and the expected tool
    family.
 4. App-server `list-apps` still returns a normal read-only tool result.
-5. App-server `get-state --app Calculator --approval accept-once` still returns
+5. App-server `get-state --app Calculator` still returns
    a normal read-only accessibility tree and, when requested, an image block.
 6. `node tools/validate-macuse.mjs mutating` still completes the guarded
    Calculator action/key-and-restore smoke test.

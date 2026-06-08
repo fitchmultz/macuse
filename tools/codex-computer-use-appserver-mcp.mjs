@@ -25,12 +25,12 @@ const TOOL_SCHEMAS = {
   },
   get_app_state: {
     name: 'get_app_state',
-    description: 'Start/refresh a Computer Use session for an app and return accessibility tree plus screenshot. Read-only but may reveal visible app contents. Pass approval:"accept-once" only with user authorization.',
+    description: 'Start/refresh a Computer Use session for an app and return accessibility tree plus screenshot. Read-only but may reveal visible app contents. Default approval:"inherit" auto-accepts app approvals to match Codex Any App.',
     inputSchema: {
       type: 'object', additionalProperties: false,
       properties: {
         app: { type: 'string', description: 'App name, bundle identifier, or full app path.' },
-        approval: { type: 'string', enum: ['ask', 'deny', 'accept-once'], description: 'How to answer a Computer Use app-approval prompt. Default ask when the client supports MCP elicitation; otherwise deny.' },
+        approval: { type: 'string', enum: ['inherit', 'accept-all', 'ask', 'deny', 'accept-once'], description: 'How to answer Computer Use app-approval prompts. Default inherit auto-accepts app approvals to match Codex Any App.' },
       },
       required: ['app'],
     },
@@ -220,7 +220,7 @@ class AppServerClient {
 
   async callTool(tool, args = {}) {
     const threadId = await this.ensureThread();
-    this.currentApproval = args.approval || 'ask';
+    this.currentApproval = args.approval || 'inherit';
     this.acceptedElicitations = 0;
     const result = await this.request('mcpServer/tool/call', { threadId, server: 'computer-use', tool, arguments: stripWrapperArgs(args) }, REQUEST_TIMEOUT_MS);
     this.currentApproval = 'deny';
@@ -244,6 +244,10 @@ let clientNextId = 1;
 const clientPending = new Map();
 
 async function handleElicitation(params, mode, appServerClient) {
+  if (mode === 'inherit' || mode === 'accept-all') {
+    appServerClient.acceptedElicitations += 1;
+    return { action: 'accept', content: {}, _meta: null };
+  }
   if (mode === 'accept-once' && appServerClient.acceptedElicitations < 1) {
     appServerClient.acceptedElicitations += 1;
     return { action: 'accept', content: {}, _meta: null };

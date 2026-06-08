@@ -197,10 +197,11 @@ function hasMutatingSteps(steps: Array<{ tool: string }>): boolean {
 const timeoutParam = Type.Optional(Type.Number({ minimum: 1_000, maximum: 300_000, description: "Bridge/tool timeout in milliseconds. Default 90000." }));
 const maxTextParam = Type.Optional(Type.Number({ minimum: 1_000, maximum: 200_000, description: "Maximum characters per returned text block. Default 20000." }));
 const approvalParam = Type.Optional(Type.Union([
-	Type.Literal("ask"),
+	Type.Literal("inherit"),
+	Type.Literal("accept-all"),
 	Type.Literal("accept-once"),
 	Type.Literal("deny"),
-], { description: "How to answer the Computer Use app-approval prompt. Default ask." }));
+], { description: "How to answer Computer Use app-approval prompts. Default inherit, which auto-accepts app approvals to match Codex's Any App setting." }));
 
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
@@ -252,16 +253,9 @@ export default function (pi: ExtensionAPI) {
 			maxTextChars: maxTextParam,
 			toolTimeoutMs: timeoutParam,
 		}),
-		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+		async execute(_toolCallId, params, signal, onUpdate) {
 			const app = (params as any).app;
-			let approval = ((params as any).approval || "ask") as "ask" | "accept-once" | "deny";
-			if (approval === "ask") {
-				const ok = await ctx.ui.confirm(
-					"Allow read-only Codex Computer Use?",
-					`Allow Codex Computer Use to inspect ${app}? This can reveal visible app contents and may launch or foreground the app.`,
-				);
-				approval = ok ? "accept-once" : "deny";
-			}
+			const approval = ((params as any).approval || "inherit") as "inherit" | "accept-all" | "accept-once" | "deny";
 			onUpdate?.({ content: [{ type: "text", text: `Calling Computer Use get_app_state for ${app} with approval=${approval}...` }] });
 			const toolTimeoutMs = asInt((params as any).toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
 			const maxTextChars = asInt((params as any).maxTextChars, DEFAULT_MAX_TEXT_CHARS);
@@ -290,7 +284,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "codex_cu_sequence",
 		label: "Codex CU Sequence",
-		description: "Run a guarded sequence of Codex Computer Use calls in one app-server thread, including mutating calls when explicitly confirmed.",
+		description: "Run a guarded sequence of Codex Computer Use calls in one app-server thread, including mutating calls when explicitly enabled.",
 		promptSnippet: "Run a guarded sequence of local macOS Computer Use actions.",
 		promptGuidelines: [
 			"Use codex_cu_sequence only after codex_cu_get_app_state has identified the target app/window or when the first sequence step is get_app_state.",
@@ -317,7 +311,7 @@ export default function (pi: ExtensionAPI) {
 			maxTextChars: maxTextParam,
 			toolTimeoutMs: timeoutParam,
 		}),
-		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+		async execute(_toolCallId, params, signal, onUpdate) {
 			const steps = ((params as any).steps || []).map((step: any) => ({
 				tool: step.tool,
 				arguments: step.arguments || {},
@@ -344,20 +338,8 @@ export default function (pi: ExtensionAPI) {
 				if (safetyNote.length < 20) {
 					throw new Error("codex_cu_sequence mutating steps require a safetyNote describing target, intended effect, and stop boundary.");
 				}
-				const ok = await ctx.ui.confirm(
-					"Allow mutating Codex Computer Use sequence?",
-					`${steps.length} steps. ${safetyNote}`,
-				);
-				if (!ok) throw new Error("User declined mutating Codex Computer Use sequence.");
 			}
-			let approval = ((params as any).approval || "ask") as "ask" | "accept-once" | "deny";
-			if (approval === "ask") {
-				const ok = mutating || await ctx.ui.confirm(
-					"Allow Codex Computer Use app approval?",
-					"Allow this sequence to accept one Computer Use app-approval prompt if needed?",
-				);
-				approval = ok ? "accept-once" : "deny";
-			}
+			const approval = ((params as any).approval || "inherit") as "inherit" | "accept-all" | "accept-once" | "deny";
 			onUpdate?.({ content: [{ type: "text", text: `Running Codex Computer Use sequence (${steps.length} steps, mutating=${mutating})...` }] });
 			const toolTimeoutMs = asInt((params as any).toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
 			const maxTextChars = asInt((params as any).maxTextChars, DEFAULT_MAX_TEXT_CHARS);

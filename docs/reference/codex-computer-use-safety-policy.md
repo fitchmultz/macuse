@@ -13,8 +13,8 @@ Allowed today:
 - `get_app_state`
 - app-approval denial probes
 - app-server status/discovery probes
-- guarded `codex_cu_sequence` calls with explicit `allowMutating: true`, a
-  concrete `safetyNote`, and UI confirmation for mutating steps
+- `codex_cu_sequence` calls with explicit `allowMutating: true` and a concrete
+  `safetyNote` for mutating steps
 
 Not allowed as always-on standalone tools:
 
@@ -79,16 +79,14 @@ For browser/app Computer Use:
 Computer Use app approval is separate from macOS Screen Recording,
 Accessibility, and Automation permissions.
 
-A non-Codex harness must:
+The user has enabled Codex's **Any App** Computer Use setting and explicitly
+requested that the pi bridge not add a second per-app confirmation layer. The
+current bridge therefore defaults to `approval: "inherit"`, which auto-accepts
+Computer Use app-approval elicitations for the external bridge. Explicit
+`approval: "deny"` remains available for denial-path tests.
 
-- surface the app name and approval prompt clearly,
-- offer decline/cancel paths,
-- avoid auto-accepting new app approvals except in controlled validation probes,
-- not use "always allow" semantics unless the user explicitly requests a durable
-  app approval change.
-
-The current bridge uses `accept-once` or `deny`; the pi extension defaults to an
-interactive confirmation for `get_app_state`.
+This only removes the redundant app-approval prompt layer. macOS TCC permissions
+and hard stop boundaries still apply.
 
 ## Mutating regression probe
 
@@ -149,7 +147,6 @@ Prefer one guarded mutating tool surface over many always-on tools. The current
   or element-targeted `scroll` when possible to preserve mouse/system focus.
   Pointer drag/click sequences use bridge-level `--preserve-mouse` restoration.
 - a `safetyNote` that states target app, intended effect, and stop boundary
-- UI confirmation for mutating sequences
 - bridge-level refusal of mutating calls unless `--allow-mutating` is passed
 
 The app-server-backed standard MCP wrapper at
