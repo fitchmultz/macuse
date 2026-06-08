@@ -12,6 +12,8 @@ const READ_ONLY_TOOLS = new Set(['list_apps', 'get_app_state']);
 const POINTER_TOOLS = new Set(['click', 'drag']);
 const ELEMENT_INDEX_SCHEMA = { type: ['string', 'number'], description: 'Computer Use element index. The wrapper coerces numbers to strings before calling upstream.' };
 const ELEMENT_ALIAS_SCHEMA = { type: ['string', 'number'], description: 'Alias for element_index. Coerced to string before calling upstream.' };
+const ELEMENT_ID_SCHEMA = { type: 'string', description: 'Stable element ID from get_app_state, resolved to the current element_index before calling upstream.' };
+const ELEMENT_DESCRIPTION_SCHEMA = { type: 'string', description: 'Exact case-insensitive element description from get_app_state, resolved to the current element_index before calling upstream.' };
 
 if (process.argv.includes('-h') || process.argv.includes('--help')) {
   process.stdout.write(`macuse Codex Computer Use MCP wrapper ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver-mcp.mjs\n\nThis is a stdio MCP server. Configure it in Cursor or another MCP client; do\nnot run it directly except for --help or syntax checks.\n\nEnvironment:\n  CODEX_BIN          Codex app-server binary. Default: ${DEFAULT_CODEX_BIN}\n  CODEX_CU_MCP_CWD  Thread cwd. Default: current working directory.\n\nGenerate client config:\n  node tools/macuse-config.mjs cursor --pretty\n\nValidate:\n  node tools/validate-macuse.mjs mcp\n`);
@@ -40,8 +42,8 @@ const TOOL_SCHEMAS = {
   },
   perform_secondary_action: {
     name: 'perform_secondary_action',
-    description: 'Invoke an accessibility secondary action on an element. Prefer action:"Press" over pointer click when available to preserve mouse focus. Requires prior get_app_state for the same app.',
-    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, action: { type: 'string' } }, required: ['app', 'action'] },
+    description: 'Invoke an accessibility secondary action on an element. Prefer action:"Press" over pointer click when available to preserve mouse focus. Stable IDs/descriptions are resolved against a fresh get_app_state.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, elementId: ELEMENT_ID_SCHEMA, element_id: ELEMENT_ID_SCHEMA, elementDescription: ELEMENT_DESCRIPTION_SCHEMA, element_description: ELEMENT_DESCRIPTION_SCHEMA, action: { type: 'string' } }, required: ['app', 'action'] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   press_key: {
@@ -58,17 +60,17 @@ const TOOL_SCHEMAS = {
   },
   set_value: {
     name: 'set_value',
-    description: 'Set the value of a settable accessibility element. Requires prior get_app_state for the same app.',
-    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, value: { type: 'string' } }, required: ['app', 'value'] },
+    description: 'Set the value of a settable accessibility element. Stable IDs/descriptions are resolved against a fresh get_app_state.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, elementId: ELEMENT_ID_SCHEMA, element_id: ELEMENT_ID_SCHEMA, elementDescription: ELEMENT_DESCRIPTION_SCHEMA, element_description: ELEMENT_DESCRIPTION_SCHEMA, value: { type: 'string' } }, required: ['app', 'value'] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   select_text: {
     name: 'select_text',
-    description: 'Select text in a text element, or place cursor before/after it. Requires prior get_app_state for the same app.',
+    description: 'Select text in a text element, or place cursor before/after it. Stable IDs/descriptions are resolved against a fresh get_app_state when provided.',
     inputSchema: {
       type: 'object', additionalProperties: false,
       properties: {
-        app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, text: { type: 'string' },
+        app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, elementId: ELEMENT_ID_SCHEMA, element_id: ELEMENT_ID_SCHEMA, elementDescription: ELEMENT_DESCRIPTION_SCHEMA, element_description: ELEMENT_DESCRIPTION_SCHEMA, text: { type: 'string' },
         prefix: { type: 'string' }, suffix: { type: 'string' }, selection: { type: 'string', enum: ['text', 'cursor_before', 'cursor_after'] },
       },
       required: ['app', 'text'],
@@ -77,14 +79,14 @@ const TOOL_SCHEMAS = {
   },
   scroll: {
     name: 'scroll',
-    description: 'Scroll an element by direction/pages. Requires prior get_app_state for the same app.',
-    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] }, pages: { type: 'number' } }, required: ['app', 'direction'] },
+    description: 'Scroll an element by direction/pages. Stable IDs/descriptions are resolved against a fresh get_app_state when provided.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, elementId: ELEMENT_ID_SCHEMA, element_id: ELEMENT_ID_SCHEMA, elementDescription: ELEMENT_DESCRIPTION_SCHEMA, element_description: ELEMENT_DESCRIPTION_SCHEMA, direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] }, pages: { type: 'number' } }, required: ['app', 'direction'] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   click: {
     name: 'click',
-    description: 'Pointer click by element index or screenshot coordinates. Prefer perform_secondary_action when possible. Requires allowPointer:true and prior get_app_state for the same app. Mouse position is restored after the call.',
-    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, x: { type: 'number' }, y: { type: 'number' }, mouse_button: { type: 'string', enum: ['left', 'right', 'middle'] }, click_count: { type: 'integer' }, allowPointer: { type: 'boolean' } }, required: ['app', 'allowPointer'] },
+    description: 'Pointer click by element index, stable target, or screenshot coordinates. Prefer perform_secondary_action when possible. Requires allowPointer:true. Mouse position is restored after the call.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, elementId: ELEMENT_ID_SCHEMA, element_id: ELEMENT_ID_SCHEMA, elementDescription: ELEMENT_DESCRIPTION_SCHEMA, element_description: ELEMENT_DESCRIPTION_SCHEMA, x: { type: 'number' }, y: { type: 'number' }, mouse_button: { type: 'string', enum: ['left', 'right', 'middle'] }, click_count: { type: 'integer' }, allowPointer: { type: 'boolean' } }, required: ['app', 'allowPointer'] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   drag: {
@@ -131,6 +133,83 @@ function normalizeToolArguments(args) {
     delete normalized.element;
   }
   if (normalized.element_index !== undefined && normalized.element_index !== null) normalized.element_index = String(normalized.element_index);
+  return normalized;
+}
+
+function toolResultText(result) {
+  return (result?.content || [])
+    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text)
+    .join('\n');
+}
+
+function parseElementInfo(text) {
+  const elements = [];
+  for (const rawLine of text.split('\n')) {
+    const match = rawLine.match(/^\s*(\d+)\s+(.+)$/);
+    if (!match) continue;
+    const line = match[0].trim();
+    const id = line.match(/(?:^|[\s,])ID:\s*([^,\n]+)/)?.[1]?.trim();
+    const explicitDescription = line.match(/Description:\s*([^,\n]+)/)?.[1]?.trim();
+    const buttonLabel = line.match(/^\d+\s+button\s+([^,]+?)(?:,\s|$)/)?.[1]?.trim();
+    const description = explicitDescription ?? (buttonLabel && !buttonLabel.startsWith('Description:') ? buttonLabel : undefined);
+    elements.push({ index: match[1], id, description, line });
+  }
+  return elements;
+}
+
+function updateElementCache(cache, app, result) {
+  if (typeof app !== 'string') return;
+  const elements = parseElementInfo(toolResultText(result));
+  if (elements.length > 0) cache.set(app, elements);
+}
+
+function elementSummary(elements, limit = 40) {
+  if (elements.length === 0) return 'No cached elements for this app.';
+  const shown = elements.slice(0, limit).map((element) => element.line).join('\n');
+  const remaining = elements.length > limit ? `\n…${elements.length - limit} more elements omitted` : '';
+  return `${shown}${remaining}`;
+}
+
+function targetsElement(tool, args) {
+  if (tool === 'get_app_state' || typeof args.app !== 'string') return false;
+  return args.element_index !== undefined || args.element !== undefined || typeof args.elementId === 'string' || typeof args.element_id === 'string' || typeof args.elementDescription === 'string' || typeof args.element_description === 'string';
+}
+
+function resolveElementTarget(args, cache) {
+  const normalized = normalizeToolArguments(args);
+  const elementId = normalized.elementId ?? normalized.element_id;
+  if (typeof elementId === 'string' && normalized.element_index === undefined) {
+    if (typeof normalized.app !== 'string') throw new Error('elementId targeting requires an app argument');
+    const elements = cache.get(normalized.app) || [];
+    const match = elements.find((element) => element.id === elementId);
+    if (!match) {
+      const knownIds = elements.map((element) => element.id).filter(Boolean).join(', ');
+      throw new Error(`No elementId ${elementId} found for ${normalized.app}.${knownIds ? ` Known IDs: ${knownIds}.` : ''}\nAvailable elements:\n${elementSummary(elements)}`);
+    }
+    normalized.element_index = match.index;
+    delete normalized.elementId;
+    delete normalized.element_id;
+  }
+  const elementDescription = normalized.elementDescription ?? normalized.element_description;
+  if (typeof elementDescription === 'string' && normalized.element_index === undefined) {
+    if (typeof normalized.app !== 'string') throw new Error('elementDescription targeting requires an app argument');
+    const elements = cache.get(normalized.app) || [];
+    const matches = elements.filter((element) => element.description?.toLowerCase() === elementDescription.toLowerCase());
+    if (matches.length !== 1) {
+      const reason = matches.length === 0 ? 'No' : `Ambiguous ${matches.length}`;
+      throw new Error(`${reason} elementDescription ${elementDescription} found for ${normalized.app}. Match is exact and case-insensitive.\nAvailable elements:\n${elementSummary(elements)}`);
+    }
+    normalized.element_index = matches[0].index;
+    delete normalized.elementDescription;
+    delete normalized.element_description;
+  }
+  if (normalized.element_index !== undefined) {
+    delete normalized.elementId;
+    delete normalized.element_id;
+    delete normalized.elementDescription;
+    delete normalized.element_description;
+  }
   return normalized;
 }
 
@@ -296,6 +375,7 @@ function clientRequest(method, params, timeoutMs = REQUEST_TIMEOUT_MS) {
 }
 
 const appServer = new AppServerClient({ codexBin: process.env.CODEX_BIN || DEFAULT_CODEX_BIN, cwd: process.env.CODEX_CU_MCP_CWD || DEFAULT_CWD, elicitationHandler: handleElicitation });
+const elementCache = new Map();
 let stdinBuffer = '';
 
 async function handleRequest(message) {
@@ -312,13 +392,19 @@ async function handleRequest(message) {
     }
     if (method === 'tools/call') {
       const name = params.name;
-      const args = normalizeToolArguments(params.arguments || {});
+      let args = normalizeToolArguments(params.arguments || {});
       if (!TOOL_SCHEMAS[name]) throw new Error(`unknown tool: ${name}`);
       if (POINTER_TOOLS.has(name) && args.allowPointer !== true) throw new Error(`${name} requires allowPointer:true; prefer non-pointer actions when possible`);
+      if (targetsElement(name, args)) {
+        const refresh = await appServer.callTool('get_app_state', { app: args.app, approval: args.approval || 'inherit' });
+        updateElementCache(elementCache, args.app, refresh);
+      }
+      args = resolveElementTarget(args, elementCache);
       const mouseBefore = POINTER_TOOLS.has(name) ? getMousePosition() : null;
       let result;
       try {
         result = await appServer.callTool(name, args);
+        updateElementCache(elementCache, args.app, result);
       } finally {
         if (mouseBefore) restoreMousePosition(mouseBefore);
       }

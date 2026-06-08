@@ -143,6 +143,7 @@ export function imageInfo(path) {
   const height = Number((result.stdout.match(/pixelHeight:\s*(\d+)/) || [])[1]);
   return {
     path: resolve(path),
+    bytes: readFileSync(path).byteLength,
     sha256: sha256File(path),
     width: Number.isFinite(width) ? width : null,
     height: Number.isFinite(height) ? height : null,
@@ -168,15 +169,18 @@ export function calculatorDisplayFromStep(step) {
 export function calculatorMutationSteps() {
   return [
     { label: 'Read Calculator before mutation', tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { label: 'Clear Calculator via accessibility Press', tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '6', action: 'Press' } },
+    { label: 'Reset Calculator with Escape', tool: 'press_key', arguments: { app: 'Calculator', key: 'Escape' } },
+    { label: 'Reset Calculator with Escape again', tool: 'press_key', arguments: { app: 'Calculator', key: 'Escape' } },
+    { label: 'Verify reset display is 0', tool: 'get_app_state', arguments: { app: 'Calculator' } },
+    { label: 'Clear Calculator via stable AllClear ID', tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'AllClear', action: 'Press' } },
     { label: 'Verify display is 0', tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { label: 'Press digit 1 via accessibility Press', tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '17', action: 'Press' } },
+    { label: 'Press digit 1 via stable One ID', tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'One', action: 'Press' } },
     { label: 'Verify display is 1', tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { label: 'Clear again via accessibility Press', tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '6', action: 'Press' } },
+    { label: 'Clear non-zero display by description', tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementDescription: 'Clear', action: 'Press' } },
     { label: 'Verify display is back to 0', tool: 'get_app_state', arguments: { app: 'Calculator' } },
     { label: 'Press key 2', tool: 'press_key', arguments: { app: 'Calculator', key: '2' } },
     { label: 'Verify display is 2', tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { label: 'Restore Calculator to 0', tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '6', action: 'Press' } },
+    { label: 'Restore Calculator to 0 by description', tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementDescription: 'Clear', action: 'Press' } },
     { label: 'Verify restored display is 0', tool: 'get_app_state', arguments: { app: 'Calculator' } },
   ];
 }

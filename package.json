@@ -2,11 +2,38 @@
   "name": "macuse",
   "version": "0.1.0",
   "private": true,
-  "description": "External harness for reusing OpenAI Codex Computer Use from non-Codex agents.",
+  "description": "External harness and pi extension for reusing OpenAI Codex Computer Use from non-Codex agents.",
+  "type": "module",
+  "author": "Mitch Fultz (https://github.com/fitchmultz)",
+  "license": "MIT",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "extension",
+    "macuse",
+    "codex",
+    "computer-use",
+    "macos",
+    "automation"
+  ],
+  "files": [
+    "extensions",
+    "tools",
+    "configs",
+    "docs",
+    "README.md",
+    "AGENTS.md"
+  ],
   "bin": {
     "macuse-doctor": "tools/macuse-doctor.mjs",
     "macuse-demo": "tools/macuse-demo.mjs",
     "macuse-config": "tools/macuse-config.mjs"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/codex-computer-use.ts"
+    ]
   },
   "scripts": {
     "doctor": "node tools/macuse-doctor.mjs",
@@ -17,9 +44,23 @@
     "validate:read-only": "node tools/validate-macuse.mjs read-only",
     "validate:mutating": "node tools/validate-macuse.mjs mutating",
     "validate:focus": "node tools/validate-macuse.mjs focus",
-    "validate:mcp": "node tools/validate-macuse.mjs mcp"
+    "validate:mcp": "node tools/validate-macuse.mjs mcp",
+    "pack:check": "npm pack --dry-run",
+    "prepublishOnly": "node tools/validate-macuse.mjs quick && npm pack --dry-run"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.19.0"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "typebox": {
+      "optional": true
+    }
   }
 }

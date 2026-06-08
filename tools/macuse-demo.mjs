@@ -20,7 +20,7 @@ import {
 const VERSION = '0.1.0';
 
 function help() {
-  process.stdout.write(`macuse live demo ${VERSION}\n\nUsage:\n  node tools/macuse-demo.mjs [options]\n\nOptions:\n  --out <dir>              Artifact directory. Default: .scratch/macuse-demo-<timestamp>.\n  --skip-doctor            Skip the embedded standard doctor pass.\n  --skip-mcp               Skip the standard-MCP wrapper validation pass.\n  --tool-timeout-ms <ms>   Tool timeout for live checks. Default: 90000.\n  -h, --help               Show this help.\n\nWhat it proves:\n  - app-server-backed Computer Use works outside Codex\n  - screenshots/state can be captured with saved artifacts\n  - Calculator can be mutated and restored without pointer clicks\n  - frontmost app is not stolen by the target app\n  - mouse position is preserved\n  - Cursor/standard-MCP wrapper is ready, unless --skip-mcp is passed\n\nExamples:\n  node tools/macuse-demo.mjs\n  node tools/macuse-demo.mjs --out .scratch/demo\n`);
+  process.stdout.write(`macuse live demo ${VERSION}\n\nUsage:\n  node tools/macuse-demo.mjs [options]\n\nOptions:\n  --out <dir>              Artifact directory. Default: .scratch/macuse-demo-<timestamp>.\n  --skip-doctor            Skip the embedded standard doctor pass.\n  --skip-mcp               Skip the standard-MCP wrapper validation pass.\n  --tool-timeout-ms <ms>   Tool timeout for live checks. Default: 90000.\n  -h, --help               Show this help.\n\nWhat it proves:\n  - app-server-backed Computer Use works outside Codex\n  - screenshots/state can be captured with saved artifacts\n  - Calculator can be mutated and restored without pointer clicks\n  - frontmost app is not stolen by the target app\n  - guarded sequences restore mouse position when --preserve-mouse is used\n  - Cursor/standard-MCP wrapper is ready, unless --skip-mcp is passed\n\nExamples:\n  node tools/macuse-demo.mjs\n  node tools/macuse-demo.mjs --out .scratch/demo\n`);
 }
 
 function parse(argv) {
@@ -54,8 +54,9 @@ function renderReport(report) {
   const verdictRows = [
     ['Codex app-server bridge', report.status.toolsFound === 10 ? '✅' : '❌', `${report.status.toolsFound} Computer Use tools discovered`],
     ['Calculator mutation', report.status.calculatorMutation ? '✅' : '❌', `display 1=${report.displays.afterOne}; key 2=${report.displays.afterKey}; restored=${report.displays.afterRestore}`],
-    ['Focus preservation', report.status.focusPreserved ? '✅' : '❌', `${report.focus.before?.bundleId || 'unknown'} → ${report.focus.after?.bundleId || 'unknown'}`],
-    ['Mouse preservation', report.status.mousePreserved ? '✅' : '❌', `seq1 ${formatPoint(report.mouse.sequenceOne?.before)} → ${formatPoint(report.mouse.sequenceOne?.restored)}; seq2 ${formatPoint(report.mouse.sequenceTwo?.before)} → ${formatPoint(report.mouse.sequenceTwo?.restored)}`],
+    ['Target app not left frontmost', report.status.targetAppNotLeftFrontmost ? '✅' : '❌', `${report.focus.before?.bundleId || 'unknown'} → ${report.focus.after?.bundleId || 'unknown'}`],
+    ['Exact frontmost app', report.status.exactFocusPreserved ? '✅' : '⚠️', `${report.focus.before?.bundleId || 'unknown'} → ${report.focus.after?.bundleId || 'unknown'}`],
+    ['Guarded sequence mouse restore', report.status.mousePreserved ? '✅' : '❌', `seq1 ${formatPoint(report.mouse.sequenceOne?.before)} → ${formatPoint(report.mouse.sequenceOne?.restored)}; seq2 ${formatPoint(report.mouse.sequenceTwo?.before)} → ${formatPoint(report.mouse.sequenceTwo?.restored)}`],
     ['MCP wrapper', report.status.mcpValidated === null ? 'skipped' : report.status.mcpValidated ? '✅' : '❌', report.status.mcpValidated === null ? 'not run' : 'validated standard MCP wrapper and approval proxy'],
   ];
   const artifacts = [
@@ -67,7 +68,7 @@ function renderReport(report) {
     ['After screenshot', 'after.jpg'],
     ['Cursor MCP config', 'cursor-mcp.json'],
   ];
-  return `# macuse live demo\n\nGenerated: ${report.generatedAt}\nArtifact directory: ${report.out}\n\n## Verdict\n\n${report.ok ? '✅ External Codex Computer Use is working with focus-safe UX.' : '❌ Demo found a problem. Inspect transcript.json.'}\n\n${markdownTable(['Proof point', 'Status', 'Evidence'], verdictRows)}\n\n## What happened\n\n1. Generated a ready-to-copy Cursor MCP config.\n2. Ran a standard doctor pass${report.doctor ? ' and stored doctor artifacts' : ' (skipped by option)'}.\n3. Reset Calculator with Escape before assertions, so existing app state does not affect the demo.\n4. Captured Calculator state and screenshot before mutation.\n5. Used accessibility actions and keyboard input, not pointer clicks, to mutate Calculator.\n6. Captured a during screenshot with display **1**.\n7. Verified display changed to **1**, changed to **2**, and restored to **0**.\n8. Captured Calculator state and screenshot after restore.\n9. Verified the frontmost app was preserved and the guarded sequences restored mouse position.\n${report.status.mcpValidated === null ? '10. Skipped MCP wrapper validation by option.' : '10. Validated the standard MCP wrapper, including approval elicitation and pointer guard behavior.'}\n\n## Artifacts\n\n${markdownTable(['Artifact', 'Path'], artifacts)}\n\n## Screenshots\n\n| Before | During | After |\n| --- | --- | --- |\n| ![before](before.jpg) | ![during](during.jpg) | ![after](after.jpg) |\n\n## Image hashes\n\n${markdownTable(['Image', 'Size', 'SHA-256'], [
+  return `# macuse live demo\n\nGenerated: ${report.generatedAt}\nArtifact directory: ${report.out}\n\n## Verdict\n\n${report.ok ? '✅ External Codex Computer Use is working with focus-safe UX.' : '❌ Demo found a problem. Inspect transcript.json.'}\n\n${markdownTable(['Proof point', 'Status', 'Evidence'], verdictRows)}\n\n## What happened\n\n1. Generated a ready-to-copy Cursor MCP config.\n2. Ran a standard doctor pass${report.doctor ? ' and stored doctor artifacts' : ' (skipped by option)'}.\n3. Reset Calculator with Escape before assertions, so existing app state does not affect the demo.\n4. Captured Calculator state and screenshot before mutation.\n5. Used accessibility actions and keyboard input, not pointer clicks, to mutate Calculator.\n6. Captured a during screenshot with display **1**.\n7. Verified display changed to **1**, changed to **2**, and restored to **0**.\n8. Captured Calculator state and screenshot after restore.\n9. Verified Calculator was not left frontmost, recorded exact frontmost-app drift, and verified the guarded preserve-mouse sequences restored mouse position.\n${report.status.mcpValidated === null ? '10. Skipped MCP wrapper validation by option.' : '10. Validated the standard MCP wrapper, including approval elicitation and pointer guard behavior.'}\n\n## Artifacts\n\n${markdownTable(['Artifact', 'Path'], artifacts)}\n\n## Screenshots\n\n| Before | During | After |\n| --- | --- | --- |\n| ![before](before.jpg) | ![during](during.jpg) | ![after](after.jpg) |\n\n## Image hashes\n\n${markdownTable(['Image', 'Size', 'SHA-256'], [
     ['before.jpg', `${report.images.before?.width || '?'}x${report.images.before?.height || '?'}`, report.images.before?.sha256 || 'missing'],
     ['during.jpg', `${report.images.during?.width || '?'}x${report.images.during?.height || '?'}`, report.images.during?.sha256 || 'missing'],
     ['after.jpg', `${report.images.after?.width || '?'}x${report.images.after?.height || '?'}`, report.images.after?.sha256 || 'missing'],
@@ -92,8 +93,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:4
 <tr><th>Check</th><th>Evidence</th></tr>
 <tr><td>Tool surface</td><td>${report.status.toolsFound} Computer Use tools</td></tr>
 <tr><td>Calculator mutation</td><td>1=${safe(report.displays.afterOne)}, 2=${safe(report.displays.afterKey)}, restored=${safe(report.displays.afterRestore)}</td></tr>
-<tr><td>Focus</td><td>${safe(report.focus.before?.bundleId)} → ${safe(report.focus.after?.bundleId)}</td></tr>
-<tr><td>Mouse</td><td>seq1 ${safe(formatPoint(report.mouse.sequenceOne?.before))} → ${safe(formatPoint(report.mouse.sequenceOne?.restored))}; seq2 ${safe(formatPoint(report.mouse.sequenceTwo?.before))} → ${safe(formatPoint(report.mouse.sequenceTwo?.restored))}</td></tr>
+<tr><td>Target app focus</td><td>${safe(report.focus.before?.bundleId)} → ${safe(report.focus.after?.bundleId)}; target not left frontmost=${report.status.targetAppNotLeftFrontmost}</td></tr>
+<tr><td>Exact frontmost app</td><td>preserved=${report.status.exactFocusPreserved}</td></tr>
+<tr><td>Guarded sequence mouse restore</td><td>seq1 ${safe(formatPoint(report.mouse.sequenceOne?.before))} → ${safe(formatPoint(report.mouse.sequenceOne?.restored))}; seq2 ${safe(formatPoint(report.mouse.sequenceTwo?.before))} → ${safe(formatPoint(report.mouse.sequenceTwo?.restored))}</td></tr>
 <tr><td>MCP wrapper</td><td>${report.status.mcpValidated === null ? 'skipped' : report.status.mcpValidated ? 'validated' : 'failed'}</td></tr>
 </table></div>
 <div class="card"><h2>Screenshots</h2><div class="grid"><div><h3>Before</h3><img class="shot" src="before.jpg"></div><div><h3>During: display 1</h3><img class="shot" src="during.jpg"></div><div><h3>After restore</h3><img class="shot" src="after.jpg"></div></div></div>
@@ -148,9 +150,9 @@ async function main() {
 
   const sequenceOneSteps = [
     { label: 'Read Calculator before mutation', tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { label: 'Clear Calculator via accessibility Press', tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '6', action: 'Press' } },
+    { label: 'Clear Calculator via accessibility Press', tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'AllClear', action: 'Press' } },
     { label: 'Verify display is 0', tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { label: 'Press digit 1 via accessibility Press', tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '17', action: 'Press' } },
+    { label: 'Press digit 1 via accessibility Press', tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'One', action: 'Press' } },
     { label: 'Verify display is 1', tool: 'get_app_state', arguments: { app: 'Calculator' } },
   ];
   const sequenceOne = runJson('focus-safe Calculator sequence: show 1', ['tools/codex-computer-use-appserver.mjs', 'sequence', '--steps-json', JSON.stringify(sequenceOneSteps), '--allow-mutating', '--preserve-mouse', '--quiet', '--max-text-chars', '5000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 90_000 });
@@ -161,11 +163,11 @@ async function main() {
 
   const sequenceTwoSteps = [
     { label: 'Read Calculator before restore sequence', tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { label: 'Clear display via accessibility Press', tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '6', action: 'Press' } },
+    { label: 'Clear display via accessibility Press', tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementDescription: 'Clear', action: 'Press' } },
     { label: 'Verify display is 0', tool: 'get_app_state', arguments: { app: 'Calculator' } },
     { label: 'Press key 2', tool: 'press_key', arguments: { app: 'Calculator', key: '2' } },
     { label: 'Verify display is 2', tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { label: 'Restore Calculator to 0', tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '6', action: 'Press' } },
+    { label: 'Restore Calculator to 0', tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementDescription: 'Clear', action: 'Press' } },
     { label: 'Verify restored display is 0', tool: 'get_app_state', arguments: { app: 'Calculator' } },
   ];
   const sequenceTwo = runJson('focus-safe Calculator sequence: verify key and restore', ['tools/codex-computer-use-appserver.mjs', 'sequence', '--steps-json', JSON.stringify(sequenceTwoSteps), '--allow-mutating', '--preserve-mouse', '--quiet', '--max-text-chars', '5000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 90_000 });
@@ -190,7 +192,8 @@ async function main() {
     afterKey: calculatorDisplayFromStep(sequenceTwo.result.steps[4]),
     afterRestore: calculatorDisplayFromStep(sequenceTwo.result.steps[6]),
   };
-  const focusPreserved = focusBefore?.bundleId === 'com.apple.calculator' || focusAfter?.bundleId !== 'com.apple.calculator';
+  const targetAppNotLeftFrontmost = focusBefore?.bundleId === 'com.apple.calculator' || focusAfter?.bundleId !== 'com.apple.calculator';
+  const exactFocusPreserved = Boolean(focusBefore?.bundleId && focusBefore.bundleId === focusAfter?.bundleId);
   const sequenceMouseOne = sequenceOne.result.mousePreservation || {};
   const sequenceMouseTwo = sequenceTwo.result.mousePreservation || {};
   const mouseOnePreserved = Boolean(sequenceMouseOne.before && sequenceMouseOne.restored && sequenceMouseOne.before.x === sequenceMouseOne.restored.x && sequenceMouseOne.before.y === sequenceMouseOne.restored.y);
@@ -200,7 +203,7 @@ async function main() {
   const toolsFound = doctor?.computerUseTools?.length || 10;
 
   const report = {
-    ok: calculatorMutation && focusPreserved && mousePreserved && (mcpValidated !== false) && (doctor ? doctor.ok : true),
+    ok: calculatorMutation && targetAppNotLeftFrontmost && mousePreserved && (mcpValidated !== false) && (doctor ? doctor.ok : true),
     generatedAt: transcript.generatedAt,
     out: opts.out,
     repoRoot: REPO_ROOT,
@@ -208,7 +211,8 @@ async function main() {
     status: {
       toolsFound,
       calculatorMutation,
-      focusPreserved,
+      targetAppNotLeftFrontmost,
+      exactFocusPreserved,
       mousePreserved,
       mcpValidated,
     },

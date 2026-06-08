@@ -1,6 +1,7 @@
 #!/usr/bin/env node
+import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
-import { accessSync, constants, mkdirSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 
 const VERSION = '0.1.0';
@@ -10,6 +11,7 @@ const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
 const DEFAULT_THREAD_TIMEOUT_MS = 45000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 3000;
 const DEFAULT_MAX_TEXT_CHARS = 20000;
+const DEFAULT_COMPUTER_USE_PLUGIN_ROOT = '/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use';
 const FEATURE_FLAGS = ['computer_use', 'plugins', 'tool_call_mcp_elicitation'];
 
 const EXIT = Object.freeze({
@@ -67,7 +69,7 @@ class ChildExitError extends CliError {
 }
 
 function printHelp() {
-  process.stdout.write(`Codex Computer Use app-server bridge ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver.mjs status [options]\n  node tools/codex-computer-use-appserver.mjs list-apps [options]\n  node tools/codex-computer-use-appserver.mjs get-state --app <app> [--approval inherit|accept-all|accept-once|deny] [options]\n  node tools/codex-computer-use-appserver.mjs call --tool <tool> --arguments-json <json> [options]\n  node tools/codex-computer-use-appserver.mjs sequence --steps-json <json-array> [options]\n\nModes:\n  status\n      Start Codex app-server and print MCP server status. This proves the\n      app-server can discover the Computer Use MCP server and its tools.\n\n  list-apps\n      Call the read-only Computer Use list_apps tool through Codex app-server.\n      This is the safest positive service-backed regression probe.\n\n  get-state --app <app> [--approval inherit|accept-all|accept-once|deny]\n      Call the read-only get_app_state tool through Codex app-server.\n      Default approval=inherit auto-accepts Computer Use app-approval\n      elicitations, matching Codex's Any App setting for this external bridge.\n\n  call --tool <tool> --arguments-json <json>\n      Generic app-server-backed tool call. By default only read-only Computer\n      Use tools are allowed. Pass --allow-mutating to call click/type/scroll/etc.\n      Do not use mutating tools without an explicit task-level safety policy.\n\n  sequence --steps-json <json-array>\n      Run multiple Computer Use tool calls in one app-server thread. Each step\n      is {\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}}.\n      Steps may include label, expectText, expectAbsentText, and allowError.\n      Element-targeted tools accept element_index as a string or number, and\n      element as an alias; the bridge coerces both to upstream's string field.\n      Use this for get_app_state -> action -> get_app_state validation.\n\nOptions:\n  --codex <path>                 Codex CLI/app-server binary.\n                                 Default: ${DEFAULT_CODEX_BIN}\n                                 Env: CODEX_BIN\n  --cwd <path>                   Thread cwd. Default: current directory.\n  --app <name|bundle|path>       App for get-state.\n  --tool <name>                  Computer Use tool for call mode.\n  --arguments-json <json>        JSON object arguments for call mode.\n  --steps-json <json-array>      JSON array of sequence steps.\n  --approval <mode>              inherit, accept-all, accept-once, or deny. Default: inherit.\n  --include-image                Keep image blocks in JSON output. Default: omit.\n  --save-image <path>            Save the first returned image block to a file.\n  --max-text-chars <n>           Truncate each text block in output. Default: ${DEFAULT_MAX_TEXT_CHARS}\n  --tool-timeout-ms <ms>         Tool call timeout. Default: ${DEFAULT_TOOL_TIMEOUT_MS}\n  --startup-timeout-ms <ms>      initialize timeout. Default: ${DEFAULT_STARTUP_TIMEOUT_MS}\n  --thread-timeout-ms <ms>       thread/start timeout. Default: ${DEFAULT_THREAD_TIMEOUT_MS}\n  --shutdown-timeout-ms <ms>     app-server shutdown grace period. Default: ${DEFAULT_SHUTDOWN_TIMEOUT_MS}\n  --allow-mutating               Permit call/sequence mode to invoke non-read-only tools.\n  --preserve-mouse               Restore mouse cursor position after the call/sequence.\n  --pretty                       Pretty-print JSON output.\n  --quiet                        Suppress stderr event logs.\n  -h, --help                     Show this help.\n\nExit codes:\n  0  success\n  1  bridge/app-server failure\n  2  usage error\n  3  missing Codex app-server binary\n  4  timeout\n  5  child process exited unexpectedly\n\nSafety:\n  list-apps and get-state are read-only Computer Use tools, though get-state can\n  reveal screen/app contents and may launch or foreground an app. Mutating tools\n  are blocked unless --allow-mutating is explicitly passed.\n\nExamples:\n  node tools/codex-computer-use-appserver.mjs status --pretty\n  node tools/codex-computer-use-appserver.mjs list-apps --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app Calculator --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app Calculator --include-image --save-image .scratch/calculator.jpg\n  node tools/codex-computer-use-appserver.mjs call --tool list_apps --arguments-json '{}' --pretty\n  node tools/codex-computer-use-appserver.mjs sequence --allow-mutating --steps-json '[{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}},{\"tool\":\"click\",\"arguments\":{\"app\":\"Calculator\",\"element_index\":\"17\"}},{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}}]'\n`);
+  process.stdout.write(`Codex Computer Use app-server bridge ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver.mjs status [--full] [options]\n  node tools/codex-computer-use-appserver.mjs list-apps [options]\n  node tools/codex-computer-use-appserver.mjs get-state --app <app> [--approval inherit|accept-all|accept-once|deny] [options]\n  node tools/codex-computer-use-appserver.mjs call --tool <tool> --arguments-json <json> [options]\n  node tools/codex-computer-use-appserver.mjs sequence --steps-json <json-array> [options]\n\nModes:\n  status\n      Start Codex app-server and print compact Computer Use status. This proves\n      the app-server can discover the Computer Use MCP server and its tools.\n      Pass --full to print every app-server MCP server for diagnostics.\n\n  list-apps\n      Call the read-only Computer Use list_apps tool through Codex app-server.\n      This is the safest positive service-backed regression probe.\n\n  get-state --app <app> [--approval inherit|accept-all|accept-once|deny]\n      Call the read-only get_app_state tool through Codex app-server.\n      Default approval=inherit auto-accepts Computer Use app-approval\n      elicitations, matching Codex's Any App setting for this external bridge.\n\n  call --tool <tool> --arguments-json <json>\n      Generic app-server-backed tool call. By default only read-only Computer\n      Use tools are allowed. Pass --allow-mutating to call click/type/scroll/etc.\n      Do not use mutating tools without an explicit task-level safety policy.\n\n  sequence --steps-json <json-array>\n      Run multiple Computer Use tool calls in one app-server thread. Each step\n      is {\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}}.\n      Steps may include label, expectText, expectAbsentText, and allowError.\n      Element-targeted tools accept element_index as a string or number,\n      element as an alias, stable elementId / element_id values, or exact\n      elementDescription / element_description matches. The bridge refreshes\n      app state before resolving stable targets and coerces indexes to strings.\n      Use this for get_app_state -> action -> get_app_state validation.\n\nOptions:\n  --codex <path>                 Codex CLI/app-server binary.\n                                 Default: ${DEFAULT_CODEX_BIN}\n                                 Env: CODEX_BIN\n  --cwd <path>                   Thread cwd. Default: current directory.\n  --app <name|bundle|path>       App for get-state.\n  --tool <name>                  Computer Use tool for call mode.\n  --arguments-json <json>        JSON object arguments for call mode.\n  --steps-json <json-array>      JSON array of sequence steps.\n  --approval <mode>              inherit, accept-all, accept-once, or deny. Default: inherit.\n  --include-image                Keep image blocks in JSON output. Default: omit.\n  --save-image <path>            Save the first returned image block to a file.\n  --max-text-chars <n>           Truncate each text block in output. Default: ${DEFAULT_MAX_TEXT_CHARS}\n  --tool-timeout-ms <ms>         Tool call timeout. Default: ${DEFAULT_TOOL_TIMEOUT_MS}\n  --startup-timeout-ms <ms>      initialize timeout. Default: ${DEFAULT_STARTUP_TIMEOUT_MS}\n  --thread-timeout-ms <ms>       thread/start timeout. Default: ${DEFAULT_THREAD_TIMEOUT_MS}\n  --shutdown-timeout-ms <ms>     app-server shutdown grace period. Default: ${DEFAULT_SHUTDOWN_TIMEOUT_MS}\n  --allow-mutating               Permit call/sequence mode to invoke non-read-only tools.\n  --preserve-mouse               Restore mouse cursor position after the call/sequence.\n  --full                         For status mode, include every app-server MCP server.\n  --pretty                       Pretty-print JSON output.\n  --quiet                        Suppress stderr event logs.\n  -h, --help                     Show this help.\n\nExit codes:\n  0  success\n  1  bridge/app-server failure\n  2  usage error\n  3  missing Codex app-server binary\n  4  timeout\n  5  child process exited unexpectedly\n\nSafety:\n  list-apps and get-state are read-only Computer Use tools, though get-state can\n  reveal screen/app contents and may launch or foreground an app. Mutating tools\n  are blocked unless --allow-mutating is explicitly passed.\n\nExamples:\n  node tools/codex-computer-use-appserver.mjs status --pretty\n  node tools/codex-computer-use-appserver.mjs status --full --pretty\n  node tools/codex-computer-use-appserver.mjs list-apps --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app Calculator --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app Calculator --include-image --save-image .scratch/calculator.jpg\n  node tools/codex-computer-use-appserver.mjs call --tool list_apps --arguments-json '{}' --pretty\n  node tools/codex-computer-use-appserver.mjs sequence --allow-mutating --steps-json '[{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}},{\"tool\":\"perform_secondary_action\",\"arguments\":{\"app\":\"Calculator\",\"elementId\":\"One\",\"action\":\"Press\"}},{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}}]'\n`);
 }
 function normalizeArgTokens(argv) {
   const tokens = [];
@@ -122,6 +124,122 @@ function normalizeToolArguments(args) {
     delete normalized.element;
   }
   if (normalized.element_index !== undefined && normalized.element_index !== null) normalized.element_index = String(normalized.element_index);
+  return normalized;
+}
+
+function contentText(content) {
+  return (content || [])
+    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text)
+    .join('\n');
+}
+
+function parseElementInfo(text) {
+  const elements = [];
+  for (const rawLine of text.split('\n')) {
+    const match = rawLine.match(/^\s*(\d+)\s+(.+)$/);
+    if (!match) continue;
+    const line = match[0].trim();
+    const id = line.match(/(?:^|[\s,])ID:\s*([^,\n]+)/)?.[1]?.trim();
+    const explicitDescription = line.match(/Description:\s*([^,\n]+)/)?.[1]?.trim();
+    const buttonLabel = line.match(/^\d+\s+button\s+([^,]+?)(?:,\s|$)/)?.[1]?.trim();
+    const description = explicitDescription ?? (buttonLabel && !buttonLabel.startsWith('Description:') ? buttonLabel : undefined);
+    elements.push({ index: match[1], id, description, line });
+  }
+  return elements;
+}
+
+function updateElementCache(cache, app, content) {
+  if (typeof app !== 'string') return;
+  const elements = parseElementInfo(contentText(content));
+  if (elements.length > 0) cache.set(app, elements);
+}
+
+function elementTargetHint(element) {
+  if (element.id) return `target: { elementId: ${JSON.stringify(element.id)} }`;
+  if (element.description) return `target: { elementDescription: ${JSON.stringify(element.description)} }`;
+  return `fallback: { element_index: ${JSON.stringify(element.index)} }`;
+}
+
+function elementLineWithTargetHint(element) {
+  return `${element.line} — ${elementTargetHint(element)}`;
+}
+
+function elementSummary(elements, limit = 40) {
+  if (elements.length === 0) return 'No cached elements for this app.';
+  const shown = elements.slice(0, limit).map(elementLineWithTargetHint).join('\n');
+  const remaining = elements.length > limit ? `\n…${elements.length - limit} more elements omitted` : '';
+  return `${shown}${remaining}`;
+}
+
+function editDistance(a, b) {
+  const aa = String(a).toLowerCase();
+  const bb = String(b).toLowerCase();
+  const previous = Array.from({ length: bb.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= aa.length; i += 1) {
+    let last = previous[0];
+    previous[0] = i;
+    for (let j = 1; j <= bb.length; j += 1) {
+      const old = previous[j];
+      previous[j] = aa[i - 1] === bb[j - 1] ? last : Math.min(previous[j - 1], previous[j], last) + 1;
+      last = old;
+    }
+  }
+  return previous[bb.length] ?? 0;
+}
+
+function closestElementSuggestions(elements, value, field, limit = 3) {
+  const candidates = elements
+    .map((element) => ({ element, value: element[field] }))
+    .filter((candidate) => typeof candidate.value === 'string' && candidate.value.length > 0)
+    .map((candidate) => ({ ...candidate, score: editDistance(value, candidate.value) }))
+    .sort((a, b) => a.score - b.score)
+    .slice(0, limit);
+  if (candidates.length === 0) return '';
+  return candidates.map((candidate) => `${candidate.value} (${elementTargetHint(candidate.element)})`).join(', ');
+}
+
+function targetsElement(tool, args) {
+  if (tool === 'get_app_state' || typeof args.app !== 'string') return false;
+  return args.element_index !== undefined || args.element !== undefined || typeof args.elementId === 'string' || typeof args.element_id === 'string' || typeof args.elementDescription === 'string' || typeof args.element_description === 'string';
+}
+
+function resolveElementTarget(args, cache) {
+  const normalized = normalizeToolArguments(args);
+  const elementId = normalized.elementId ?? normalized.element_id;
+  if (typeof elementId === 'string' && normalized.element_index === undefined) {
+    if (typeof normalized.app !== 'string') throw new UsageError('elementId targeting requires an app argument');
+    const elements = cache.get(normalized.app) || [];
+    const match = elements.find((element) => element.id === elementId);
+    if (!match) {
+      const knownIds = elements.map((element) => element.id).filter(Boolean).join(', ');
+      const closest = closestElementSuggestions(elements, elementId, 'id');
+      throw new CliError(`No elementId ${elementId} found for ${normalized.app}.${knownIds ? ` Known IDs: ${knownIds}.` : ''}${closest ? `\nClosest elementId matches: ${closest}.` : ''}\nAvailable elements:\n${elementSummary(elements)}`);
+    }
+    normalized.element_index = match.index;
+    delete normalized.elementId;
+    delete normalized.element_id;
+  }
+  const elementDescription = normalized.elementDescription ?? normalized.element_description;
+  if (typeof elementDescription === 'string' && normalized.element_index === undefined) {
+    if (typeof normalized.app !== 'string') throw new UsageError('elementDescription targeting requires an app argument');
+    const elements = cache.get(normalized.app) || [];
+    const matches = elements.filter((element) => element.description?.toLowerCase() === elementDescription.toLowerCase());
+    if (matches.length !== 1) {
+      const reason = matches.length === 0 ? 'No' : `Ambiguous ${matches.length}`;
+      const closest = closestElementSuggestions(elements, elementDescription, 'description');
+      throw new CliError(`${reason} elementDescription ${elementDescription} found for ${normalized.app}. Match is exact and case-insensitive.${closest ? `\nClosest elementDescription matches: ${closest}.` : ''}\nAvailable elements:\n${elementSummary(elements)}`);
+    }
+    normalized.element_index = matches[0].index;
+    delete normalized.elementDescription;
+    delete normalized.element_description;
+  }
+  if (normalized.element_index !== undefined) {
+    delete normalized.elementId;
+    delete normalized.element_id;
+    delete normalized.elementDescription;
+    delete normalized.element_description;
+  }
   return normalized;
 }
 
@@ -186,6 +304,7 @@ function parseArgs(argv) {
     shutdownTimeoutMs: DEFAULT_SHUTDOWN_TIMEOUT_MS,
     allowMutating: false,
     preserveMouse: false,
+    statusFull: false,
     pretty: false,
     quiet: false,
   };
@@ -214,6 +333,7 @@ function parseArgs(argv) {
       case '--shutdown-timeout-ms': opts.shutdownTimeoutMs = parsePositiveInt('--shutdown-timeout-ms', next()); break;
       case '--allow-mutating': opts.allowMutating = true; break;
       case '--preserve-mouse': opts.preserveMouse = true; break;
+      case '--full': opts.statusFull = true; break;
       case '--pretty': opts.pretty = true; break;
       case '--quiet': opts.quiet = true; break;
       default: throw new UsageError(`unknown option: ${token}`);
@@ -480,27 +600,51 @@ function toolResultText(result) {
     .join('\n');
 }
 
+function failureResult(message, maxTextChars) {
+  return {
+    content: [{ type: 'text', text: truncateString(message, maxTextChars) }],
+    isError: true,
+    meta: null,
+    omittedImages: 0,
+    savedImagePath: null,
+    savedImageArtifact: null,
+  };
+}
+
 function validateStepResult(step, filtered) {
+  const stepNumber = step.index + 1;
   if (filtered.isError && !step.allowError) {
-    throw new CliError(`sequence step ${step.index} ${step.tool} returned tool error`, EXIT.FAILURE, filtered);
+    throw new CliError(`sequence step ${stepNumber} (index ${step.index}) ${step.tool} returned tool error`, EXIT.FAILURE, filtered);
   }
   const text = toolResultText(filtered);
   for (const expected of step.expectText || []) {
     if (!text.includes(expected)) {
-      throw new CliError(`sequence step ${step.index} ${step.tool} missing expected text: ${expected}`, EXIT.FAILURE, { expected, textPreview: truncateString(text, 1000) });
+      throw new CliError(`sequence step ${stepNumber} (index ${step.index}) ${step.tool} missing expected text: ${expected}`, EXIT.FAILURE, { expected, textPreview: truncateString(text, 1000) });
     }
   }
   for (const unexpected of step.expectAbsentText || []) {
     if (text.includes(unexpected)) {
-      throw new CliError(`sequence step ${step.index} ${step.tool} contained forbidden text: ${unexpected}`, EXIT.FAILURE, { unexpected, textPreview: truncateString(text, 1000) });
+      throw new CliError(`sequence step ${stepNumber} (index ${step.index}) ${step.tool} contained forbidden text: ${unexpected}`, EXIT.FAILURE, { unexpected, textPreview: truncateString(text, 1000) });
     }
   }
+}
+
+function imageDimensions(path) {
+  const result = spawnSync('sips', ['-g', 'pixelWidth', '-g', 'pixelHeight', path], { encoding: 'utf8', timeout: 10000 });
+  if (result.status !== 0) return { width: null, height: null };
+  const width = Number((result.stdout.match(/pixelWidth:\s*(\d+)/) || [])[1]);
+  const height = Number((result.stdout.match(/pixelHeight:\s*(\d+)/) || [])[1]);
+  return {
+    width: Number.isFinite(width) ? width : null,
+    height: Number.isFinite(height) ? height : null,
+  };
 }
 
 function filterToolResult(result, opts) {
   const content = [];
   let omittedImages = 0;
   let savedImagePath = null;
+  let savedImageArtifact = null;
   for (const block of result?.content || []) {
     if (block?.type === 'text') {
       content.push({ ...block, text: truncateString(block.text || '', opts.maxTextChars) });
@@ -508,8 +652,18 @@ function filterToolResult(result, opts) {
       if (opts.saveImage && !savedImagePath && block.data) {
         const outPath = resolve(opts.saveImage);
         mkdirSync(dirname(outPath), { recursive: true });
-        writeFileSync(outPath, Buffer.from(block.data, 'base64'));
+        const imageData = Buffer.from(block.data, 'base64');
+        writeFileSync(outPath, imageData);
         savedImagePath = outPath;
+        const dimensions = imageDimensions(outPath);
+        savedImageArtifact = {
+          path: outPath,
+          bytes: imageData.byteLength,
+          sha256: createHash('sha256').update(imageData).digest('hex'),
+          width: dimensions.width,
+          height: dimensions.height,
+        };
+        content.push({ type: 'text', text: `Saved image artifact: ${outPath} (${imageData.byteLength} bytes, ${dimensions.width && dimensions.height ? `${dimensions.width}x${dimensions.height}` : 'unknown size'}, sha256=${savedImageArtifact.sha256})` });
       }
       if (opts.includeImage) content.push(block);
       else omittedImages += 1;
@@ -523,19 +677,74 @@ function filterToolResult(result, opts) {
     meta: result?._meta ?? result?.meta ?? null,
     omittedImages,
     savedImagePath,
+    savedImageArtifact,
+  };
+}
+
+function compareVersionLike(a, b) {
+  const aa = a.split(/[^0-9]+/).filter(Boolean).map(Number);
+  const bb = b.split(/[^0-9]+/).filter(Boolean).map(Number);
+  for (let i = 0; i < Math.max(aa.length, bb.length); i += 1) {
+    const delta = (aa[i] || 0) - (bb[i] || 0);
+    if (delta !== 0) return delta;
+  }
+  return a.localeCompare(b);
+}
+
+function discoverComputerUsePluginDir(root = DEFAULT_COMPUTER_USE_PLUGIN_ROOT) {
+  try {
+    const entries = readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort(compareVersionLike)
+      .reverse();
+    const found = entries.find((entry) => existsSync(resolve(root, entry, '.mcp.json')));
+    if (found) return resolve(root, found);
+  } catch {
+    // Keep status usable on machines without a populated Codex plugin cache.
+  }
+  return null;
+}
+
+function computerUsePluginStatus() {
+  const pluginDir = discoverComputerUsePluginDir();
+  if (!pluginDir) return { pluginDir: null, metadata: null };
+  const pluginJsonPath = resolve(pluginDir, '.codex-plugin/plugin.json');
+  try {
+    const plugin = JSON.parse(readFileSync(pluginJsonPath, 'utf8'));
+    return { pluginDir, metadata: { name: plugin.name ?? null, version: plugin.version ?? null, description: plugin.description ?? null } };
+  } catch {
+    return { pluginDir, metadata: null };
+  }
+}
+
+function summarizeServer(server) {
+  return {
+    name: server.name,
+    authStatus: server.authStatus,
+    toolNames: Object.keys(server.tools || {}).sort(),
+    resourceCount: (server.resources || []).length,
+    resourceTemplateCount: (server.resourceTemplates || []).length,
   };
 }
 
 function summarizeStatus(statusResult) {
   return {
     nextCursor: statusResult.nextCursor ?? null,
-    servers: (statusResult.data || []).map((server) => ({
-      name: server.name,
-      authStatus: server.authStatus,
-      toolNames: Object.keys(server.tools || {}).sort(),
-      resourceCount: (server.resources || []).length,
-      resourceTemplateCount: (server.resourceTemplates || []).length,
-    })),
+    servers: (statusResult.data || []).map(summarizeServer),
+  };
+}
+
+function summarizeComputerUseStatus(statusResult) {
+  const server = (statusResult.data || []).find((candidate) => candidate.name === 'computer-use');
+  const summarized = server ? summarizeServer(server) : null;
+  return {
+    present: Boolean(summarized),
+    authStatus: summarized?.authStatus ?? null,
+    toolCount: summarized?.toolNames?.length ?? 0,
+    toolNames: summarized?.toolNames ?? [],
+    resourceCount: summarized?.resourceCount ?? 0,
+    resourceTemplateCount: summarized?.resourceTemplateCount ?? 0,
   };
 }
 
@@ -578,34 +787,63 @@ async function runStatus(opts) {
     }, opts.startupTimeoutMs);
     client.notify('notifications/initialized');
     const status = await client.request('mcpServerStatus/list', { detail: 'toolsAndAuthOnly', limit: 100 }, opts.toolTimeoutMs);
+    const notifications = client.notifications.map((n) => ({ method: n.method, params: n.params })).slice(-20);
+    if (opts.statusFull) {
+      return {
+        ok: true,
+        mode: opts.mode,
+        codexBin: opts.codexBin,
+        cwd: opts.cwd,
+        initialized,
+        status: summarizeStatus(status),
+        notifications,
+      };
+    }
     return {
       ok: true,
       mode: opts.mode,
       codexBin: opts.codexBin,
       cwd: opts.cwd,
-      initialized,
-      status: summarizeStatus(status),
-      notifications: client.notifications.map((n) => ({ method: n.method, params: n.params })).slice(-20),
+      computerUse: summarizeComputerUseStatus(status),
+      plugin: computerUsePluginStatus(),
+      appServer: { initialized: Boolean(initialized), threadStarted: false },
+      notifications,
     };
   } finally {
     await client.stop();
   }
 }
 
+async function refreshElementCache(client, threadId, args, cache, opts) {
+  const refresh = await client.request('mcpServer/tool/call', {
+    threadId,
+    server: 'computer-use',
+    tool: 'get_app_state',
+    arguments: { app: args.app },
+  }, opts.toolTimeoutMs);
+  const filtered = filterToolResult(refresh, opts);
+  updateElementCache(cache, args.app, filtered.content);
+}
+
 async function runTool(opts) {
   return runWithThread(opts, async (client, { initialized, threadStart, threadId }) => {
+    const elementCache = new Map();
+    let args = opts.arguments;
+    if (targetsElement(opts.tool, args)) await refreshElementCache(client, threadId, args, elementCache, opts);
+    args = resolveElementTarget(args, elementCache);
     const result = await client.request('mcpServer/tool/call', {
       threadId,
       server: 'computer-use',
       tool: opts.tool,
-      arguments: opts.arguments,
+      arguments: args,
     }, opts.toolTimeoutMs);
     const filtered = filterToolResult(result, opts);
+    updateElementCache(elementCache, args.app, filtered.content);
     return {
       initialized,
       thread: threadStart.thread,
       tool: opts.tool,
-      arguments: opts.arguments,
+      arguments: args,
       result: filtered,
     };
   });
@@ -614,33 +852,74 @@ async function runTool(opts) {
 async function runSequence(opts) {
   return runWithThread(opts, async (client, { initialized, threadStart, threadId }) => {
     const steps = [];
+    const elementCache = new Map();
+    let failed = null;
     for (const [index, step] of opts.steps.entries()) {
       const started = Date.now();
-      const result = await client.request('mcpServer/tool/call', {
-        threadId,
-        server: 'computer-use',
-        tool: step.tool,
-        arguments: step.arguments,
-      }, opts.toolTimeoutMs);
-      const filtered = filterToolResult(result, opts);
-      const sequencedStep = {
-        index,
-        label: step.label,
-        tool: step.tool,
-        arguments: step.arguments,
-        durationMs: Date.now() - started,
-        result: filtered,
-        expectText: step.expectText,
-        expectAbsentText: step.expectAbsentText,
-        allowError: step.allowError,
-      };
-      validateStepResult(sequencedStep, filtered);
-      steps.push(sequencedStep);
+      let stepArgs = step.arguments;
+      try {
+        if (targetsElement(step.tool, stepArgs)) await refreshElementCache(client, threadId, stepArgs, elementCache, opts);
+        stepArgs = resolveElementTarget(stepArgs, elementCache);
+        const result = await client.request('mcpServer/tool/call', {
+          threadId,
+          server: 'computer-use',
+          tool: step.tool,
+          arguments: stepArgs,
+        }, opts.toolTimeoutMs);
+        const filtered = filterToolResult(result, opts);
+        updateElementCache(elementCache, stepArgs.app, filtered.content);
+        const sequencedStep = {
+          index,
+          label: step.label,
+          tool: step.tool,
+          arguments: stepArgs,
+          durationMs: Date.now() - started,
+          result: filtered,
+          expectText: step.expectText,
+          expectAbsentText: step.expectAbsentText,
+          allowError: step.allowError,
+        };
+        try {
+          validateStepResult(sequencedStep, filtered);
+        } catch (error) {
+          sequencedStep.result.isError = true;
+          sequencedStep.result.content.push({ type: 'text', text: `Sequence stopped: ${error.message || String(error)}` });
+          failed = { index, stepNumber: index + 1, tool: step.tool, label: step.label, message: error.message || String(error) };
+        }
+        steps.push(sequencedStep);
+        if (failed) break;
+      } catch (error) {
+        const message = error.message || String(error);
+        const allowed = step.allowError;
+        if (!allowed) failed = { index, stepNumber: index + 1, tool: step.tool, label: step.label, message };
+        steps.push({
+          index,
+          label: step.label,
+          tool: step.tool,
+          arguments: stepArgs,
+          durationMs: Date.now() - started,
+          result: failureResult(`Sequence ${allowed ? 'allowed error' : 'stopped'} before completing step ${index + 1} (index ${index}, ${step.tool}):\n${message}`, opts.maxTextChars),
+          expectText: step.expectText,
+          expectAbsentText: step.expectAbsentText,
+          allowError: step.allowError,
+        });
+        if (!allowed) break;
+      }
     }
+    const completedStepCount = failed ? failed.index : steps.length;
     return {
+      ok: !failed,
       initialized,
       thread: threadStart.thread,
       steps,
+      failed,
+      failedStepIndex: failed?.index ?? null,
+      failedStepNumber: failed?.stepNumber ?? null,
+      failedStepLabel: failed?.label ?? null,
+      completedStepCount,
+      resumeFromStepIndex: failed?.index ?? null,
+      error: failed?.message ?? null,
+      exitCode: failed ? EXIT.FAILURE : 0,
     };
   });
 }
@@ -666,6 +945,7 @@ async function main() {
   }
   if (output && mouseBefore) output.mousePreservation = { before: mouseBefore, restored: getMousePosition() };
   writeJson(output, opts.pretty);
+  if (output?.ok === false) process.exitCode = output.exitCode || EXIT.FAILURE;
 }
 
 main().catch((error) => {

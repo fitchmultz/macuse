@@ -80,7 +80,7 @@ function commandCheck(name, command, args, opts = {}) {
 }
 
 function toolNamesFromStatus(statusJson) {
-  return statusJson?.status?.servers?.find((server) => server.name === 'computer-use')?.toolNames || [];
+  return statusJson?.computerUse?.toolNames || statusJson?.status?.servers?.find((server) => server.name === 'computer-use')?.toolNames || [];
 }
 
 function renderMarkdown(report) {

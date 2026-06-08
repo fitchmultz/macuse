@@ -315,9 +315,11 @@ node tools/validate-macuse.mjs focus
 
 Observed results:
 
-- `status` found `computer-use` with all expected tools:
-  `click`, `drag`, `get_app_state`, `list_apps`, `perform_secondary_action`,
-  `press_key`, `scroll`, `select_text`, `set_value`, and `type_text`.
+- `status` printed a compact Computer Use projection and found all expected
+  tools: `click`, `drag`, `get_app_state`, `list_apps`,
+  `perform_secondary_action`, `press_key`, `scroll`, `select_text`,
+  `set_value`, and `type_text`. Use `status --full` when the all-server
+  app-server MCP payload is needed for diagnostics.
 - `list-apps` returned a normal text result with running/recent apps and no
   elicitation.
 - `get-state --app Calculator` returned a normal text
@@ -333,7 +335,8 @@ Observed results:
   `perform_secondary_action`, verified display `1`, pressed key `2`, verified
   display `2`, cleared again, and verified display `0`.
 - `node tools/validate-macuse.mjs focus` repeated the mutating probe and passed
-  the frontmost-app preservation check: Calculator was not left frontmost.
+  the target-app focus check: Calculator was not left frontmost. Exact
+  before/after frontmost-app drift is reported as a warning, not a pass.
 
 This proves a pi/Cursor-style integration can work today by wrapping Codex
 app-server. Mutating actions should still stay inside the guarded sequence path

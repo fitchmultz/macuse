@@ -115,8 +115,11 @@ node tools/validate-macuse.mjs mcp
 
 The focus validation records the frontmost app before/after the mutating probe
 and fails if Calculator is left frontmost when it was not frontmost at the start.
-Mouse coordinates are reported for operator review, not used as a hard failure,
-because the user may move the mouse during the run.
+If the exact before/after frontmost app differs but Calculator is not left
+frontmost, validation prints a warning instead of a misleading pass. Whole-run
+mouse coordinate drift is also a warning, not a hard failure, because the user
+may move the mouse during the run. Demo sequences that pass `--preserve-mouse`
+check their own before/restored coordinates separately.
 
 Separate controlled TextEdit probes were also run:
 

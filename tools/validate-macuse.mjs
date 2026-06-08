@@ -5,15 +5,22 @@ import { existsSync } from 'node:fs';
 const VERSION = '0.1.0';
 const DEFAULT_APP = 'Calculator';
 const DEFAULT_TIMEOUT_MS = 90_000;
+const validationChecks = [];
+let jsonOutput = false;
+let activeOpts = null;
+
+function recordCheck(status, name, detail = '') {
+  validationChecks.push({ status, name, detail });
+}
 
 function help() {
-  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n  node tools/validate-macuse.mjs focus [options]\n  node tools/validate-macuse.mjs mcp [options]\n\nModes:\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, verify the pi\n      extension reuses one persistent app-server thread, run direct raw-MCP\n      discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only/denial probes: direct raw-MCP deny for\n      Finder, app-server list_apps, and app-server get_app_state for an app.\n\n  mutating\n      Run read-only plus harmless Calculator mutation smokes: clear, activate\n      digit 1, verify, press key 2, verify, clear, verify restore, and validate\n      pi element_index coercion, element aliases, elementId targeting, ID regex\n      parsing, allowError recovery, set_value normalization, and partial failure\n      diagnostics.\n\n  focus\n      Run mutating plus a frontmost-app preservation check. This fails if the\n      Calculator target is left frontmost after the sequence. Mouse position is\n      reported for operator review because humans may move it during the run.\n\n  mcp\n      Smoke-test the Cursor/standard-MCP wrapper: initialize, tools/list,\n      get_app_state, perform_secondary_action, and restore Calculator.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating intentionally clicks Calculator\n  buttons/keys only and restores the display to 0.\n\nExamples:\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs focus\n  node tools/validate-macuse.mjs mcp\n  node tools/validate-macuse.mjs read-only --app Calculator --tool-timeout-ms 120000\n`);
+  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n  node tools/validate-macuse.mjs focus [options]\n  node tools/validate-macuse.mjs mcp [options]\n\nModes:\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, verify the pi\n      extension reuses one persistent app-server thread, run direct raw-MCP\n      discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only/denial probes: direct raw-MCP deny for\n      Finder, app-server list_apps, and app-server get_app_state for an app.\n\n  mutating\n      Run read-only plus harmless Calculator mutation smokes: clear, activate\n      digit 1, verify, press key 2, verify, clear, verify restore, and validate\n      pi element_index coercion, stable element targeting, ID regex parsing,\n      allowError recovery, set_value normalization, and partial failure\n      diagnostics.\n\n  focus\n      Run mutating plus a target-app focus check. This fails if Calculator is\n      left frontmost after the sequence. Exact before/after frontmost mismatch\n      is reported as a warning because Computer Use may hand focus to another\n      non-target app. Mouse position is reported for operator review.\n\n  mcp\n      Smoke-test the Cursor/standard-MCP wrapper: initialize, tools/list,\n      get_app_state, perform_secondary_action, and restore Calculator.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  --json                         Print a machine-readable validation summary.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating intentionally clicks Calculator\n  buttons/keys only and restores the display to 0.\n\nExamples:\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs focus\n  node tools/validate-macuse.mjs mcp\n  node tools/validate-macuse.mjs read-only --app Calculator --tool-timeout-ms 120000\n`);
 }
 function parse(argv) {
   if (argv.includes('-h') || argv.includes('--help')) return { help: true };
   const mode = argv.shift() || 'quick';
   if (!['quick', 'read-only', 'mutating', 'focus', 'mcp'].includes(mode)) throw new Error(`unknown mode: ${mode}`);
-  const opts = { mode, app: DEFAULT_APP, toolTimeoutMs: DEFAULT_TIMEOUT_MS, verbose: false };
+  const opts = { mode, app: DEFAULT_APP, toolTimeoutMs: DEFAULT_TIMEOUT_MS, verbose: false, json: false };
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
     const next = () => {
@@ -27,6 +34,7 @@ function parse(argv) {
       if (!Number.isInteger(n) || n <= 0) throw new Error('--tool-timeout-ms must be a positive integer');
       opts.toolTimeoutMs = n;
     } else if (token === '--verbose') opts.verbose = true;
+    else if (token === '--json') opts.json = true;
     else throw new Error(`unknown option: ${token}`);
   }
   return opts;
@@ -40,7 +48,7 @@ function run(name, command, args, opts = {}) {
     timeout: opts.timeoutMs || 120_000,
     maxBuffer: 10 * 1024 * 1024,
   });
-  if (opts.verbose || result.status !== 0) {
+  if (!jsonOutput && (opts.verbose || result.status !== 0)) {
     if (result.stdout) process.stdout.write(result.stdout);
     if (result.stderr) process.stderr.write(result.stderr);
   }
@@ -58,6 +66,7 @@ let buffer = '';
 let sawElicitation = false;
 const pending = new Map();
 function send(message) { proc.stdin.write(JSON.stringify(message) + '\n'); }
+function text(result) { return (result?.content || []).filter((block) => block?.type === 'text').map((block) => block.text || '').join('\n'); }
 function request(method, params = {}, timeoutMs = 120000) {
   const id = nextId++;
   return new Promise((resolve, reject) => {
@@ -104,16 +113,20 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
   sawElicitation = false;
   const finderInherit = await request('tools/call', { name: 'get_app_state', arguments: { app: 'Finder' } }, 120000);
   if (finderInherit.isError === true) throw new Error('MCP default inherit did not auto-accept Finder app approval');
-  await request('tools/call', { name: 'get_app_state', arguments: { app: 'Calculator' } }, 120000);
+  const calculatorState = await request('tools/call', { name: 'get_app_state', arguments: { app: 'Calculator' } }, 120000);
+  const clearTarget = text(calculatorState).includes('button Clear') ? { elementDescription: 'Clear' } : { elementId: 'AllClear' };
+  await request('tools/call', { name: 'perform_secondary_action', arguments: { app: 'Calculator', ...clearTarget, action: 'Press' } }, 120000);
   let pointerGuarded = false;
   try {
-    await request('tools/call', { name: 'click', arguments: { app: 'Calculator', element_index: '17' } }, 120000);
+    await request('tools/call', { name: 'click', arguments: { app: 'Calculator', elementId: 'One' } }, 120000);
   } catch (error) {
     pointerGuarded = /allowPointer/.test(error.message || '');
   }
   if (!pointerGuarded) throw new Error('MCP wrapper did not guard pointer click without allowPointer:true');
-  await request('tools/call', { name: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: 17, action: 'Press' } }, 120000);
+  await request('tools/call', { name: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'AllClear', action: 'Press' } }, 120000);
   await request('tools/call', { name: 'perform_secondary_action', arguments: { app: 'Calculator', element: 6, action: 'Press' } }, 120000);
+  await request('tools/call', { name: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'One', action: 'Press' } }, 120000);
+  await request('tools/call', { name: 'perform_secondary_action', arguments: { app: 'Calculator', elementDescription: 'Clear', action: 'Press' } }, 120000);
   console.log(names.join(','));
 })().then(() => { proc.kill('SIGTERM'); }).catch((error) => { proc.kill('SIGTERM'); console.error(error.stack || error.message); process.exitCode = 1; });
 `;
@@ -222,24 +235,29 @@ factory({
   await tools.get('codex_cu_get_app_state').execute('state', { app: 'Calculator', detail: 'compact', maxTextChars: 1200, toolTimeoutMs: 90000 }, signal, () => {});
   const sequence = await tools.get('codex_cu_sequence').execute('sequence', {
     steps: [
-      { tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: 6, action: 'Press' } },
+      { tool: 'press_key', arguments: { app: 'Calculator', key: 'Escape' } },
+      { tool: 'press_key', arguments: { app: 'Calculator', key: 'Escape' } },
+      { tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'AllClear', action: 'Press' } },
       { tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementDescription: 'Add', action: 'NotARealAction' }, allowError: true },
       { tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'One', action: 'Press' } },
-      { tool: 'get_app_state', arguments: { app: 'Calculator' }, expectText: '‎1' },
-      { tool: 'perform_secondary_action', arguments: { app: 'Calculator', element: 6, action: 'Press' } },
-      { tool: 'get_app_state', arguments: { app: 'Calculator' }, expectText: '‎0' },
+      { tool: 'get_app_state', arguments: { app: 'Calculator' }, expectText: '1' },
+      { tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementDescription: 'Clear', action: 'Press' } },
+      { tool: 'get_app_state', arguments: { app: 'Calculator' }, expectText: '0' },
+      { tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: 6, action: 'Press' } },
+      { tool: 'get_app_state', arguments: { app: 'Calculator' }, expectText: '0' },
     ],
     allowMutating: true,
-    safetyNote: 'Validate Calculator-only element_index coercion, element alias, elementId targeting, and restore to zero.',
+    safetyNote: 'Validate Calculator-only element_index coercion, elementId and elementDescription targeting, and restore to zero.',
     detail: 'compact',
     maxTextChars: 1200,
     toolTimeoutMs: 90000,
   }, signal, () => {});
-  if (sequence.details.computerUse.steps[0].arguments.element_index !== '6') throw new Error('pi extension did not coerce numeric element_index to string');
-  if (sequence.details.computerUse.steps[1].arguments.element_index !== '20') throw new Error('pi extension did not resolve Calculator elementDescription Add to current element_index');
-  if (sequence.details.computerUse.steps[2].arguments.element_index !== '17') throw new Error('pi extension did not resolve Calculator elementId One to current element_index');
-  if (sequence.details.computerUse.steps[4].arguments.element_index !== '6') throw new Error('pi extension did not coerce element alias to element_index');
-  if (sequence.details.computerUse.implicitRefreshes < 4) throw new Error('pi extension did not refresh before element-targeted sequence steps');
+  if (sequence.details.computerUse.steps[2].arguments.element_index !== '6') throw new Error('pi extension did not resolve Calculator elementId AllClear to current element_index');
+  if (sequence.details.computerUse.steps[3].arguments.element_index !== '20') throw new Error('pi extension did not resolve Calculator elementDescription Add to current element_index');
+  if (sequence.details.computerUse.steps[4].arguments.element_index !== '17') throw new Error('pi extension did not resolve Calculator elementId One to current element_index');
+  if (sequence.details.computerUse.steps[6].arguments.element_index !== '6') throw new Error('pi extension did not resolve Calculator Clear description to current element_index');
+  if (sequence.details.computerUse.steps[8].arguments.element_index !== '6') throw new Error('pi extension did not coerce numeric element_index to string');
+  if (sequence.details.computerUse.implicitRefreshes < 5) throw new Error('pi extension did not refresh before element-targeted sequence steps');
   const partial = await tools.get('codex_cu_sequence').execute('partial', {
     steps: [
       { tool: 'get_app_state', arguments: { app: 'Calculator' } },
@@ -282,10 +300,11 @@ factory({
     maxTextChars: 3000,
     toolTimeoutMs: 90000,
   }, signal, () => {});
-  if (textEdit.content[0].text.includes('No elementId First Text View')) throw new Error('pi extension failed to parse TextEdit ID preceded by whitespace');
+  const textEditText = textEdit.content[0].text;
+  if (textEditText.includes('No elementId First Text View') && textEditText.includes('ID: First Text View')) throw new Error('pi extension failed to parse TextEdit ID preceded by whitespace');
   const compact = await tools.get('codex_cu_get_app_state').execute('compact', { app: 'TextEdit', detail: 'compact', maxTextChars: 6000, toolTimeoutMs: 90000 }, signal, () => {});
   if (/text 6\.5|text 7|text 7\.5/.test(compact.content[0].text)) throw new Error('pi extension compact mode kept TextEdit ruler marker text');
-  if (!compact.content[0].text.includes('First Text View')) throw new Error('pi extension compact mode omitted TextEdit text view ID');
+  if (!compact.content[0].text.includes('First Text View')) throw new Error('pi extension compact mode omitted TextEdit text view');
   if (handlers.has('session_shutdown')) await handlers.get('session_shutdown')({ reason: 'test' }, {});
   console.log(sequence.details.computerUse.steps.map((step) => step.arguments.element_index).filter(Boolean).join(','));
 })().catch(async (error) => {
@@ -319,8 +338,54 @@ function requireOk(name, json) {
   if (!json || json.ok !== true) throw new Error(`${name} did not return ok: true`);
 }
 
+function runCliSequenceFailureSmoke(opts) {
+  const steps = [
+    { label: 'before', tool: 'get_app_state', arguments: { app: 'Calculator' } },
+    { label: 'bad-target', tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'DefinitelyNotARealElement', action: 'Press' } },
+  ];
+  const result = spawnSync(process.execPath, [
+    'tools/codex-computer-use-appserver.mjs',
+    'sequence',
+    '--allow-mutating',
+    '--steps-json', JSON.stringify(steps),
+    '--quiet',
+    '--pretty',
+    '--max-text-chars', '5000',
+    '--tool-timeout-ms', String(opts.toolTimeoutMs),
+  ], { cwd: process.cwd(), encoding: 'utf8', timeout: opts.toolTimeoutMs + 60_000, maxBuffer: 10 * 1024 * 1024 });
+  if (opts.verbose && !jsonOutput) {
+    if (result.stdout) process.stdout.write(result.stdout);
+    if (result.stderr) process.stderr.write(result.stderr);
+  }
+  if (result.status === 0) throw new Error('CLI bad-target sequence unexpectedly exited 0');
+  const payload = parseJsonOutput('CLI bad-target sequence', result.stdout);
+  const text = payload.steps?.flatMap((step) => step.result?.content || []).map((block) => block.text || '').join('\n') || '';
+  if (payload.ok !== false) throw new Error('CLI bad-target sequence did not return ok:false');
+  if (payload.failedStepIndex !== 1 || payload.completedStepCount !== 1 || payload.resumeFromStepIndex !== 1) throw new Error('CLI bad-target sequence missing structured resume fields');
+  if (!Array.isArray(payload.steps) || payload.steps.length !== 2) throw new Error('CLI bad-target sequence did not preserve completed plus failed step evidence');
+  if (!text.includes('Closest elementId matches')) throw new Error('CLI bad-target sequence missing closest elementId suggestions');
+  if (!text.includes('target: { elementId') && !text.includes('target: { elementDescription')) throw new Error('CLI bad-target sequence missing preferred target syntax hints');
+  return `failedStepIndex=${payload.failedStepIndex}; completedStepCount=${payload.completedStepCount}; resumeFromStepIndex=${payload.resumeFromStepIndex}`;
+}
+
 function printPass(name, detail = '') {
-  process.stdout.write(`PASS ${name}${detail ? ` — ${detail}` : ''}\n`);
+  recordCheck('pass', name, detail);
+  if (!jsonOutput) process.stdout.write(`PASS ${name}${detail ? ` — ${detail}` : ''}\n`);
+}
+
+function printWarn(name, detail = '') {
+  recordCheck('warn', name, detail);
+  if (!jsonOutput) process.stdout.write(`WARN ${name}${detail ? ` — ${detail}` : ''}\n`);
+}
+
+function writeJsonSummary(opts, ok, error = null) {
+  const counts = {
+    pass: validationChecks.filter((check) => check.status === 'pass').length,
+    warn: validationChecks.filter((check) => check.status === 'warn').length,
+    fail: error ? 1 : 0,
+  };
+  const checks = error ? [...validationChecks, { status: 'fail', name: 'validation failure', detail: error.message || String(error) }] : validationChecks;
+  process.stdout.write(`${JSON.stringify({ ok, mode: opts?.mode ?? null, generatedAt: new Date().toISOString(), counts, checks, artifacts: {} }, null, 2)}\n`);
 }
 
 function frontmostApp() {
@@ -359,21 +424,26 @@ function calculatorDisplay(step) {
 function calculatorMutationSteps() {
   return [
     { tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '6', action: 'Press' } },
+    { tool: 'press_key', arguments: { app: 'Calculator', key: 'Escape' } },
+    { tool: 'press_key', arguments: { app: 'Calculator', key: 'Escape' } },
     { tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '17', action: 'Press' } },
+    { tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'AllClear', action: 'Press' } },
     { tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '6', action: 'Press' } },
+    { tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'One', action: 'Press' } },
+    { tool: 'get_app_state', arguments: { app: 'Calculator' } },
+    { tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementDescription: 'Clear', action: 'Press' } },
     { tool: 'get_app_state', arguments: { app: 'Calculator' } },
     { tool: 'press_key', arguments: { app: 'Calculator', key: '2' } },
     { tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '6', action: 'Press' } },
+    { tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementDescription: 'Clear', action: 'Press' } },
     { tool: 'get_app_state', arguments: { app: 'Calculator' } },
   ];
 }
 
 async function main() {
   const opts = parse(process.argv.slice(2));
+  activeOpts = opts;
+  jsonOutput = Boolean(opts.json);
   if (opts.help) {
     help();
     return;
@@ -403,9 +473,9 @@ async function main() {
 
   const status = parseJsonOutput('app-server status', run('app-server status', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'status', '--quiet'], { timeoutMs: 180_000, verbose: opts.verbose }));
   requireOk('app-server status', status);
-  const computerUse = status.status?.servers?.find((server) => server.name === 'computer-use');
-  if (!computerUse) throw new Error('app-server status did not include computer-use');
-  printPass('app-server status', `${computerUse.toolNames?.length || 0} tools`);
+  const computerUse = status.computerUse ?? status.status?.servers?.find((server) => server.name === 'computer-use');
+  if (!computerUse?.present && !computerUse?.toolNames) throw new Error('app-server status did not include computer-use');
+  printPass('app-server status', `${computerUse.toolCount ?? computerUse.toolNames?.length ?? 0} tools`);
 
   if (opts.mode === 'read-only' || opts.mode === 'mutating' || opts.mode === 'focus') {
     const directDeny = run('direct raw-MCP deny', process.execPath, ['tools/probe-codex-computer-use-mcp.mjs', 'deny', '--app', 'Finder'], { timeoutMs: 120_000, verbose: opts.verbose });
@@ -435,13 +505,16 @@ async function main() {
       '--max-text-chars', '2500',
     ], { timeoutMs: opts.toolTimeoutMs + 60_000, verbose: opts.verbose }));
     requireOk('app-server Calculator mutation sequence', sequence);
-    if (sequence.steps?.length !== 11) throw new Error('Calculator mutation sequence returned unexpected step count');
+    if (sequence.steps?.length !== 14) throw new Error('Calculator mutation sequence returned unexpected step count');
     for (const step of sequence.steps) {
       if (step.result?.isError) throw new Error(`Calculator mutation step ${step.index} ${step.tool} returned isError`);
     }
-    const afterOne = calculatorDisplay(sequence.steps[4]);
-    const afterKey = calculatorDisplay(sequence.steps[8]);
-    const afterRestore = calculatorDisplay(sequence.steps[10]);
+    const afterOne = calculatorDisplay(sequence.steps[7]);
+    const afterKey = calculatorDisplay(sequence.steps[11]);
+    const afterRestore = calculatorDisplay(sequence.steps[13]);
+    if (sequence.steps[4].arguments.element_index !== '6') throw new Error('Calculator AllClear elementId did not resolve to current index 6');
+    if (sequence.steps[6].arguments.element_index !== '17') throw new Error('Calculator One elementId did not resolve to current index 17');
+    if (sequence.steps[8].arguments.element_index !== '6' || sequence.steps[12].arguments.element_index !== '6') throw new Error('Calculator Clear elementDescription did not resolve to current index 6');
     if (afterOne !== '1') throw new Error(`Calculator click did not produce display 1; got ${JSON.stringify(afterOne)}`);
     if (afterKey !== '2') throw new Error(`Calculator press_key did not produce display 2; got ${JSON.stringify(afterKey)}`);
     if (afterRestore !== '0') throw new Error(`Calculator restore did not produce display 0; got ${JSON.stringify(afterRestore)}`);
@@ -449,6 +522,9 @@ async function main() {
 
     const elementTargetSmoke = runPiExtensionElementTargetSmoke(opts.verbose);
     printPass('pi extension element target smoke', elementTargetSmoke);
+
+    const cliFailureSmoke = runCliSequenceFailureSmoke(opts);
+    printPass('CLI sequence bad-target diagnostics', cliFailureSmoke);
   }
 
   if (opts.mode === 'mcp') {
@@ -461,18 +537,24 @@ async function main() {
     const beforeBundle = focusBefore?.frontmost?.bundleId || 'unknown';
     const afterBundle = focusAfter.frontmost?.bundleId || 'unknown';
     if (beforeBundle !== 'com.apple.calculator' && afterBundle === 'com.apple.calculator') {
-      throw new Error(`focus preservation failed: Calculator was left frontmost; before=${beforeBundle}, after=${afterBundle}`);
+      throw new Error(`target app focus check failed: Calculator was left frontmost; before=${beforeBundle}, after=${afterBundle}`);
     }
     const beforeMouse = focusBefore?.mouse ? `${focusBefore.mouse.x},${focusBefore.mouse.y}` : 'unknown';
     const afterMouse = focusAfter.mouse ? `${focusAfter.mouse.x},${focusAfter.mouse.y}` : 'unknown';
-    printPass('frontmost app preservation', `before=${beforeBundle}; after=${afterBundle}`);
-    process.stdout.write(`INFO mouse position report — before=${beforeMouse}; after=${afterMouse}\n`);
+    printPass('target app not left frontmost', `before=${beforeBundle}; after=${afterBundle}`);
+    if (beforeBundle === afterBundle) printPass('exact frontmost app unchanged', beforeBundle);
+    else printWarn('exact frontmost app changed', `before=${beforeBundle}; after=${afterBundle}`);
+    if (beforeMouse === afterMouse) printPass('whole-run mouse position unchanged', beforeMouse);
+    else printWarn('whole-run mouse position changed', `before=${beforeMouse}; after=${afterMouse}; treated as observational because the operator may move the mouse`);
+    if (!jsonOutput) process.stdout.write(`INFO mouse position report — before=${beforeMouse}; after=${afterMouse}\n`);
   }
 
-  process.stdout.write(`OK ${opts.mode} validation complete.\n`);
+  if (jsonOutput) writeJsonSummary(opts, true);
+  else process.stdout.write(`OK ${opts.mode} validation complete.\n`);
 }
 
 main().catch((error) => {
-  process.stderr.write(`FAIL ${error.message || String(error)}\n`);
+  if (jsonOutput) writeJsonSummary(activeOpts, false, error);
+  else process.stderr.write(`FAIL ${error.message || String(error)}\n`);
   process.exitCode = 1;
 });

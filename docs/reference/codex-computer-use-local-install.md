@@ -233,7 +233,8 @@ The MCP `serverInfo` returned:
 ```
 
 For positive operation, use the Codex app-server bridge instead of calling
-`SkyComputerUseClient mcp` directly:
+`SkyComputerUseClient mcp` directly. `status` prints compact Computer Use
+status by default; pass `--full` to inspect every app-server MCP server:
 
 ```bash
 node tools/codex-computer-use-appserver.mjs status --quiet --pretty
