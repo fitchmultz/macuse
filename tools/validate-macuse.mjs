@@ -101,6 +101,9 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
   }
   const finder = await request('tools/call', { name: 'get_app_state', arguments: { app: 'Finder', approval: 'ask' } }, 120000);
   if (!sawElicitation || finder.isError !== true) throw new Error('MCP elicitation proxy did not decline Finder as expected');
+  sawElicitation = false;
+  const finderInherit = await request('tools/call', { name: 'get_app_state', arguments: { app: 'Finder' } }, 120000);
+  if (finderInherit.isError === true) throw new Error('MCP default inherit did not auto-accept Finder app approval');
   await request('tools/call', { name: 'get_app_state', arguments: { app: 'Calculator' } }, 120000);
   let pointerGuarded = false;
   try {
