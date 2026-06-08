@@ -1,13 +1,46 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { accessSync, constants, statSync } from 'node:fs';
+import { accessSync, constants, readdirSync, statSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
 
 const VERSION = '0.1.0';
 const DEFAULT_CLIENT = '/Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient';
-const DEFAULT_CWD = '/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799';
+const DEFAULT_CWD_ROOT = '/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use';
 const DEFAULT_PROTOCOL_VERSION = '2025-06-18';
+
+function compareVersionLike(a, b) {
+  const aa = a.split(/[^0-9]+/).filter(Boolean).map(Number);
+  const bb = b.split(/[^0-9]+/).filter(Boolean).map(Number);
+  for (let i = 0; i < Math.max(aa.length, bb.length); i += 1) {
+    const delta = (aa[i] || 0) - (bb[i] || 0);
+    if (delta !== 0) return delta;
+  }
+  return a.localeCompare(b);
+}
+
+function discoverDefaultCwd() {
+  try {
+    const entries = readdirSync(DEFAULT_CWD_ROOT, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort(compareVersionLike)
+      .reverse();
+    const found = entries.find((entry) => {
+      try {
+        return statSync(`${DEFAULT_CWD_ROOT}/${entry}/.mcp.json`).isFile();
+      } catch {
+        return false;
+      }
+    });
+    if (found) return `${DEFAULT_CWD_ROOT}/${found}`;
+  } catch {
+    // Fall back to the latest path observed when this probe was updated.
+  }
+  return `${DEFAULT_CWD_ROOT}/1.0.809`;
+}
+
+const DEFAULT_CWD = discoverDefaultCwd();
 
 const EXIT = Object.freeze({
   OK: 0,

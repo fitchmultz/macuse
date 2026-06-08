@@ -4,8 +4,9 @@ Source: Local filesystem paths under `/Users/yourname/.codex/computer-use`, `/Us
 Author: [OpenAI](https://openai.com/)
 Posted: Not applicable; local installed app and plugin cache
 Scraped: May 22, 2026
-Refreshed: May 22, 2026 09:35 MDT after the Codex host app update, external-harness TCC probes, app-server bridge validation, and guarded Calculator click/key validation
-Observed install metadata at refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin still `1.0.799`; app bundle `com.openai.sky.CUAService`; notarized Developer ID app from OpenAI
+Refreshed: May 22, 2026 09:35 MDT after the Codex host app update, external-harness TCC probes, app-server bridge validation, and guarded Calculator click/key validation. Spot-checked again June 8, 2026 after subsequent Codex updates.
+Observed install metadata at May 22 refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin still `1.0.799`; app bundle `com.openai.sky.CUAService`; notarized Developer ID app from OpenAI
+Current June 8 spot-check: Codex host app `26.602.40724` build `3593`; Codex CLI `0.137.0-alpha.4`; Computer Use plugin cache `1.0.809`; Computer Use app state reports CUA App Version `809`.
 
 This system has the Codex Computer Use macOS app installed under the Codex home
 folder, with a matching bundled plugin cache copy and a host-app bundled copy

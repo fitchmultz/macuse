@@ -4,8 +4,9 @@ Source: Local Codex Computer Use app/plugin files and direct MCP probes against 
 Author: [OpenAI](https://openai.com/) for the installed app/plugin; local investigation notes captured in this repository
 Posted: Not applicable; local installed app and plugin cache
 Scraped: May 22, 2026
-Refreshed: May 22, 2026 09:35 MDT
-Observed metadata at refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin `1.0.799`; MCP server name `Computer Use`; MCP server version `d10a51766bb4d162ef1eed308e86a0f8f3816fb860896cb92c18e6de998142af`
+Refreshed: May 22, 2026 09:35 MDT; spot-checked again June 8, 2026 after Codex updates
+Observed metadata at May 22 refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin `1.0.799`; MCP server name `Computer Use`; MCP server version `d10a51766bb4d162ef1eed308e86a0f8f3816fb860896cb92c18e6de998142af`
+Current June 8 spot-check: Codex host app `26.602.40724` build `3593`; Codex CLI `0.137.0-alpha.4`; Computer Use plugin cache `1.0.809`; Computer Use app state reports CUA App Version `809`; the app-server-mediated pi path still works.
 
 ## Bottom line
 

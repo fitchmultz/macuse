@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { accessSync, constants, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -7,8 +7,34 @@ import { fileURLToPath } from 'node:url';
 export const TOOLS_DIR = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(TOOLS_DIR, '..');
 export const DEFAULT_CODEX_BIN = '/Applications/Codex.app/Contents/Resources/codex';
-export const DEFAULT_COMPUTER_USE_PLUGIN_DIR = '/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799';
+export const DEFAULT_COMPUTER_USE_PLUGIN_ROOT = '/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use';
+export const DEFAULT_COMPUTER_USE_PLUGIN_DIR = discoverComputerUsePluginDir();
 export const DEFAULT_COMPUTER_USE_APP = '/Users/yourname/.codex/computer-use/Codex Computer Use.app';
+
+function compareVersionLike(a, b) {
+  const aa = a.split(/[^0-9]+/).filter(Boolean).map(Number);
+  const bb = b.split(/[^0-9]+/).filter(Boolean).map(Number);
+  for (let i = 0; i < Math.max(aa.length, bb.length); i += 1) {
+    const delta = (aa[i] || 0) - (bb[i] || 0);
+    if (delta !== 0) return delta;
+  }
+  return a.localeCompare(b);
+}
+
+export function discoverComputerUsePluginDir(root = DEFAULT_COMPUTER_USE_PLUGIN_ROOT) {
+  try {
+    const entries = readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort(compareVersionLike)
+      .reverse();
+    const found = entries.find((entry) => existsSync(resolve(root, entry, '.mcp.json')));
+    if (found) return resolve(root, found);
+  } catch {
+    // Fall back to latest path observed when this helper was updated.
+  }
+  return resolve(root, '1.0.809');
+}
 
 export function nowIsoForPath(date = new Date()) {
   return date.toISOString().replace(/[:.]/g, '-');
