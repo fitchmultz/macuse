@@ -144,7 +144,9 @@ persistent `codex_cu_sequence` wrapper requires or enforces:
   and use failed elementId fallback hints when IDs are absent or stale
 - optional per-step `expectText` and `expectAbsentText` assertions to stop the
   sequence when state evidence does not match expectations; stopped sequences
-  return completed step evidence plus the failed-step diagnostic
+  return completed step evidence plus the failed-step diagnostic, and
+  per-step `allowError: true` permits recovery from optional resolution/tool
+  errors
 - `allowMutating: true` when any step is not read-only
 - `allowPointerClick: true` for pointer-based `click` steps and
   `allowPointerDrag: true` for pointer-based `drag` steps; prefer

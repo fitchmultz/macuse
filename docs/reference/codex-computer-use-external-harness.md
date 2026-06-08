@@ -537,7 +537,9 @@ as an alias, or `elementId` / `element_id` resolved from the latest
 `get_app_state` tree for that app. Failed elementId lookups return available
 `element_index` lines so the agent can fall back without a separate state call.
 If a sequence fails after it starts, the result includes all completed steps plus
-a failed-step diagnostic instead of discarding partial evidence.
+a failed-step diagnostic instead of discarding partial evidence. Per-step
+`allowError: true` also covers elementId resolution errors, so optional/fallback
+steps can fail and the sequence can continue.
 Pointer-based `click` steps additionally require
 `allowPointerClick: true`; pointer-based `drag` steps require
 `allowPointerDrag: true` and use extension-level mouse restoration.
@@ -545,7 +547,10 @@ Prefer `perform_secondary_action` with `action: "Press"`, `press_key`,
 `set_value`, or element-targeted `scroll` when possible to preserve the user's
 mouse/system focus. `press_key` uses xdotool-style key names, such as `5`,
 `Return`, `Escape`, `plus`, `minus`, `equal`, and `ctrl+c`; prefer `type_text`
-for literal text entry.
+for literal text entry. `select_text` selects by matching a text string; upstream
+Computer Use does not currently support start/end offset selection. `set_value`
+accepts `value` inside `arguments`, and pi sequences also normalize top-level
+step `value` into `arguments.value`.
 
 ### Rerun after Codex or Computer Use updates
 

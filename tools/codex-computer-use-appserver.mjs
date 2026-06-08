@@ -136,10 +136,11 @@ function normalizeSequenceSteps(value) {
     if (typeof step.tool !== 'string' || step.tool.length === 0) {
       throw new UsageError(`sequence step ${index} requires a non-empty tool string`);
     }
-    const args = step.arguments ?? {};
+    const args = { ...(step.arguments ?? {}) };
     if (!args || typeof args !== 'object' || Array.isArray(args)) {
       throw new UsageError(`sequence step ${index} arguments must be a JSON object`);
     }
+    if (step.tool === 'set_value' && args.value === undefined && step.value !== undefined) args.value = step.value;
     return {
       tool: step.tool,
       arguments: normalizeToolArguments(args),

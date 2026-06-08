@@ -54,7 +54,7 @@ The app-server-backed path provides:
 | Persistent pi app-server session | Implemented | `node tools/validate-macuse.mjs quick` verifies two pi extension calls reuse one app-server thread and default approval inheritance auto-accepts Finder |
 | Element target normalization | Implemented | pi extension and CLI bridge coerce numeric `element_index` to string; pi extension also accepts `element` aliases, resolves `elementId` from the latest tree, and returns fallback element-index hints when an ID is stale or missing |
 | Compact sequence output | Implemented | `codex_cu_sequence` defaults to `detail: "compact"`; full raw trees remain available with `detail: "full"` |
-| Partial sequence failures | Implemented | failed `codex_cu_sequence` calls return completed step rows plus the failed-step diagnostic |
+| Partial sequence failures | Implemented | failed `codex_cu_sequence` calls return completed step rows plus the failed-step diagnostic; per-step `allowError:true` continues through resolution/tool errors |
 | Running app filtering | Implemented | `codex_cu_list_apps` supports `runningOnly:true` and substring `filter` |
 
 ## Known gaps

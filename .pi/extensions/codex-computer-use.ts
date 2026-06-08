@@ -186,7 +186,7 @@ function parseElementInfo(text: string): ElementInfo[] {
 		const match = rawLine.match(/^\s*(\d+)\s+(.+)$/);
 		if (!match) continue;
 		const line = match[0].trim();
-		const id = line.match(/(?:^|,\s*)ID:\s*([^,\n]+)/)?.[1]?.trim();
+		const id = line.match(/(?:^|[\s,])ID:\s*([^,\n]+)/)?.[1]?.trim();
 		const secondaryActions = line.match(/Secondary Actions:\s*([^\n]+)/)?.[1]
 			?.split(",")
 			.map((item) => item.trim())
@@ -578,8 +578,9 @@ function normalizeSequenceSteps(value: unknown): SequenceStep[] {
 	return value.map((step: any, index) => {
 		if (!step || typeof step !== "object" || Array.isArray(step)) throw new Error(`sequence step ${index} must be an object.`);
 		if (typeof step.tool !== "string" || step.tool.length === 0) throw new Error(`sequence step ${index} requires a non-empty tool string.`);
-		const args = step.arguments || {};
+		const args = { ...(step.arguments || {}) };
 		if (!args || typeof args !== "object" || Array.isArray(args)) throw new Error(`sequence step ${index} arguments must be an object.`);
+		if (step.tool === "set_value" && args.value === undefined && step.value !== undefined) args.value = step.value;
 		return {
 			tool: step.tool,
 			arguments: args,
@@ -762,12 +763,13 @@ export default function (pi: ExtensionAPI) {
 			"App approval defaults to inherit, matching Codex's Any App setting by auto-accepting app approvals.",
 			"Prefer perform_secondary_action with action=Press, press_key, set_value, select_text, or element-targeted scroll over pointer click when possible to preserve mouse/system focus.",
 			"press_key uses xdotool-style key names. Examples: '5', 'Return', 'Escape', 'Tab', 'space', 'plus', 'minus', 'equal', 'ctrl+c'. For text entry, prefer type_text unless a real key event is required.",
-			"For element targeting, prefer stable elementId values from get_app_state when present. Otherwise pass element_index as a string; numeric element_index and element aliases are coerced for convenience.",
+			"select_text requires a text string to match; start/end offset selection is not supported by the upstream Computer Use tool.",
+			"For element targeting, prefer stable elementId values from get_app_state when present. Otherwise pass element_index as a string; numeric element_index and element aliases are coerced for convenience. Numeric indices can shift after mutations; re-snapshot before index targeting when state changes.",
 		],
 		parameters: Type.Object({
 			steps: Type.Array(Type.Object({
-				tool: Type.String({ description: "Computer Use tool name: list_apps, get_app_state, perform_secondary_action, press_key, type_text, set_value, select_text, scroll, click, or drag. press_key keys use xdotool-style names such as '5', 'Return', 'Escape', 'plus', 'minus', 'equal', or 'ctrl+c'." }),
-				arguments: Type.Optional(Type.Any({ description: "Tool arguments object. Element-targeted tools accept element_index as string or number, element as an alias, or elementId/element_id resolved from the latest get_app_state tree for that app." })),
+				tool: Type.String({ description: "Computer Use tool name: list_apps, get_app_state, perform_secondary_action, press_key, type_text, set_value, select_text, scroll, click, or drag. press_key keys use xdotool-style names such as '5', 'Return', 'Escape', 'plus', 'minus', 'equal', or 'ctrl+c'. select_text selects by text string, not start/end offsets." }),
+				arguments: Type.Optional(Type.Any({ description: "Tool arguments object. Element-targeted tools accept element_index as string or number, element as an alias, or elementId/element_id resolved from the latest get_app_state tree for that app. set_value accepts value here; codex_cu_sequence also normalizes a top-level step.value into arguments.value." })),
 				label: Type.Optional(Type.String({ description: "Optional human-readable step label." })),
 				expectText: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], { description: "Text that must appear in this step's text result." })),
 				expectAbsentText: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], { description: "Text that must not appear in this step's text result." })),
@@ -863,21 +865,22 @@ export default function (pi: ExtensionAPI) {
 						if (failed) break;
 					} catch (error) {
 						const message = errorMessage(error);
-						failed = { index, tool: step.tool, message };
+						const allowed = step.allowError;
+						if (!allowed) failed = { index, tool: step.tool, message };
 						results.push({
 							index,
 							label: step.label,
 							tool: step.tool,
 							arguments: stepArgs,
 							durationMs: 0,
-							result: failureResult(`Sequence stopped before completing step ${index} (${step.tool}):\n${message}`, maxTextChars),
+							result: failureResult(`Sequence ${allowed ? "allowed error" : "stopped"} before completing step ${index} (${step.tool}):\n${message}`, maxTextChars),
 							expectText: step.expectText,
 							expectAbsentText: step.expectAbsentText,
 							allowError: step.allowError,
 							acceptedElicitations: 0,
 							elicitationCount: 0,
 						});
-						break;
+						if (!allowed) break;
 					}
 				}
 			} finally {

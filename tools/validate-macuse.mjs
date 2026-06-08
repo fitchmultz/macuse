@@ -7,7 +7,7 @@ const DEFAULT_APP = 'Calculator';
 const DEFAULT_TIMEOUT_MS = 90_000;
 
 function help() {
-  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n  node tools/validate-macuse.mjs focus [options]\n  node tools/validate-macuse.mjs mcp [options]\n\nModes:\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, verify the pi\n      extension reuses one persistent app-server thread, run direct raw-MCP\n      discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only/denial probes: direct raw-MCP deny for\n      Finder, app-server list_apps, and app-server get_app_state for an app.\n\n  mutating\n      Run read-only plus harmless Calculator mutation smokes: clear, activate\n      digit 1, verify, press key 2, verify, clear, verify restore, and validate\n      pi element_index coercion, element aliases, elementId targeting, and\n      partial failure diagnostics.\n\n  focus\n      Run mutating plus a frontmost-app preservation check. This fails if the\n      Calculator target is left frontmost after the sequence. Mouse position is\n      reported for operator review because humans may move it during the run.\n\n  mcp\n      Smoke-test the Cursor/standard-MCP wrapper: initialize, tools/list,\n      get_app_state, perform_secondary_action, and restore Calculator.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating intentionally clicks Calculator\n  buttons/keys only and restores the display to 0.\n\nExamples:\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs focus\n  node tools/validate-macuse.mjs mcp\n  node tools/validate-macuse.mjs read-only --app Calculator --tool-timeout-ms 120000\n`);
+  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n  node tools/validate-macuse.mjs focus [options]\n  node tools/validate-macuse.mjs mcp [options]\n\nModes:\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, verify the pi\n      extension reuses one persistent app-server thread, run direct raw-MCP\n      discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only/denial probes: direct raw-MCP deny for\n      Finder, app-server list_apps, and app-server get_app_state for an app.\n\n  mutating\n      Run read-only plus harmless Calculator mutation smokes: clear, activate\n      digit 1, verify, press key 2, verify, clear, verify restore, and validate\n      pi element_index coercion, element aliases, elementId targeting, ID regex\n      parsing, allowError recovery, set_value normalization, and partial failure\n      diagnostics.\n\n  focus\n      Run mutating plus a frontmost-app preservation check. This fails if the\n      Calculator target is left frontmost after the sequence. Mouse position is\n      reported for operator review because humans may move it during the run.\n\n  mcp\n      Smoke-test the Cursor/standard-MCP wrapper: initialize, tools/list,\n      get_app_state, perform_secondary_action, and restore Calculator.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating intentionally clicks Calculator\n  buttons/keys only and restores the display to 0.\n\nExamples:\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs focus\n  node tools/validate-macuse.mjs mcp\n  node tools/validate-macuse.mjs read-only --app Calculator --tool-timeout-ms 120000\n`);
 }
 function parse(argv) {
   if (argv.includes('-h') || argv.includes('--help')) return { help: true };
@@ -251,6 +251,35 @@ factory({
   if (!partial.details.computerUse.failed) throw new Error('pi extension invalid elementId did not mark sequence failed');
   if (partial.details.computerUse.steps.length !== 2) throw new Error('pi extension invalid elementId did not return completed plus failed step results');
   if (!partial.content[0].text.includes('Available elements:')) throw new Error('pi extension invalid elementId error did not include element_index fallback hints');
+  const allowed = await tools.get('codex_cu_sequence').execute('allowed', {
+    steps: [
+      { tool: 'get_app_state', arguments: { app: 'Calculator' } },
+      { tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'NoSuchElementId', action: 'Press' }, allowError: true },
+      { tool: 'get_app_state', arguments: { app: 'Calculator' } },
+      { tool: 'set_value', arguments: { app: 'Calculator', element_index: 4 }, value: '42', allowError: true },
+      { tool: 'get_app_state', arguments: { app: 'Calculator' } },
+    ],
+    allowMutating: true,
+    safetyNote: 'Validate Calculator-only allowError recovery and top-level set_value normalization without relying on mutation success.',
+    detail: 'compact',
+    maxTextChars: 3000,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  if (allowed.details.computerUse.failed) throw new Error('pi extension allowError resolution failure still marked sequence failed');
+  if (allowed.details.computerUse.steps.length !== 5) throw new Error('pi extension allowError resolution failure did not continue to later steps');
+  if (allowed.details.computerUse.steps[3].arguments.value !== '42') throw new Error('pi extension did not normalize top-level set_value step.value into arguments.value');
+  const textEdit = await tools.get('codex_cu_sequence').execute('textedit-id-regex', {
+    steps: [
+      { tool: 'get_app_state', arguments: { app: 'TextEdit' } },
+      { tool: 'perform_secondary_action', arguments: { app: 'TextEdit', elementId: 'First Text View', action: 'NotARealAction' }, allowError: true },
+    ],
+    allowMutating: true,
+    safetyNote: 'Validate TextEdit elementId parsing for a text view using an intentionally invalid action and stop.',
+    detail: 'compact',
+    maxTextChars: 3000,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  if (textEdit.content[0].text.includes('No elementId First Text View')) throw new Error('pi extension failed to parse TextEdit ID preceded by whitespace');
   if (handlers.has('session_shutdown')) await handlers.get('session_shutdown')({ reason: 'test' }, {});
   console.log(sequence.details.computerUse.steps.map((step) => step.arguments.element_index).filter(Boolean).join(','));
 })().catch(async (error) => {
