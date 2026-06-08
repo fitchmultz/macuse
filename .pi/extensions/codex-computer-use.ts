@@ -43,6 +43,15 @@ type SequenceStep = {
 	allowError: boolean;
 };
 
+type DetailMode = "compact" | "full";
+
+type ElementInfo = {
+	index: string;
+	id?: string;
+	line: string;
+	secondaryActions: string[];
+};
+
 type SequencedResult = {
 	index: number;
 	label?: string;
@@ -162,6 +171,98 @@ function restoreMousePosition(position: MousePosition | null): boolean {
 
 function hasMutatingSteps(steps: Array<{ tool: string }>): boolean {
 	return steps.some((step) => !READ_ONLY_TOOLS.has(step.tool));
+}
+
+function contentText(content: ContentBlock[] | undefined): string {
+	return normalizeContent(content)
+		.filter((block): block is { type: "text"; text: string } => block.type === "text" && typeof (block as any).text === "string")
+		.map((block) => block.text)
+		.join("\n");
+}
+
+function parseElementInfo(text: string): ElementInfo[] {
+	const elements: ElementInfo[] = [];
+	for (const rawLine of text.split("\n")) {
+		const match = rawLine.match(/^\s*(\d+)\s+(.+)$/);
+		if (!match) continue;
+		const line = match[0].trim();
+		const id = line.match(/(?:^|,\s*)ID:\s*([^,\n]+)/)?.[1]?.trim();
+		const secondaryActions = line.match(/Secondary Actions:\s*([^\n]+)/)?.[1]
+			?.split(",")
+			.map((item) => item.trim())
+			.filter(Boolean) ?? [];
+		elements.push({ index: match[1], id, line, secondaryActions });
+	}
+	return elements;
+}
+
+function compactText(text: string): string {
+	const lines = text.split("\n");
+	const header = lines.filter((line) => /^(Computer Use state|<app_state>|App=|Window:)/.test(line.trim())).slice(0, 4);
+	const interactive = parseElementInfo(text).filter((element) =>
+		/\b(button|text|field|menu|row|checkbox|radio|slider|scroll area|combo box|tab|link)\b/i.test(element.line) ||
+		element.secondaryActions.length > 0 ||
+		Boolean(element.id),
+	);
+	const body = interactive.map((element) => element.line);
+	return [...header, ...body].join("\n") || truncateString(text, DEFAULT_MAX_TEXT_CHARS);
+}
+
+function compactContent(content: ContentBlock[]): ContentBlock[] {
+	return content.map((block) => {
+		if (block.type === "text" && typeof (block as any).text === "string") return { ...block, text: compactText((block as any).text) };
+		return block;
+	});
+}
+
+function normalizeDetail(value: unknown, fallback: DetailMode): DetailMode {
+	if (value === undefined || value === null) return fallback;
+	if (value === "compact" || value === "full") return value;
+	throw new Error('detail must be "compact" or "full".');
+}
+
+function normalizeToolArguments(args: Record<string, JsonValue>): Record<string, JsonValue> {
+	const normalized: Record<string, JsonValue> = { ...args };
+	if (normalized.element_index === undefined && normalized.element !== undefined) {
+		normalized.element_index = normalized.element;
+		delete normalized.element;
+	}
+	if (normalized.element_index !== undefined && normalized.element_index !== null) normalized.element_index = String(normalized.element_index);
+	return normalized;
+}
+
+function resolveElementId(args: Record<string, JsonValue>, cache: Map<string, ElementInfo[]>): Record<string, JsonValue> {
+	const normalized = normalizeToolArguments(args);
+	const elementId = normalized.elementId ?? normalized.element_id;
+	if (typeof elementId !== "string" || normalized.element_index !== undefined) return normalized;
+	if (typeof normalized.app !== "string") throw new Error("elementId targeting requires an app argument.");
+	const elements = cache.get(normalized.app) ?? [];
+	const match = elements.find((element) => element.id === elementId);
+	if (!match) {
+		const knownIds = elements.map((element) => element.id).filter(Boolean).join(", ");
+		throw new Error(`No elementId ${elementId} found for ${normalized.app}. Refresh with get_app_state first.${knownIds ? ` Known IDs: ${knownIds}` : ""}`);
+	}
+	normalized.element_index = match.index;
+	delete normalized.elementId;
+	delete normalized.element_id;
+	return normalized;
+}
+
+function updateElementCache(cache: Map<string, ElementInfo[]>, app: JsonValue | undefined, content: ContentBlock[]): void {
+	if (typeof app !== "string") return;
+	const elements = parseElementInfo(contentText(content));
+	if (elements.length > 0) cache.set(app, elements);
+}
+
+function enrichActionError(result: FilteredToolResult, args: Record<string, JsonValue>, cache: Map<string, ElementInfo[]>): void {
+	if (!result.isError || typeof args.app !== "string" || typeof args.element_index !== "string") return;
+	const element = (cache.get(args.app) ?? []).find((item) => item.index === args.element_index);
+	if (!element) return;
+	const actions = element.secondaryActions.length > 0 ? element.secondaryActions.join(", ") : "none listed";
+	result.content = result.content.map((block) => {
+		if (block.type !== "text" || typeof (block as any).text !== "string") return block;
+		return { ...block, text: `${(block as any).text}\n\nTarget element ${element.index}: ${element.line}\nValid secondary actions: ${actions}` };
+	});
 }
 
 function bridgeDetails(base: Record<string, unknown>, stderrTail: string): Record<string, unknown> {
@@ -492,11 +593,17 @@ const approvalParam = Type.Optional(Type.Union([
 	Type.Literal("accept-once"),
 	Type.Literal("deny"),
 ], { description: "How to answer Computer Use app-approval prompts. Default inherit, which auto-accepts app approvals to match Codex's Any App setting." }));
+const detailParam = Type.Optional(Type.Union([
+	Type.Literal("compact"),
+	Type.Literal("full"),
+], { description: "Output detail. compact trims accessibility trees to interactive element lines; full returns the raw Computer Use text." }));
 
 const client = new AppServerClient();
+const sessionElementCache = new Map<string, ElementInfo[]>();
 
 export default function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", async () => {
+		sessionElementCache.clear();
 		await client.stop();
 	});
 
@@ -511,6 +618,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerCommand("macuse-restart", {
 		description: "Restart the persistent Codex Computer Use app-server session",
 		handler: async (_args, ctx) => {
+			sessionElementCache.clear();
 			await client.restart();
 			ctx.ui.notify("macuse Computer Use session stopped; it will restart on the next tool call.", "info");
 		},
@@ -553,7 +661,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "codex_cu_get_app_state",
 		label: "Codex CU Get App State",
-		description: "Read-only: get a target macOS app's accessibility tree and optional screenshot through persistent OpenAI Codex Computer Use.",
+		description: "Read-only: get a target macOS app's accessibility tree and optional screenshot through persistent OpenAI Codex Computer Use. Pass detail:'compact' for interactive elements only, or detail:'full' for the raw tree.",
 		promptSnippet: "Inspect a local macOS app window with Codex Computer Use.",
 		promptGuidelines: [
 			"Use codex_cu_get_app_state for read-only inspection of a local macOS app when file, CLI, or browser tools are insufficient.",
@@ -565,6 +673,7 @@ export default function (pi: ExtensionAPI) {
 			approval: approvalParam,
 			includeImage: Type.Optional(Type.Boolean({ description: "Attach the screenshot image returned by Computer Use. Default false to keep turns light." })),
 			saveImagePath: Type.Optional(Type.String({ description: "Optional filesystem path where the screenshot should be saved." })),
+			detail: detailParam,
 			maxTextChars: maxTextParam,
 			toolTimeoutMs: timeoutParam,
 		}),
@@ -574,14 +683,17 @@ export default function (pi: ExtensionAPI) {
 			onUpdate?.({ content: [{ type: "text", text: `Calling persistent Computer Use get_app_state for ${app} with approval=${approval}...` }] });
 			const toolTimeoutMs = asInt((params as any).toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
 			const maxTextChars = asInt((params as any).maxTextChars, DEFAULT_MAX_TEXT_CHARS);
+			const detail = normalizeDetail((params as any).detail, "full");
 			const call = await client.callTool("get_app_state", { app }, { approval, timeoutMs: toolTimeoutMs, signal });
 			const result = filterToolResult(call.result, {
 				includeImage: Boolean((params as any).includeImage),
 				saveImagePath: (params as any).saveImagePath,
 				maxTextChars,
 			});
+			updateElementCache(sessionElementCache, app, result.content);
+			const outputContent = detail === "compact" ? compactContent(result.content) : result.content;
 			return {
-				content: result.content,
+				content: outputContent,
 				details: bridgeDetails({
 					tool: "get_app_state",
 					app,
@@ -589,6 +701,7 @@ export default function (pi: ExtensionAPI) {
 					isError: result.isError,
 					omittedImages: result.omittedImages,
 					savedImagePath: result.savedImagePath,
+					detail,
 					acceptedElicitations: call.acceptedElicitations,
 					elicitationCount: call.elicitationCount,
 					durationMs: call.durationMs,
@@ -600,18 +713,19 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "codex_cu_sequence",
 		label: "Codex CU Sequence",
-		description: "Run a sequence of Codex Computer Use calls in one persistent app-server thread, including mutating calls when explicitly enabled.",
+		description: "Run Codex Computer Use calls in one persistent app-server thread. Valid tools: list_apps, get_app_state, perform_secondary_action, press_key, type_text, set_value, select_text, scroll, click, drag. Element targets use element_index as a string; numbers are coerced, element is accepted as an alias, and elementId (for IDs like One or AllClear from get_app_state) resolves against the latest tree in the sequence. Example step: {tool:'perform_secondary_action', arguments:{app:'Calculator', elementId:'One', action:'Press'}}.",
 		promptSnippet: "Run a sequence of local macOS Computer Use actions.",
 		promptGuidelines: [
 			"Use codex_cu_sequence only after codex_cu_get_app_state has identified the target app/window or when the first sequence step is get_app_state.",
 			"For mutating codex_cu_sequence steps, keep the flow narrow, include an explicit safetyNote, set allowMutating=true, and stop before purchases, sends, deletes, credential changes, account/security/privacy changes, or ambiguous windows.",
 			"App approval defaults to inherit, matching Codex's Any App setting by auto-accepting app approvals.",
 			"Prefer perform_secondary_action with action=Press, press_key, set_value, select_text, or element-targeted scroll over pointer click when possible to preserve mouse/system focus.",
+			"For element targeting, prefer stable elementId values from get_app_state when present. Otherwise pass element_index as a string; numeric element_index and element aliases are coerced for convenience.",
 		],
 		parameters: Type.Object({
 			steps: Type.Array(Type.Object({
-				tool: Type.String({ description: "Computer Use tool name, e.g. get_app_state, click, scroll, press_key, type_text." }),
-				arguments: Type.Optional(Type.Any({ description: "Tool arguments object for this step." })),
+				tool: Type.String({ description: "Computer Use tool name: list_apps, get_app_state, perform_secondary_action, press_key, type_text, set_value, select_text, scroll, click, or drag." }),
+				arguments: Type.Optional(Type.Any({ description: "Tool arguments object. Element-targeted tools accept element_index as string or number, element as an alias, or elementId/element_id resolved from the latest get_app_state tree for that app." })),
 				label: Type.Optional(Type.String({ description: "Optional human-readable step label." })),
 				expectText: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], { description: "Text that must appear in this step's text result." })),
 				expectAbsentText: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())], { description: "Text that must not appear in this step's text result." })),
@@ -624,6 +738,7 @@ export default function (pi: ExtensionAPI) {
 			safetyNote: Type.Optional(Type.String({ description: "Required for mutating steps. State target app, intended effect, and stop boundary." })),
 			includeImage: Type.Optional(Type.Boolean({ description: "Attach screenshot image blocks returned by sequence steps. Default false." })),
 			saveImagePath: Type.Optional(Type.String({ description: "Optional filesystem path where the first returned screenshot should be saved." })),
+			detail: Type.Optional(Type.Union([Type.Literal("compact"), Type.Literal("full")], { description: "Output detail. Default compact for sequences. full returns full accessibility trees for every step." })),
 			maxTextChars: maxTextParam,
 			toolTimeoutMs: timeoutParam,
 		}),
@@ -647,21 +762,27 @@ export default function (pi: ExtensionAPI) {
 			onUpdate?.({ content: [{ type: "text", text: `Running persistent Codex Computer Use sequence (${steps.length} steps, mutating=${mutating})...` }] });
 			const toolTimeoutMs = asInt((params as any).toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
 			const maxTextChars = asInt((params as any).maxTextChars, DEFAULT_MAX_TEXT_CHARS);
+			const detail = normalizeDetail((params as any).detail, "compact");
 			const mouseBefore = hasPointerClick || hasPointerDrag ? getMousePosition() : null;
 			const results: SequencedResult[] = [];
+			const elementCache = new Map(sessionElementCache);
 			try {
 				for (const [index, step] of steps.entries()) {
-					const call = await client.callTool(step.tool, step.arguments, { approval, timeoutMs: toolTimeoutMs, signal });
+					const stepArgs = resolveElementId(step.arguments, elementCache);
+					const call = await client.callTool(step.tool, stepArgs, { approval, timeoutMs: toolTimeoutMs, signal });
 					const filtered = filterToolResult(call.result, {
 						includeImage: Boolean((params as any).includeImage),
 						saveImagePath: index === 0 ? (params as any).saveImagePath : undefined,
 						maxTextChars,
 					});
+					updateElementCache(elementCache, stepArgs.app, filtered.content);
+					updateElementCache(sessionElementCache, stepArgs.app, filtered.content);
+					enrichActionError(filtered, stepArgs, elementCache);
 					const row: SequencedResult = {
 						index,
 						label: step.label,
 						tool: step.tool,
-						arguments: step.arguments,
+						arguments: stepArgs,
 						durationMs: call.durationMs,
 						result: filtered,
 						expectText: step.expectText,
@@ -671,6 +792,7 @@ export default function (pi: ExtensionAPI) {
 						elicitationCount: call.elicitationCount,
 					};
 					validateStepResult(row);
+					if (detail === "compact") row.result.content = compactContent(row.result.content);
 					results.push(row);
 				}
 			} finally {
@@ -682,6 +804,7 @@ export default function (pi: ExtensionAPI) {
 				details: bridgeDetails({
 					tool: "sequence",
 					threadId: client.status().threadId,
+					detail,
 					steps: results.map((step) => ({
 						index: step.index,
 						tool: step.tool,

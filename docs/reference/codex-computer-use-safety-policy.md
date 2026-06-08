@@ -138,6 +138,9 @@ Prefer one mutating sequence surface over many always-on standalone mutating too
 persistent `codex_cu_sequence` wrapper requires or enforces:
 
 - ordered `steps`, preferably starting and ending with `get_app_state`
+- element-targeted tools accept `element_index` as a string or number, `element`
+  as an alias, or `elementId` / `element_id` resolved from the latest tree for
+  the app; prefer stable IDs when available because numeric indices can shift
 - optional per-step `expectText` and `expectAbsentText` assertions to stop the
   sequence when state evidence does not match expectations
 - `allowMutating: true` when any step is not read-only

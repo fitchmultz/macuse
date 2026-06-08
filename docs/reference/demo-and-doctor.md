@@ -75,12 +75,14 @@ The demo proves:
 
 1. Codex app-server exposes all expected Computer Use tools.
 2. External Computer Use can capture app screenshots/state.
-3. Accessibility actions and keyboard input mutate Calculator without pointer
+3. Calculator is reset before assertions so existing app state does not poison
+   the demo.
+4. Accessibility actions and keyboard input mutate Calculator without pointer
    clicks.
-4. The display changes to `1`, changes to `2`, and is restored to `0`.
-5. The frontmost app is not stolen by Calculator.
-6. The guarded sequences restore mouse position.
-7. The standard MCP wrapper validates, including app-approval elicitation and
+5. The display changes to `1`, changes to `2`, and is restored to `0`.
+6. The frontmost app is not stolen by Calculator.
+7. The guarded sequences restore mouse position.
+8. The standard MCP wrapper validates, including app-approval elicitation and
    pointer guard behavior.
 
 ## Config generator

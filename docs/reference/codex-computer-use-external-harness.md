@@ -530,7 +530,11 @@ session instead of shelling out to the CLI bridge for every tool call.
 to match Codex's Any App setting. For mutating `codex_cu_sequence` steps, the
 extension requires `allowMutating: true` and a concrete `safetyNote`. Sequence
 steps can include `expectText`, `expectAbsentText`, and `allowError` so the
-extension can stop on unexpected state or tool errors.
+extension can stop on unexpected state or tool errors. Sequence output defaults
+to `detail: "compact"`; use `detail: "full"` when every raw tree is needed.
+Element-targeted tools accept `element_index` as a string or number, `element`
+as an alias, or `elementId` / `element_id` resolved from the latest
+`get_app_state` tree for that app.
 Pointer-based `click` steps additionally require
 `allowPointerClick: true`; pointer-based `drag` steps require
 `allowPointerDrag: true` and use extension-level mouse restoration.

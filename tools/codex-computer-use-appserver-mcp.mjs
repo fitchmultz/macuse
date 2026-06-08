@@ -10,6 +10,8 @@ const FEATURE_FLAGS = ['computer_use', 'plugins', 'tool_call_mcp_elicitation'];
 const REQUEST_TIMEOUT_MS = Number(process.env.CODEX_CU_MCP_TIMEOUT_MS || 90_000);
 const READ_ONLY_TOOLS = new Set(['list_apps', 'get_app_state']);
 const POINTER_TOOLS = new Set(['click', 'drag']);
+const ELEMENT_INDEX_SCHEMA = { type: ['string', 'number'], description: 'Computer Use element index. The wrapper coerces numbers to strings before calling upstream.' };
+const ELEMENT_ALIAS_SCHEMA = { type: ['string', 'number'], description: 'Alias for element_index. Coerced to string before calling upstream.' };
 
 if (process.argv.includes('-h') || process.argv.includes('--help')) {
   process.stdout.write(`macuse Codex Computer Use MCP wrapper ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver-mcp.mjs\n\nThis is a stdio MCP server. Configure it in Cursor or another MCP client; do\nnot run it directly except for --help or syntax checks.\n\nEnvironment:\n  CODEX_BIN          Codex app-server binary. Default: ${DEFAULT_CODEX_BIN}\n  CODEX_CU_MCP_CWD  Thread cwd. Default: current working directory.\n\nGenerate client config:\n  node tools/macuse-config.mjs cursor --pretty\n\nValidate:\n  node tools/validate-macuse.mjs mcp\n`);
@@ -39,7 +41,7 @@ const TOOL_SCHEMAS = {
   perform_secondary_action: {
     name: 'perform_secondary_action',
     description: 'Invoke an accessibility secondary action on an element. Prefer action:"Press" over pointer click when available to preserve mouse focus. Requires prior get_app_state for the same app.',
-    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: { type: 'string' }, action: { type: 'string' } }, required: ['app', 'element_index', 'action'] },
+    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, action: { type: 'string' } }, required: ['app', 'action'] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   press_key: {
@@ -57,7 +59,7 @@ const TOOL_SCHEMAS = {
   set_value: {
     name: 'set_value',
     description: 'Set the value of a settable accessibility element. Requires prior get_app_state for the same app.',
-    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: { type: 'string' }, value: { type: 'string' } }, required: ['app', 'element_index', 'value'] },
+    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, value: { type: 'string' } }, required: ['app', 'value'] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   select_text: {
@@ -66,23 +68,23 @@ const TOOL_SCHEMAS = {
     inputSchema: {
       type: 'object', additionalProperties: false,
       properties: {
-        app: { type: 'string' }, element_index: { type: 'string' }, text: { type: 'string' },
+        app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, text: { type: 'string' },
         prefix: { type: 'string' }, suffix: { type: 'string' }, selection: { type: 'string', enum: ['text', 'cursor_before', 'cursor_after'] },
       },
-      required: ['app', 'element_index', 'text'],
+      required: ['app', 'text'],
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   scroll: {
     name: 'scroll',
     description: 'Scroll an element by direction/pages. Requires prior get_app_state for the same app.',
-    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: { type: 'string' }, direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] }, pages: { type: 'number' } }, required: ['app', 'element_index', 'direction'] },
+    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] }, pages: { type: 'number' } }, required: ['app', 'direction'] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   click: {
     name: 'click',
     description: 'Pointer click by element index or screenshot coordinates. Prefer perform_secondary_action when possible. Requires allowPointer:true and prior get_app_state for the same app. Mouse position is restored after the call.',
-    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' }, mouse_button: { type: 'string', enum: ['left', 'right', 'middle'] }, click_count: { type: 'integer' }, allowPointer: { type: 'boolean' } }, required: ['app', 'allowPointer'] },
+    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, x: { type: 'number' }, y: { type: 'number' }, mouse_button: { type: 'string', enum: ['left', 'right', 'middle'] }, click_count: { type: 'integer' }, allowPointer: { type: 'boolean' } }, required: ['app', 'allowPointer'] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   drag: {
@@ -120,6 +122,16 @@ function restoreMousePosition(position) {
   const script = `import CoreGraphics; CGWarpMouseCursorPosition(CGPoint(x: ${Math.trunc(position.x)}, y: ${Math.trunc(position.y)})); CGAssociateMouseAndMouseCursorPosition(1)`;
   const result = spawnSync('swift', ['-e', script], { encoding: 'utf8', timeout: 10000 });
   return result.status === 0;
+}
+
+function normalizeToolArguments(args) {
+  const normalized = { ...args };
+  if (normalized.element_index === undefined && normalized.element !== undefined) {
+    normalized.element_index = normalized.element;
+    delete normalized.element;
+  }
+  if (normalized.element_index !== undefined && normalized.element_index !== null) normalized.element_index = String(normalized.element_index);
+  return normalized;
 }
 
 class AppServerClient {
@@ -300,7 +312,7 @@ async function handleRequest(message) {
     }
     if (method === 'tools/call') {
       const name = params.name;
-      const args = params.arguments || {};
+      const args = normalizeToolArguments(params.arguments || {});
       if (!TOOL_SCHEMAS[name]) throw new Error(`unknown tool: ${name}`);
       if (POINTER_TOOLS.has(name) && args.allowPointer !== true) throw new Error(`${name} requires allowPointer:true; prefer non-pointer actions when possible`);
       const mouseBefore = POINTER_TOOLS.has(name) ? getMousePosition() : null;

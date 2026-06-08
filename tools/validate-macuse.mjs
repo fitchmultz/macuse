@@ -112,8 +112,8 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
     pointerGuarded = /allowPointer/.test(error.message || '');
   }
   if (!pointerGuarded) throw new Error('MCP wrapper did not guard pointer click without allowPointer:true');
-  await request('tools/call', { name: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '17', action: 'Press' } }, 120000);
-  await request('tools/call', { name: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: '6', action: 'Press' } }, 120000);
+  await request('tools/call', { name: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: 17, action: 'Press' } }, 120000);
+  await request('tools/call', { name: 'perform_secondary_action', arguments: { app: 'Calculator', element: 6, action: 'Press' } }, 120000);
   console.log(names.join(','));
 })().then(() => { proc.kill('SIGTERM'); }).catch((error) => { proc.kill('SIGTERM'); console.error(error.stack || error.message); process.exitCode = 1; });
 `;
@@ -193,6 +193,60 @@ factory({
     process.env.NODE_PATH || '',
   ].filter(Boolean).join(':');
   const stdout = run('pi extension persistent app-server smoke', process.execPath, ['-e', script], {
+    env: { NODE_PATH: nodePath },
+    timeoutMs: 240_000,
+    verbose,
+  });
+  return stdout.trim();
+}
+
+function runPiExtensionElementTargetSmoke(verbose) {
+  const script = String.raw`
+const { createJiti } = require('jiti');
+const jiti = createJiti(process.cwd() + '/validate-extension-element-targets.js', { interopDefault: true });
+const mod = jiti('./.pi/extensions/codex-computer-use.ts');
+const factory = mod.default || mod;
+const tools = new Map();
+const handlers = new Map();
+factory({
+  registerTool(def) { tools.set(def.name, def); },
+  registerCommand() {},
+  on(name, handler) { handlers.set(name, handler); },
+});
+(async () => {
+  const signal = new AbortController().signal;
+  await tools.get('codex_cu_get_app_state').execute('state', { app: 'Calculator', detail: 'compact', maxTextChars: 1200, toolTimeoutMs: 90000 }, signal, () => {});
+  const sequence = await tools.get('codex_cu_sequence').execute('sequence', {
+    steps: [
+      { tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: 6, action: 'Press' } },
+      { tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'One', action: 'Press' } },
+      { tool: 'get_app_state', arguments: { app: 'Calculator' }, expectText: '‎1' },
+      { tool: 'perform_secondary_action', arguments: { app: 'Calculator', element: 6, action: 'Press' } },
+      { tool: 'get_app_state', arguments: { app: 'Calculator' }, expectText: '‎0' },
+    ],
+    allowMutating: true,
+    safetyNote: 'Validate Calculator-only element_index coercion, element alias, elementId targeting, and restore to zero.',
+    detail: 'compact',
+    maxTextChars: 1200,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  if (sequence.details.computerUse.steps[0].arguments.element_index !== '6') throw new Error('pi extension did not coerce numeric element_index to string');
+  if (sequence.details.computerUse.steps[1].arguments.element_index !== '17') throw new Error('pi extension did not resolve Calculator elementId One to current element_index');
+  if (sequence.details.computerUse.steps[3].arguments.element_index !== '6') throw new Error('pi extension did not coerce element alias to element_index');
+  if (handlers.has('session_shutdown')) await handlers.get('session_shutdown')({ reason: 'test' }, {});
+  console.log(sequence.details.computerUse.steps.map((step) => step.arguments.element_index).filter(Boolean).join(','));
+})().catch(async (error) => {
+  try { if (handlers.has('session_shutdown')) await handlers.get('session_shutdown')({ reason: 'test' }, {}); } catch {}
+  console.error(error.stack || error.message);
+  process.exitCode = 1;
+});
+`;
+  const nodePath = [
+    '/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules',
+    '/opt/homebrew/lib/node_modules',
+    process.env.NODE_PATH || '',
+  ].filter(Boolean).join(':');
+  const stdout = run('pi extension element target smoke', process.execPath, ['-e', script], {
     env: { NODE_PATH: nodePath },
     timeoutMs: 240_000,
     verbose,
@@ -339,6 +393,9 @@ async function main() {
     if (afterKey !== '2') throw new Error(`Calculator press_key did not produce display 2; got ${JSON.stringify(afterKey)}`);
     if (afterRestore !== '0') throw new Error(`Calculator restore did not produce display 0; got ${JSON.stringify(afterRestore)}`);
     printPass('app-server Calculator action/key smoke', `afterOne=${afterOne}; afterKey=${afterKey}; afterRestore=${afterRestore}`);
+
+    const elementTargetSmoke = runPiExtensionElementTargetSmoke(opts.verbose);
+    printPass('pi extension element target smoke', elementTargetSmoke);
   }
 
   if (opts.mode === 'mcp') {

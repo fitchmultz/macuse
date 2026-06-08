@@ -52,6 +52,8 @@ The app-server-backed path provides:
 | Durable refresh commands/docs | Implemented | `docs/reference/codex-computer-use-external-harness.md`, local install doc, and `docs/reference/demo-and-doctor.md` |
 | One-command proof artifact | Implemented | `node tools/macuse-demo.mjs --out .scratch/macuse-demo` writes Markdown, HTML, screenshots, transcript, and MCP config |
 | Persistent pi app-server session | Implemented | `node tools/validate-macuse.mjs quick` verifies two pi extension calls reuse one app-server thread and default approval inheritance auto-accepts Finder |
+| Element target normalization | Implemented | pi extension and CLI bridge coerce numeric `element_index` to string; pi extension also accepts `element` aliases and resolves `elementId` from the latest tree |
+| Compact sequence output | Implemented | `codex_cu_sequence` defaults to `detail: "compact"`; full raw trees remain available with `detail: "full"` |
 
 ## Known gaps
 
