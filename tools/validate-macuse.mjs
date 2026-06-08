@@ -7,7 +7,7 @@ const DEFAULT_APP = 'Calculator';
 const DEFAULT_TIMEOUT_MS = 90_000;
 
 function help() {
-  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n  node tools/validate-macuse.mjs focus [options]\n  node tools/validate-macuse.mjs mcp [options]\n\nModes:\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, run direct\n      raw-MCP discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only/denial probes: direct raw-MCP deny for\n      Finder, app-server list_apps, and app-server get_app_state for an app.\n\n  mutating\n      Run read-only plus a harmless Calculator mutation smoke test: clear,\n      activate digit 1, verify, press key 2, verify, clear, and verify restore.\n\n  focus\n      Run mutating plus a frontmost-app preservation check. This fails if the\n      Calculator target is left frontmost after the sequence. Mouse position is\n      reported for operator review because humans may move it during the run.\n\n  mcp\n      Smoke-test the Cursor/standard-MCP wrapper: initialize, tools/list,\n      get_app_state, perform_secondary_action, and restore Calculator.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating intentionally clicks Calculator\n  buttons/keys only and restores the display to 0.\n\nExamples:\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs focus\n  node tools/validate-macuse.mjs mcp\n  node tools/validate-macuse.mjs read-only --app Calculator --tool-timeout-ms 120000\n`);
+  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n  node tools/validate-macuse.mjs focus [options]\n  node tools/validate-macuse.mjs mcp [options]\n\nModes:\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, verify the pi\n      extension reuses one persistent app-server thread, run direct raw-MCP\n      discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only/denial probes: direct raw-MCP deny for\n      Finder, app-server list_apps, and app-server get_app_state for an app.\n\n  mutating\n      Run read-only plus a harmless Calculator mutation smoke test: clear,\n      activate digit 1, verify, press key 2, verify, clear, and verify restore.\n\n  focus\n      Run mutating plus a frontmost-app preservation check. This fails if the\n      Calculator target is left frontmost after the sequence. Mouse position is\n      reported for operator review because humans may move it during the run.\n\n  mcp\n      Smoke-test the Cursor/standard-MCP wrapper: initialize, tools/list,\n      get_app_state, perform_secondary_action, and restore Calculator.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating intentionally clicks Calculator\n  buttons/keys only and restores the display to 0.\n\nExamples:\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs focus\n  node tools/validate-macuse.mjs mcp\n  node tools/validate-macuse.mjs read-only --app Calculator --tool-timeout-ms 120000\n`);
 }
 function parse(argv) {
   if (argv.includes('-h') || argv.includes('--help')) return { help: true };
@@ -157,6 +157,49 @@ console.log(tools.join(','));
   return stdout.trim();
 }
 
+function runPiExtensionPersistentSmoke(verbose) {
+  const script = String.raw`
+const { createJiti } = require('jiti');
+const jiti = createJiti(process.cwd() + '/validate-extension-persistent.js', { interopDefault: true });
+const mod = jiti('./.pi/extensions/codex-computer-use.ts');
+const factory = mod.default || mod;
+const tools = new Map();
+const handlers = new Map();
+factory({
+  registerTool(def) { tools.set(def.name, def); },
+  registerCommand() {},
+  on(name, handler) { handlers.set(name, handler); },
+});
+(async () => {
+  const signal = new AbortController().signal;
+  const first = await tools.get('codex_cu_get_app_state').execute('first', { app: 'Calculator', maxTextChars: 500, toolTimeoutMs: 90000 }, signal, () => {});
+  const second = await tools.get('codex_cu_get_app_state').execute('second', { app: 'Finder', maxTextChars: 500, toolTimeoutMs: 90000 }, signal, () => {});
+  const firstThread = first.details.computerUse.threadId;
+  const secondThread = second.details.computerUse.threadId;
+  if (!firstThread || firstThread !== secondThread) throw new Error('pi extension did not reuse persistent app-server thread');
+  if (second.details.computerUse.isError) throw new Error('pi extension default inherit returned isError for Finder');
+  if (second.details.computerUse.elicitationCount < 1 || second.details.computerUse.acceptedElicitations < 1) throw new Error('pi extension did not auto-accept Finder app approval via inherit');
+  if (handlers.has('session_shutdown')) await handlers.get('session_shutdown')({ reason: 'test' }, {});
+  console.log(firstThread);
+})().catch(async (error) => {
+  try { if (handlers.has('session_shutdown')) await handlers.get('session_shutdown')({ reason: 'test' }, {}); } catch {}
+  console.error(error.stack || error.message);
+  process.exitCode = 1;
+});
+`;
+  const nodePath = [
+    '/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules',
+    '/opt/homebrew/lib/node_modules',
+    process.env.NODE_PATH || '',
+  ].filter(Boolean).join(':');
+  const stdout = run('pi extension persistent app-server smoke', process.execPath, ['-e', script], {
+    env: { NODE_PATH: nodePath },
+    timeoutMs: 240_000,
+    verbose,
+  });
+  return stdout.trim();
+}
+
 function parseJsonOutput(name, text) {
   try {
     return JSON.parse(text);
@@ -243,6 +286,9 @@ async function main() {
 
   const piSmoke = runPiExtensionSmoke(opts.verbose);
   printPass('pi extension load smoke', piSmoke);
+
+  const piPersistentSmoke = runPiExtensionPersistentSmoke(opts.verbose);
+  printPass('pi extension persistent app-server smoke', `thread=${piPersistentSmoke}`);
 
   const directDiscover = run('direct raw-MCP discover', process.execPath, ['tools/probe-codex-computer-use-mcp.mjs', 'discover'], { timeoutMs: 120_000, verbose: opts.verbose });
   if (!directDiscover.includes('Tools (10):') || !directDiscover.includes('list_apps')) throw new Error('direct discover did not show expected tools');

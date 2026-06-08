@@ -3,7 +3,7 @@
 Source: Local policy for this `macuse` investigation, based on the installed Codex Computer Use skill, OpenAI's Computer Use docs snapshot, and local bridge behavior.
 Author: Local investigation notes
 Created: May 22, 2026
-Status: Active guardrails for the project-local pi extension; read-only tools and a guarded sequence tool are enabled
+Status: Active guardrails for the project-local pi extension; read-only tools and a persistent-session sequence tool are enabled
 
 ## Current allowed scope
 
@@ -28,7 +28,7 @@ Not allowed as always-on standalone tools:
 - `perform_secondary_action`
 
 The project-local pi extension exposes standalone read-only tools plus one
-guarded sequence tool. It does not expose standalone mutating tools.
+persistent-session sequence tool. It does not expose standalone mutating tools.
 
 ## Preconditions before any mutating action
 
@@ -134,8 +134,8 @@ Separate controlled TextEdit probes were also run:
 
 ## Implementation guidance
 
-Prefer one guarded mutating tool surface over many always-on tools. The current
-`codex_cu_sequence` wrapper requires or enforces:
+Prefer one mutating sequence surface over many always-on standalone mutating tools. The current
+persistent `codex_cu_sequence` wrapper requires or enforces:
 
 - ordered `steps`, preferably starting and ending with `get_app_state`
 - optional per-step `expectText` and `expectAbsentText` assertions to stop the
@@ -145,9 +145,9 @@ Prefer one guarded mutating tool surface over many always-on tools. The current
   `allowPointerDrag: true` for pointer-based `drag` steps; prefer
   `perform_secondary_action` with `action: "Press"`, `press_key`, `set_value`,
   or element-targeted `scroll` when possible to preserve mouse/system focus.
-  Pointer drag/click sequences use bridge-level `--preserve-mouse` restoration.
+  Pointer drag/click sequences use extension-level mouse restoration.
 - a `safetyNote` that states target app, intended effect, and stop boundary
-- bridge-level refusal of mutating calls unless `--allow-mutating` is passed
+- extension-level refusal of mutating calls unless `allowMutating: true` is passed
 
 The app-server-backed standard MCP wrapper at
 `tools/codex-computer-use-appserver-mcp.mjs` proxies MCP `elicitation/create`

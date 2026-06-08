@@ -61,11 +61,13 @@ node tools/codex-computer-use-appserver.mjs list-apps --quiet --pretty
 node tools/codex-computer-use-appserver.mjs get-state --app Calculator --quiet --pretty
 ```
 
-The project-local pi extension registers:
+The project-local pi extension keeps a persistent Codex app-server thread for the session and registers:
 
 - `codex_cu_list_apps`
 - `codex_cu_get_app_state`
 - `codex_cu_sequence` for multi-step flows, including mutating steps with `allowMutating: true`, a `safetyNote`, and optional per-step `expectText` / `expectAbsentText` assertions. App approval defaults to `inherit`, which auto-accepts Computer Use app approvals to match Codex's Any App setting. Pointer `click` steps also require `allowPointerClick: true`; pointer `drag` steps require `allowPointerDrag: true` and automatically restore mouse position. Prefer accessibility actions/keys/values to preserve mouse focus.
+
+The persistent session avoids spawning the bridge for every pi tool call. Use `/macuse-status` to inspect it and `/macuse-restart` to stop it; it restarts lazily on the next Computer Use tool call.
 
 Run `/reload` in pi after changing `.pi/extensions/codex-computer-use.ts`.
 

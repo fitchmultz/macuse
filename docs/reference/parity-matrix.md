@@ -13,7 +13,7 @@ execution, because raw accepted service-backed calls still hang in local probes.
 The app-server-backed path provides:
 
 - one-command doctor/demo/config entrypoints for operator-grade proof artifacts
-- pi extension tools for read-only state/listing and guarded sequences
+- pi extension tools for read-only state/listing and persistent-session sequences
 - a standard MCP wrapper for Cursor or other MCP-capable clients
 - focus-preserving defaults that prefer accessibility actions, keys, values, and
   element scroll over pointer movement
@@ -44,13 +44,14 @@ The app-server-backed path provides:
 | --- | --- | --- |
 | Does not leave target app frontmost | Passing for Calculator focus probe | `node tools/validate-macuse.mjs focus` |
 | Avoids actual mouse movement by default | Implemented | pi guidance prefers secondary actions/keys/set-value/scroll; pointer click/drag require explicit flags |
-| Restores mouse after pointer actions | Implemented | bridge `--preserve-mouse`; MCP wrapper restores after pointer click/drag |
+| Restores mouse after pointer actions | Implemented | pi extension restores pointer click/drag sequences; CLI bridge has `--preserve-mouse`; MCP wrapper restores pointer click/drag |
 | Before/after state evidence | Implemented | sequence steps can include `get_app_state`; validation uses before/after checks |
 | State assertions | Implemented | sequence steps support `expectText`, `expectAbsentText`, and `allowError` |
 | Screenshots available to agent | Implemented | `includeImage` and `saveImagePath` in bridge/pi flow; MCP wrapper returns image blocks from app-server |
 | Non-Codex MCP client support | Implemented | `tools/codex-computer-use-appserver-mcp.mjs` |
 | Durable refresh commands/docs | Implemented | `docs/reference/codex-computer-use-external-harness.md`, local install doc, and `docs/reference/demo-and-doctor.md` |
 | One-command proof artifact | Implemented | `node tools/macuse-demo.mjs --out .scratch/macuse-demo` writes Markdown, HTML, screenshots, transcript, and MCP config |
+| Persistent pi app-server session | Implemented | `node tools/validate-macuse.mjs quick` verifies two pi extension calls reuse one app-server thread and default approval inheritance auto-accepts Finder |
 
 ## Known gaps
 

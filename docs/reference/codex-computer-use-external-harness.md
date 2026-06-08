@@ -41,8 +41,9 @@ What is proven:
 - Controlled TextEdit probes against disposable `/tmp/macuse-type-test.txt` and `/tmp/macuse-set-value-test.txt` succeeded for `type_text` and `set_value`, with saved file contents matching the expected probe strings.
 - A controlled TextEdit selection probe against `/tmp/macuse-select-test.txt` succeeded for `select_text` with prefix/suffix disambiguation; file contents were unchanged.
 - This repository now includes both a CLI bridge and a project-local pi extension
-  that expose the working app-server path, including a guarded sequence wrapper
-  for mutating flows.
+  that expose the working app-server path. The pi extension keeps a persistent
+  app-server thread for the session and provides a sequence wrapper for mutating
+  flows.
 
 What is **not** proven yet:
 
@@ -516,22 +517,23 @@ The project-local pi extension is:
 .pi/extensions/codex-computer-use.ts
 ```
 
-It registers two standalone read-only pi tools and one guarded sequence tool:
+It registers two standalone read-only pi tools and one persistent-session sequence tool:
 
 - `codex_cu_list_apps`
 - `codex_cu_get_app_state`
 - `codex_cu_sequence`
 
-The pi extension wraps the app-server bridge. `codex_cu_get_app_state` and
-`codex_cu_sequence` default to `approval: "inherit"`, which auto-accepts
-Computer Use app-approval elicitations to match Codex's Any App setting. For
-mutating `codex_cu_sequence` steps, the extension requires
-`allowMutating: true` and a concrete `safetyNote`. Sequence steps can include
-`expectText`, `expectAbsentText`, and `allowError` so the bridge can stop on
-unexpected state or tool errors.
+The pi extension keeps a persistent Codex app-server process and thread for the
+session instead of shelling out to the CLI bridge for every tool call.
+`codex_cu_get_app_state` and `codex_cu_sequence` default to
+`approval: "inherit"`, which auto-accepts Computer Use app-approval elicitations
+to match Codex's Any App setting. For mutating `codex_cu_sequence` steps, the
+extension requires `allowMutating: true` and a concrete `safetyNote`. Sequence
+steps can include `expectText`, `expectAbsentText`, and `allowError` so the
+extension can stop on unexpected state or tool errors.
 Pointer-based `click` steps additionally require
 `allowPointerClick: true`; pointer-based `drag` steps require
-`allowPointerDrag: true` and use bridge-level `--preserve-mouse` restoration.
+`allowPointerDrag: true` and use extension-level mouse restoration.
 Prefer `perform_secondary_action` with `action: "Press"`, `press_key`,
 `set_value`, or element-targeted `scroll` when possible to preserve the user's
 mouse/system focus.
@@ -646,7 +648,7 @@ The important regression signals are:
 
 ## Implications for pi and Cursor agents
 
-Reusable now for guarded operation:
+Reusable now for broad pi operation:
 
 - The low-level macOS app-control implementation already exists in OpenAI's
   Computer Use install.
@@ -656,8 +658,8 @@ Reusable now for guarded operation:
   MCP was missing in these probes.
 - The Codex skill and app-specific instruction files are available locally.
 - pi can load `.pi/extensions/codex-computer-use.ts` and expose standalone
-  read-only tools plus the guarded `codex_cu_sequence` tool backed by
-  `tools/codex-computer-use-appserver.mjs`.
+  read-only tools plus the persistent-session `codex_cu_sequence` tool backed by
+  a live Codex app-server thread.
 - A harmless Calculator mutating smoke test has passed through the app-server
   sequence path.
 
@@ -670,8 +672,7 @@ Still needed before broad mutating GUI operation:
 2. Validate additional mutating tool shapes, such as scroll and text input, only
    in controlled apps/states with before/after `get_app_state` evidence.
 3. Decide whether standalone mutating pi tools are ever worthwhile; the current
-   safer default is one guarded sequence tool rather than many always-on
-   mutating tools.
+   default is one sequence tool rather than many standalone mutating tools.
 4. A host-app permission setup story for macOS Automation/TCC. Current evidence
    shows the service checks the responsible host app, such as Repo Prompt or a
    terminal, when the MCP client sends Apple Events to `Codex Computer Use.app`.
