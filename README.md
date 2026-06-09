@@ -66,7 +66,7 @@ The project-local pi extension keeps a persistent Codex app-server thread for th
 
 - `codex_cu_list_apps`
 - `codex_cu_get_app_state`
-- `codex_cu_sequence` for multi-step flows, including mutating steps with `allowMutating: true`, a `safetyNote`, and optional per-step `expectText` / `expectAbsentText` assertions. App approval defaults to `inherit`, which auto-accepts Computer Use app approvals to match Codex's Any App setting. Pointer `click` steps also require `allowPointerClick: true`; pointer `drag` steps require `allowPointerDrag: true` and automatically restore mouse position. Prefer accessibility actions/keys/values to preserve mouse focus. Element targets accept `element_index` as a string or number, `element` as an alias, stable `elementId` values, or exact `elementDescription` matches such as `Add`; compact trees and failed ID/description lookups include preferred target syntax plus index fallbacks. Sequence output defaults to `detail: "compact"`; pass `detail: "full"` for complete trees. Failed sequences return completed step results plus a failed-step diagnostic with `failedStepIndex`, `completedStepCount`, and `resumeFromStepIndex`; per-step `allowError: true` lets the sequence continue through resolution or tool errors.
+- `codex_cu_sequence` for multi-step flows, including mutating steps with `allowMutating: true`, a `safetyNote`, and optional per-step `expectText` / `expectAbsentText` / `expectVisibleText` assertions. App approval defaults to `inherit`, which auto-accepts Computer Use app approvals to match Codex's Any App setting. Pointer `click` steps also require `allowPointerClick: true`; pointer `drag` steps require `allowPointerDrag: true` and automatically restore mouse position. Prefer accessibility actions/keys/values to preserve mouse focus. Use sequence-level `app` to avoid repeating the same app in every step. Element targets accept `element_index` as a string or number, `element` as an alias, stable `elementId` values, exact `elementDescription` matches such as `Add`, or `arguments.targets` fallback objects such as `[{"elementId":"AllClear"},{"elementDescription":"Clear"}]`; compact trees and failed ID/description lookups include preferred target syntax plus index fallbacks. `get_app_state` supports `detail: "minimal"` for app/window, visible text, and concise target hints, `detail: "compact"` for interactive elements, and `detail: "full"` for raw trees. Sequence output defaults to `detail: "compact"`; pass `detail: "minimal"` for assertion-focused low-token summaries or `detail: "full"` for complete trees. `get_app_state` details include parsed element metadata with target hints. Failed sequences return completed step results plus a failed-step diagnostic with `failedStepIndex`, `completedStepCount`, and `resumeFromStepIndex`; per-step `allowError: true` lets the sequence continue through resolution or tool errors.
 
 The persistent session avoids spawning the bridge for every pi tool call. Use `/macuse-status` to inspect it and `/macuse-restart` to stop it; it restarts lazily on the next Computer Use tool call. Use `codex_cu_list_apps({ runningOnly: true })` for a short currently-running app list.
 
@@ -78,24 +78,26 @@ List running apps:
 { "runningOnly": true }
 ```
 
-Inspect Calculator compactly:
+Inspect Calculator with the lowest-token useful state view:
 
 ```json
-{ "app": "Calculator", "detail": "compact" }
+{ "app": "Calculator", "detail": "minimal" }
 ```
 
 Safe Calculator mutation:
 
 ```json
 {
+  "app": "Calculator",
+  "detail": "minimal",
   "steps": [
-    { "tool": "get_app_state", "arguments": { "app": "Calculator" } },
-    { "tool": "perform_secondary_action", "arguments": { "app": "Calculator", "elementId": "AllClear", "action": "Press" } },
-    { "tool": "perform_secondary_action", "arguments": { "app": "Calculator", "elementId": "One", "action": "Press" } },
-    { "tool": "perform_secondary_action", "arguments": { "app": "Calculator", "elementDescription": "Add", "action": "Press" } },
-    { "tool": "perform_secondary_action", "arguments": { "app": "Calculator", "elementDescription": "2", "action": "Press" } },
-    { "tool": "perform_secondary_action", "arguments": { "app": "Calculator", "elementDescription": "Equals", "action": "Press" } },
-    { "tool": "get_app_state", "arguments": { "app": "Calculator" }, "expectText": "3" }
+    { "tool": "get_app_state", "arguments": {} },
+    { "tool": "perform_secondary_action", "arguments": { "targets": [{ "elementId": "AllClear" }, { "elementDescription": "Clear" }], "action": "Press" } },
+    { "tool": "perform_secondary_action", "arguments": { "elementId": "One", "action": "Press" } },
+    { "tool": "perform_secondary_action", "arguments": { "elementDescription": "Add", "action": "Press" } },
+    { "tool": "perform_secondary_action", "arguments": { "elementDescription": "2", "action": "Press" } },
+    { "tool": "perform_secondary_action", "arguments": { "elementDescription": "Equals", "action": "Press" } },
+    { "tool": "get_app_state", "arguments": {}, "expectVisibleText": "3" }
   ],
   "allowMutating": true,
   "safetyNote": "Calculator-only smoke: clear, compute 1+2, verify result, no sends/deletes/purchases."

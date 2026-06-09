@@ -141,14 +141,21 @@ Prefer one mutating sequence surface over many always-on standalone mutating too
 persistent `codex_cu_sequence` wrapper requires or enforces:
 
 - ordered `steps`, preferably starting and ending with `get_app_state`
+- optional sequence-level `app` to apply a default target app to steps that omit
+  `arguments.app`; this reduces repeated arguments without weakening the
+  app/window specificity requirement in the `safetyNote`
 - element-targeted tools accept `element_index` as a string or number, `element`
-  as an alias, `elementId` / `element_id`, or exact `elementDescription` /
-  `element_description` matches; prefer stable IDs/descriptions when available
-  because numeric indices can shift, and use failed lookup fallback hints when
-  IDs or descriptions are absent or stale
-- optional per-step `expectText` and `expectAbsentText` assertions to stop the
-  sequence when state evidence does not match expectations; stopped sequences
-  return completed step evidence plus the failed-step diagnostic, and
+  as an alias, `elementId` / `element_id`, exact `elementDescription` /
+  `element_description` matches, or `arguments.targets` fallback objects such as
+  `[{"elementId":"AllClear"},{"elementDescription":"Clear"}]`; prefer stable
+  IDs/descriptions when available because numeric indices can shift, and use
+  failed lookup fallback hints when IDs or descriptions are absent or stale
+- optional per-step `expectText`, `expectAbsentText`, and `expectVisibleText`
+  assertions to stop the sequence when state evidence does not match
+  expectations; `expectText`/`expectAbsentText` strip invisible bidi marks before
+  substring checks, while `expectVisibleText` checks parsed visible text values
+  directly so display assertions can use values like `0` or `1`; stopped
+  sequences return completed step evidence plus the failed-step diagnostic, and
   per-step `allowError: true` permits recovery from optional resolution/tool
   errors
 - `allowMutating: true` when any step is not read-only
@@ -158,6 +165,13 @@ persistent `codex_cu_sequence` wrapper requires or enforces:
   or element-targeted `scroll` when possible to preserve mouse/system focus.
   Pointer drag/click sequences use extension-level mouse restoration.
 - a `safetyNote` that states target app, intended effect, and stop boundary
+- sequence `detail: "minimal"` for token-efficient action logs that suppress
+  successful action and state bodies while preserving assertion pass snippets and
+  failure evidence; `detail: "compact"` remains the default and `detail: "full"`
+  keeps raw trees
+- machine-readable parsed element metadata in tool result `details` for
+  `get_app_state` steps, including target hints, stable IDs, descriptions, and
+  secondary actions where Computer Use exposes them
 - extension-level refusal of mutating calls unless `allowMutating: true` is passed
 
 The app-server-backed standard MCP wrapper at

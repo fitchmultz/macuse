@@ -234,30 +234,98 @@ factory({
   const signal = new AbortController().signal;
   await tools.get('codex_cu_get_app_state').execute('state', { app: 'Calculator', detail: 'compact', maxTextChars: 1200, toolTimeoutMs: 90000 }, signal, () => {});
   const sequence = await tools.get('codex_cu_sequence').execute('sequence', {
+    app: 'Calculator',
     steps: [
-      { tool: 'press_key', arguments: { app: 'Calculator', key: 'Escape' } },
-      { tool: 'press_key', arguments: { app: 'Calculator', key: 'Escape' } },
-      { tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'AllClear', action: 'Press' } },
-      { tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementDescription: 'Add', action: 'NotARealAction' }, allowError: true },
-      { tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'One', action: 'Press' } },
-      { tool: 'get_app_state', arguments: { app: 'Calculator' }, expectText: '1' },
-      { tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementDescription: 'Clear', action: 'Press' } },
-      { tool: 'get_app_state', arguments: { app: 'Calculator' }, expectText: '0' },
-      { tool: 'perform_secondary_action', arguments: { app: 'Calculator', element_index: 6, action: 'Press' } },
-      { tool: 'get_app_state', arguments: { app: 'Calculator' }, expectText: '0' },
+      { tool: 'press_key', arguments: { key: 'Escape' } },
+      { tool: 'press_key', arguments: { key: 'Escape' } },
+      { tool: 'perform_secondary_action', arguments: { elementId: 'AllClear', action: 'Press' } },
+      { tool: 'perform_secondary_action', arguments: { elementDescription: 'Add', action: 'NotARealAction' }, allowError: true },
+      { tool: 'perform_secondary_action', arguments: { elementId: 'One', action: 'Press' } },
+      { tool: 'get_app_state', arguments: {}, expectVisibleText: '1' },
+      { tool: 'perform_secondary_action', arguments: { targets: [{ elementId: 'AllClear' }, { elementDescription: 'Clear' }], action: 'Press' } },
+      { tool: 'get_app_state', arguments: {}, expectVisibleText: '0' },
+      { tool: 'perform_secondary_action', arguments: { element_index: 6, action: 'Press' } },
+      { tool: 'get_app_state', arguments: {}, expectText: 'text 0' },
     ],
     allowMutating: true,
-    safetyNote: 'Validate Calculator-only element_index coercion, elementId and elementDescription targeting, and restore to zero.',
+    safetyNote: 'Validate Calculator-only default app, minimal output, normalized expectText, element_index coercion, elementId and elementDescription targeting, and restore to zero.',
+    detail: 'minimal',
+    maxTextChars: 1200,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  if (sequence.details.computerUse.defaultApp !== 'Calculator') throw new Error('pi extension did not record the sequence-level default app');
+  if (sequence.details.computerUse.steps.some((step) => step.arguments.app !== 'Calculator')) throw new Error('pi extension did not apply the sequence-level default app to every step');
+  if (!Array.isArray(sequence.details.computerUse.steps[5].elements) || sequence.details.computerUse.steps[5].elements.length === 0) throw new Error('pi extension did not expose machine-readable get_app_state elements in sequence details');
+  if (sequence.details.computerUse.steps[2].arguments.element_index !== '6') throw new Error('pi extension did not resolve Calculator elementId AllClear to current element_index');
+  if (sequence.details.computerUse.steps[3].arguments.element_index !== '20') throw new Error('pi extension did not resolve Calculator elementDescription Add to current element_index');
+  if (sequence.details.computerUse.steps[4].arguments.element_index !== '17') throw new Error('pi extension did not resolve Calculator elementId One to current element_index');
+  if (sequence.details.computerUse.steps[6].arguments.element_index !== '6') throw new Error('pi extension did not resolve Calculator fallback targets to current Clear element_index');
+  if (!String(sequence.details.computerUse.steps[6].targetResolution || '').includes('targets[')) throw new Error('pi extension did not report fallback target resolution');
+  if (sequence.details.computerUse.steps[8].arguments.element_index !== '6') throw new Error('pi extension did not coerce numeric element_index to string');
+  if (sequence.details.computerUse.implicitRefreshes < 5) throw new Error('pi extension did not refresh before element-targeted sequence steps');
+  const readOnlyDefaultApp = await tools.get('codex_cu_sequence').execute('read-only-default-app', {
+    app: 'Calculator',
+    steps: [
+      { tool: 'list_apps', arguments: {} },
+      { tool: 'get_app_state', arguments: {} },
+    ],
+    detail: 'minimal',
+    maxTextChars: 1200,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  if ('app' in readOnlyDefaultApp.details.computerUse.steps[0].arguments) throw new Error('pi extension incorrectly applied sequence-level app to list_apps');
+  if (readOnlyDefaultApp.details.computerUse.steps[1].arguments.app !== 'Calculator') throw new Error('pi extension did not apply sequence-level app to get_app_state');
+  const compactElementDetails = await tools.get('codex_cu_sequence').execute('compact-element-details', {
+    app: 'Calculator',
+    steps: [{ tool: 'get_app_state', arguments: {} }],
     detail: 'compact',
     maxTextChars: 1200,
     toolTimeoutMs: 90000,
   }, signal, () => {});
-  if (sequence.details.computerUse.steps[2].arguments.element_index !== '6') throw new Error('pi extension did not resolve Calculator elementId AllClear to current element_index');
-  if (sequence.details.computerUse.steps[3].arguments.element_index !== '20') throw new Error('pi extension did not resolve Calculator elementDescription Add to current element_index');
-  if (sequence.details.computerUse.steps[4].arguments.element_index !== '17') throw new Error('pi extension did not resolve Calculator elementId One to current element_index');
-  if (sequence.details.computerUse.steps[6].arguments.element_index !== '6') throw new Error('pi extension did not resolve Calculator Clear description to current element_index');
-  if (sequence.details.computerUse.steps[8].arguments.element_index !== '6') throw new Error('pi extension did not coerce numeric element_index to string');
-  if (sequence.details.computerUse.implicitRefreshes < 5) throw new Error('pi extension did not refresh before element-targeted sequence steps');
+  const pollutedAction = compactElementDetails.details.computerUse.steps[0].elements
+    .flatMap((element) => element.secondaryActions || [])
+    .find((action) => String(action).includes('target:'));
+  if (pollutedAction) throw new Error('pi extension compact-mode machine-readable elements were polluted by rendered target hints: ' + pollutedAction);
+  const appLessTargets = await tools.get('codex_cu_sequence').execute('app-less-targets', {
+    steps: [
+      { tool: 'perform_secondary_action', arguments: { targets: [{ element_index: 6 }], action: 'Press' } },
+    ],
+    allowMutating: true,
+    safetyNote: 'Validate app-less Calculator-style targets fail before any under-targeted mutation is sent.',
+    detail: 'minimal',
+    maxTextChars: 3000,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  if (!appLessTargets.details.computerUse.failed) throw new Error('pi extension app-less targets did not fail');
+  if (!appLessTargets.content[0].text.includes('requires an app argument')) throw new Error('pi extension app-less targets failure did not explain missing app');
+  const targetAppOverride = await tools.get('codex_cu_sequence').execute('target-app-override', {
+    app: 'Calculator',
+    steps: [
+      { tool: 'get_app_state', arguments: {} },
+      { tool: 'perform_secondary_action', arguments: { targets: [{ app: 'Finder', element_index: 6 }], action: 'Press' } },
+    ],
+    allowMutating: true,
+    safetyNote: 'Validate Calculator-only target fallback rejects target-level app overrides before mutation.',
+    detail: 'minimal',
+    maxTextChars: 3000,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  if (!targetAppOverride.details.computerUse.failed) throw new Error('pi extension target-level app override did not fail');
+  if (!targetAppOverride.content[0].text.includes('must not include app')) throw new Error('pi extension target-level app override failure did not explain app scoping');
+  const malformedTargets = await tools.get('codex_cu_sequence').execute('malformed-targets', {
+    app: 'Calculator',
+    steps: [
+      { tool: 'get_app_state', arguments: {} },
+      { tool: 'perform_secondary_action', arguments: { targets: [{}], action: 'Press' } },
+    ],
+    allowMutating: true,
+    safetyNote: 'Validate malformed Calculator-only targets fail before any under-targeted mutation is sent.',
+    detail: 'minimal',
+    maxTextChars: 3000,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  if (!malformedTargets.details.computerUse.failed) throw new Error('pi extension malformed targets did not fail');
+  if (!malformedTargets.content[0].text.includes('does not contain element_index')) throw new Error('pi extension malformed targets failure did not explain missing target');
   const partial = await tools.get('codex_cu_sequence').execute('partial', {
     steps: [
       { tool: 'get_app_state', arguments: { app: 'Calculator' } },
@@ -271,7 +339,24 @@ factory({
   }, signal, () => {});
   if (!partial.details.computerUse.failed) throw new Error('pi extension invalid elementId did not mark sequence failed');
   if (partial.details.computerUse.steps.length !== 2) throw new Error('pi extension invalid elementId did not return completed plus failed step results');
-  if (!partial.content[0].text.includes('Available elements:')) throw new Error('pi extension invalid elementId error did not include element_index fallback hints');
+  if (!partial.content[0].text.includes('Available targets:')) throw new Error('pi extension invalid elementId error did not include element_index fallback hints');
+  const lateFailure = await tools.get('codex_cu_sequence').execute('late-failure', {
+    steps: [
+      { tool: 'get_app_state', arguments: { app: 'Calculator' } },
+      { tool: 'get_app_state', arguments: { app: 'Calculator' } },
+      { tool: 'get_app_state', arguments: { app: 'Calculator' } },
+      { tool: 'get_app_state', arguments: { app: 'Calculator' } },
+      { tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'NoSuchElementId', action: 'Press' } },
+    ],
+    allowMutating: true,
+    safetyNote: 'Validate late Calculator-only failures keep the failed-step diagnostic under tight maxTextChars before mutation.',
+    detail: 'compact',
+    maxTextChars: 1000,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  if (!lateFailure.details.computerUse.failed) throw new Error('pi extension late invalid elementId did not mark sequence failed');
+  if (!lateFailure.content[0].text.includes('Step 5')) throw new Error('pi extension late failure output did not prioritize the failed step');
+  if (!lateFailure.content[0].text.includes('Available targets:')) throw new Error('pi extension late failure output lost the failed-step diagnostic under maxTextChars');
   const allowed = await tools.get('codex_cu_sequence').execute('allowed', {
     steps: [
       { tool: 'get_app_state', arguments: { app: 'Calculator' } },
@@ -305,6 +390,9 @@ factory({
   const compact = await tools.get('codex_cu_get_app_state').execute('compact', { app: 'TextEdit', detail: 'compact', maxTextChars: 6000, toolTimeoutMs: 90000 }, signal, () => {});
   if (/text 6\.5|text 7|text 7\.5/.test(compact.content[0].text)) throw new Error('pi extension compact mode kept TextEdit ruler marker text');
   if (!compact.content[0].text.includes('First Text View')) throw new Error('pi extension compact mode omitted TextEdit text view');
+  const minimal = await tools.get('codex_cu_get_app_state').execute('minimal', { app: 'Calculator', detail: 'minimal', maxTextChars: 3000, toolTimeoutMs: 90000 }, signal, () => {});
+  if (!minimal.content[0].text.includes('Visible text:') || !minimal.content[0].text.includes('Targets:')) throw new Error('pi extension minimal get_app_state omitted visible text or target sections');
+  if (minimal.content[0].text.includes('Help:')) throw new Error('pi extension minimal get_app_state kept verbose help text');
   if (handlers.has('session_shutdown')) await handlers.get('session_shutdown')({ reason: 'test' }, {});
   console.log(sequence.details.computerUse.steps.map((step) => step.arguments.element_index).filter(Boolean).join(','));
 })().catch(async (error) => {
