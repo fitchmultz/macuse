@@ -191,6 +191,8 @@ persistent `codex_cu_sequence` wrapper requires or enforces:
   fallback when a single non-risky clear/cancel control is available
 - extension-level refusal of mutating calls unless `allowMutating: true` is passed
 
+Lifecycle safety: the pi extension owns only its spawned `codex app-server` process and descendants. It stops them on normal `session_shutdown`, exposes `/macuse-stop` for manual cleanup, records macOS PID/start-time fingerprints under `/tmp/macuse-appserver`, starts a watchdog for hard-crash cleanup, and reaps only matching macuse-owned orphaned app-server processes at startup. It does not kill Codex's global `SkyComputerUseService` helper.
+
 The app-server-backed standard MCP wrapper at
 `tools/codex-computer-use-appserver-mcp.mjs` proxies MCP `elicitation/create`
 app-approval prompts when the client advertises elicitation support. It also uses

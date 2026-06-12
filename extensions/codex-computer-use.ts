@@ -9,8 +9,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { createHash } from "node:crypto";
-import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { spawn, spawnSync, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 const VERSION = "0.2.0";
@@ -32,6 +32,8 @@ const APP_SCOPED_TOOLS = new Set([
 	...WAIT_TOOLS,
 ]);
 const FEATURE_FLAGS = ["computer_use", "plugins", "tool_call_mcp_elicitation"];
+const PROCESS_REGISTRY_DIR = "/tmp/macuse-appserver";
+const PROCESS_REGISTRY_PREFIX = "macuse-appserver-";
 
 type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
@@ -1059,6 +1061,258 @@ function bridgeDetails(base: Record<string, unknown>, stderrTail: string): Recor
 	};
 }
 
+type ProcessRecord = {
+	version: string;
+	nonce: string;
+	cwd: string;
+	codexBin: string;
+	ownerPid: number;
+	ownerStart: string | null;
+	appServerPid: number;
+	appServerStart: string | null;
+	pidFile: string;
+	createdAt: string;
+};
+
+type ReapSummary = {
+	pidFile: string;
+	appServerPid?: number;
+	ownerPid?: number;
+	action: "removed-dead" | "reaped-orphan" | "kept-active" | "ignored";
+	reason: string;
+};
+
+function processStart(pid: number): string | null {
+	if (!Number.isInteger(pid) || pid <= 0) return null;
+	const result = spawnSync("ps", ["-p", String(pid), "-o", "lstart="], { encoding: "utf8", timeout: 5_000 });
+	if (result.status !== 0) return null;
+	return result.stdout.trim() || null;
+}
+
+function processCommand(pid: number): string | null {
+	if (!Number.isInteger(pid) || pid <= 0) return null;
+	const result = spawnSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8", timeout: 5_000 });
+	if (result.status !== 0) return null;
+	return result.stdout.trim() || null;
+}
+
+function processAlive(pid: number, expectedStart?: string | null): boolean {
+	if (!Number.isInteger(pid) || pid <= 0) return false;
+	try {
+		process.kill(pid, 0);
+	} catch {
+		return false;
+	}
+	if (!expectedStart) return true;
+	return processStart(pid) === expectedStart;
+}
+
+function appServerCommandMatches(pid: number, codexBin: string): boolean {
+	const command = processCommand(pid);
+	if (!command) return false;
+	return command.includes(codexBin) && command.includes("app-server") && command.includes("--enable computer_use");
+}
+
+function processChildren(): Map<number, number[]> {
+	const result = spawnSync("ps", ["-axo", "pid=,ppid="], { encoding: "utf8", timeout: 5_000 });
+	const children = new Map<number, number[]>();
+	if (result.status !== 0) return children;
+	for (const line of result.stdout.split("\n")) {
+		const [pidText, ppidText] = line.trim().split(/\s+/);
+		const pid = Number(pidText);
+		const ppid = Number(ppidText);
+		if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+		const list = children.get(ppid) ?? [];
+		list.push(pid);
+		children.set(ppid, list);
+	}
+	return children;
+}
+
+function processTree(rootPid: number): number[] {
+	const children = processChildren();
+	const ordered: number[] = [];
+	const visit = (pid: number) => {
+		for (const child of children.get(pid) ?? []) visit(child);
+		ordered.push(pid);
+	};
+	visit(rootPid);
+	return ordered;
+}
+
+function killProcessTree(rootPid: number, signal: NodeJS.Signals): void {
+	for (const pid of processTree(rootPid)) {
+		try {
+			process.kill(pid, signal);
+		} catch {
+			// Process may have exited between ps and kill.
+		}
+	}
+}
+
+function registryKey(cwd: string, codexBin: string): string {
+	return createHash("sha256").update(`${cwd}\0${codexBin}`).digest("hex").slice(0, 16);
+}
+
+function safeUnlink(file: string): void {
+	try {
+		unlinkSync(file);
+	} catch {
+		// Already gone or not removable; stale cleanup is best effort.
+	}
+}
+
+function readProcessRecord(file: string): ProcessRecord | null {
+	try {
+		const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
+		if (!isRecord(parsed)) return null;
+		if (parsed.version !== VERSION || typeof parsed.cwd !== "string" || typeof parsed.codexBin !== "string" || typeof parsed.pidFile !== "string") return null;
+		if (typeof parsed.nonce !== "string" || typeof parsed.createdAt !== "string") return null;
+		if (typeof parsed.ownerPid !== "number" || typeof parsed.appServerPid !== "number") return null;
+		return parsed as ProcessRecord;
+	} catch {
+		return null;
+	}
+}
+
+function reapStaleAppServers(cwd: string, codexBin: string): ReapSummary[] {
+	mkdirSync(PROCESS_REGISTRY_DIR, { recursive: true });
+	const key = registryKey(cwd, codexBin);
+	const summaries: ReapSummary[] = [];
+	for (const name of readdirSync(PROCESS_REGISTRY_DIR)) {
+		if (!name.startsWith(`${PROCESS_REGISTRY_PREFIX}${key}-`) || !name.endsWith(".json")) continue;
+		const file = path.join(PROCESS_REGISTRY_DIR, name);
+		const record = readProcessRecord(file);
+		if (!record || record.cwd !== cwd || record.codexBin !== codexBin) {
+			summaries.push({ pidFile: file, action: "ignored", reason: "record did not match current cwd/codexBin" });
+			continue;
+		}
+		const appAlive = processAlive(record.appServerPid, record.appServerStart);
+		if (!appAlive) {
+			safeUnlink(file);
+			summaries.push({ pidFile: file, appServerPid: record.appServerPid, ownerPid: record.ownerPid, action: "removed-dead", reason: "app-server process is no longer alive" });
+			continue;
+		}
+		const ownerAlive = processAlive(record.ownerPid, record.ownerStart);
+		if (ownerAlive) {
+			summaries.push({ pidFile: file, appServerPid: record.appServerPid, ownerPid: record.ownerPid, action: "kept-active", reason: "owner process is still alive" });
+			continue;
+		}
+		if (!appServerCommandMatches(record.appServerPid, codexBin)) {
+			summaries.push({ pidFile: file, appServerPid: record.appServerPid, ownerPid: record.ownerPid, action: "ignored", reason: "process command did not match macuse app-server fingerprint" });
+			continue;
+		}
+		killProcessTree(record.appServerPid, "SIGTERM");
+		setTimeout(() => {
+			if (processAlive(record.appServerPid, record.appServerStart)) killProcessTree(record.appServerPid, "SIGKILL");
+		}, 2_000).unref();
+		safeUnlink(file);
+		summaries.push({ pidFile: file, appServerPid: record.appServerPid, ownerPid: record.ownerPid, action: "reaped-orphan", reason: "owner process is gone" });
+	}
+	return summaries;
+}
+
+const WATCHDOG_SCRIPT = String.raw`
+const { spawnSync } = require('node:child_process');
+const { existsSync, readFileSync, unlinkSync } = require('node:fs');
+const record = JSON.parse(process.argv[1]);
+function ps(pid, field) {
+  const result = spawnSync('ps', ['-p', String(pid), '-o', field + '='], { encoding: 'utf8', timeout: 5000 });
+  return result.status === 0 ? result.stdout.trim() : '';
+}
+function alive(pid, start) {
+  try { process.kill(pid, 0); } catch { return false; }
+  return !start || ps(pid, 'lstart') === start;
+}
+function commandMatches(pid) {
+  const command = ps(pid, 'command');
+  return command.includes(record.codexBin) && command.includes('app-server') && command.includes('--enable computer_use');
+}
+function children() {
+  const result = spawnSync('ps', ['-axo', 'pid=,ppid='], { encoding: 'utf8', timeout: 5000 });
+  const map = new Map();
+  if (result.status !== 0) return map;
+  for (const line of result.stdout.split('\n')) {
+    const [pidText, ppidText] = line.trim().split(/\s+/);
+    const pid = Number(pidText), ppid = Number(ppidText);
+    if (!Number.isInteger(pid) || !Number.isInteger(ppid)) continue;
+    const list = map.get(ppid) || [];
+    list.push(pid);
+    map.set(ppid, list);
+  }
+  return map;
+}
+function tree(root) {
+  const map = children();
+  const out = [];
+  function visit(pid) { for (const child of map.get(pid) || []) visit(child); out.push(pid); }
+  visit(root);
+  return out;
+}
+function killTree(signal) {
+  for (const pid of tree(record.appServerPid)) {
+    try { process.kill(pid, signal); } catch {}
+  }
+}
+function samePidFile() {
+  try {
+    const current = JSON.parse(readFileSync(record.pidFile, 'utf8'));
+    return current.nonce === record.nonce && current.appServerPid === record.appServerPid;
+  } catch { return false; }
+}
+const timer = setInterval(() => {
+  if (!existsSync(record.pidFile) || !samePidFile()) process.exit(0);
+  if (!alive(record.appServerPid, record.appServerStart)) {
+    try { unlinkSync(record.pidFile); } catch {}
+    process.exit(0);
+  }
+  if (alive(record.ownerPid, record.ownerStart)) return;
+  if (commandMatches(record.appServerPid)) {
+    killTree('SIGTERM');
+    setTimeout(() => { if (alive(record.appServerPid, record.appServerStart)) killTree('SIGKILL'); }, 2000).unref();
+  }
+  try { unlinkSync(record.pidFile); } catch {}
+  clearInterval(timer);
+  setTimeout(() => process.exit(0), 2500).unref();
+}, 1000);
+timer.unref();
+setInterval(() => {}, 60000);
+`;
+
+function writeProcessRecord(cwd: string, codexBin: string, appServerPid: number): ProcessRecord {
+	mkdirSync(PROCESS_REGISTRY_DIR, { recursive: true });
+	const key = registryKey(cwd, codexBin);
+	const nonce = createHash("sha256").update(`${process.pid}\0${appServerPid}\0${Date.now()}\0${Math.random()}`).digest("hex").slice(0, 16);
+	const pidFile = path.join(PROCESS_REGISTRY_DIR, `${PROCESS_REGISTRY_PREFIX}${key}-${process.pid}-${appServerPid}-${nonce}.json`);
+	const record: ProcessRecord = {
+		version: VERSION,
+		nonce,
+		cwd,
+		codexBin,
+		ownerPid: process.pid,
+		ownerStart: processStart(process.pid),
+		appServerPid,
+		appServerStart: processStart(appServerPid),
+		pidFile,
+		createdAt: new Date().toISOString(),
+	};
+	writeFileSync(pidFile, JSON.stringify(record, null, 2));
+	return record;
+}
+
+function startWatchdog(record: ProcessRecord): ChildProcess | null {
+	try {
+		const proc = spawn(process.execPath, ["-e", WATCHDOG_SCRIPT, JSON.stringify(record)], {
+			detached: true,
+			stdio: "ignore",
+		});
+		proc.unref();
+		return proc;
+	} catch {
+		return null;
+	}
+}
+
 type PendingRequest = {
 	resolve: (value: unknown) => void;
 	reject: (error: Error) => void;
@@ -1103,8 +1357,13 @@ class AppServerClient {
 	private elicitationCount = 0;
 	private notifications: Array<{ method: string; params?: unknown }> = [];
 	private stderr = "";
+	private processRecord: ProcessRecord | null = null;
+	private watchdog: ChildProcess | null = null;
+	private staleReapSummary: ReapSummary[] = [];
 
-	constructor(private readonly codexBin = process.env.CODEX_BIN || DEFAULT_CODEX_BIN, private readonly cwd = process.cwd()) {}
+	constructor(private readonly codexBin = process.env.CODEX_BIN || DEFAULT_CODEX_BIN, private readonly cwd = process.cwd()) {
+		this.staleReapSummary = reapStaleAppServers(this.cwd, this.codexBin);
+	}
 
 	status() {
 		return {
@@ -1112,6 +1371,11 @@ class AppServerClient {
 			codexBin: this.codexBin,
 			cwd: this.cwd,
 			running: Boolean(this.proc && this.proc.exitCode === null && this.proc.signalCode === null),
+			processPid: this.proc?.pid ?? null,
+			processRecord: this.processRecord,
+			watchdogPid: this.watchdog?.pid ?? null,
+			registryDir: PROCESS_REGISTRY_DIR,
+			staleReapSummary: this.staleReapSummary,
 			threadId: this.thread?.id ?? null,
 			acceptedElicitations: this.acceptedElicitations,
 			elicitationCount: this.elicitationCount,
@@ -1156,6 +1420,10 @@ class AppServerClient {
 		});
 		this.proc.on("exit", (code, exitSignal) => this.onExit(code, exitSignal));
 		this.proc.on("error", (error) => this.onExit(null, null, error));
+		if (this.proc.pid) {
+			this.processRecord = writeProcessRecord(this.cwd, this.codexBin, this.proc.pid);
+			this.watchdog = startWatchdog(this.processRecord);
+		}
 
 		this.initialized = await this.request("initialize", {
 			clientInfo: { name: "pi-macuse-computer-use", version: VERSION },
@@ -1253,6 +1521,9 @@ class AppServerClient {
 		this.proc = null;
 		this.thread = null;
 		this.initialized = null;
+		if (this.processRecord) safeUnlink(this.processRecord.pidFile);
+		this.processRecord = null;
+		this.watchdog = null;
 	}
 
 	private write(message: unknown): void {
@@ -1331,14 +1602,30 @@ class AppServerClient {
 
 	async stop(): Promise<void> {
 		const proc = this.proc;
-		if (!proc) return;
+		const record = this.processRecord;
 		this.proc = null;
 		this.thread = null;
+		this.initialized = null;
+		this.processRecord = null;
+		this.watchdog = null;
+		if (record) safeUnlink(record.pidFile);
+		if (!proc) return;
+		for (const pending of this.pending.values()) {
+			clearTimeout(pending.timer);
+			if (pending.onAbort) pending.onAbort();
+			pending.reject(new ComputerUseError("Codex app-server stopped by macuse"));
+		}
+		this.pending.clear();
 		if (proc.exitCode !== null || proc.signalCode !== null) return;
-		proc.kill("SIGTERM");
+		const pid = proc.pid;
+		if (pid) killProcessTree(pid, "SIGTERM");
+		else proc.kill("SIGTERM");
 		await new Promise<void>((resolve) => {
 			const timer = setTimeout(() => {
-				if (proc.exitCode === null && proc.signalCode === null) proc.kill("SIGKILL");
+				if (proc.exitCode === null && proc.signalCode === null) {
+					if (pid) killProcessTree(pid, "SIGKILL");
+					else proc.kill("SIGKILL");
+				}
 				resolve();
 			}, 3_000);
 			proc.once("exit", () => {
@@ -1548,7 +1835,17 @@ export default function (pi: ExtensionAPI) {
 		description: "Show Codex Computer Use persistent app-server status",
 		handler: async (_args, ctx) => {
 			const status = client.status();
-			ctx.ui.notify(`macuse ${status.running ? "running" : "stopped"}${status.threadId ? ` thread=${status.threadId}` : ""}`, status.running ? "info" : "warning");
+			const reaped = status.staleReapSummary.filter((item) => item.action === "reaped-orphan").length;
+			ctx.ui.notify(`macuse ${status.running ? "running" : "stopped"}${status.threadId ? ` thread=${status.threadId}` : ""}${status.processPid ? ` pid=${status.processPid}` : ""}${status.watchdogPid ? ` watchdog=${status.watchdogPid}` : ""}${reaped ? ` reaped=${reaped}` : ""}`, status.running ? "info" : "warning");
+		},
+	});
+
+	pi.registerCommand("macuse-stop", {
+		description: "Stop the persistent Codex Computer Use app-server session; it restarts lazily on the next macuse tool call",
+		handler: async (_args, ctx) => {
+			sessionElementCache.clear();
+			await client.stop();
+			ctx.ui.notify("macuse Computer Use app-server stopped; it will restart lazily on the next tool call.", "info");
 		},
 	});
 
@@ -1557,7 +1854,7 @@ export default function (pi: ExtensionAPI) {
 		handler: async (_args, ctx) => {
 			sessionElementCache.clear();
 			await client.restart();
-			ctx.ui.notify("macuse Computer Use session stopped; it will restart on the next tool call.", "info");
+			ctx.ui.notify("macuse Computer Use app-server stopped; it will restart on the next tool call.", "info");
 		},
 	});
 

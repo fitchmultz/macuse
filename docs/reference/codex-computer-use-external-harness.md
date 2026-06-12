@@ -527,7 +527,15 @@ It registers two standalone read-only pi tools and one persistent-session sequen
 - `codex_cu_sequence`
 
 The pi extension keeps a persistent Codex app-server process and thread for the
-session instead of shelling out to the CLI bridge for every tool call.
+session instead of shelling out to the CLI bridge for every tool call. Normal
+`session_shutdown` stops that process, `/macuse-stop` stops it manually while
+leaving lazy restart available, and `/macuse-restart` performs the same stop
+before the next tool call restarts app-server. On macOS the extension writes a
+PID record under `/tmp/macuse-appserver`, starts a small watchdog that monitors
+the originating pi process, and reaps only matching macuse-owned orphaned
+`codex app-server` processes on startup. It intentionally does not kill the
+Codex-managed `SkyComputerUseService`, which may remain resident after macuse
+exits.
 `codex_cu_get_app_state` and `codex_cu_sequence` default to
 `approval: "inherit"`, which auto-accepts Computer Use app-approval elicitations
 to match Codex's Any App setting. For mutating `codex_cu_sequence` steps, the

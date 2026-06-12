@@ -177,10 +177,11 @@ const jiti = createJiti(process.cwd() + '/validate-extension-persistent.js', { i
 const mod = jiti('./.pi/extensions/codex-computer-use.ts');
 const factory = mod.default || mod;
 const tools = new Map();
+const commands = new Map();
 const handlers = new Map();
 factory({
   registerTool(def) { tools.set(def.name, def); },
-  registerCommand() {},
+  registerCommand(name, def) { commands.set(name, def); },
   on(name, handler) { handlers.set(name, handler); },
 });
 (async () => {
@@ -196,6 +197,17 @@ factory({
   if (!firstThread || firstThread !== secondThread) throw new Error('pi extension did not reuse persistent app-server thread');
   if (second.details.computerUse.isError) throw new Error('pi extension default inherit returned isError for Finder');
   if (second.details.computerUse.elicitationCount < 1 || second.details.computerUse.acceptedElicitations < 1) throw new Error('pi extension did not auto-accept Finder app approval via inherit');
+  if (!commands.has('macuse-stop')) throw new Error('pi extension did not register /macuse-stop');
+  if (!commands.has('macuse-status')) throw new Error('pi extension did not register /macuse-status');
+  const notifications = [];
+  const commandCtx = { ui: { notify(message, level) { notifications.push({ message, level }); } } };
+  await commands.get('macuse-status').handler('', commandCtx);
+  const runningStatus = notifications.at(-1)?.message || '';
+  if (!runningStatus.includes('running') || !/pid=\d+/.test(runningStatus) || !/watchdog=\d+/.test(runningStatus)) throw new Error('pi extension /macuse-status did not report pid/watchdog while running: ' + runningStatus);
+  await commands.get('macuse-stop').handler('', commandCtx);
+  await commands.get('macuse-status').handler('', commandCtx);
+  const stoppedStatus = notifications.at(-1)?.message || '';
+  if (!stoppedStatus.includes('stopped')) throw new Error('pi extension /macuse-stop did not stop app-server: ' + stoppedStatus);
   if (handlers.has('session_shutdown')) await handlers.get('session_shutdown')({ reason: 'test' }, {});
   console.log(firstThread);
 })().catch(async (error) => {
