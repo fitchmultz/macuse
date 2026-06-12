@@ -541,16 +541,20 @@ applied to steps whose `arguments` omit `app`. Element-targeted tools accept
 `element_index` as a string or number, `element` as an alias, `elementId` /
 `element_id` resolved from the latest `get_app_state` tree, exact
 `elementDescription` / `element_description` matches for descriptions such as
-Calculator `Add`, or `arguments.targets` fallback objects such as
-`[{"elementId":"AllClear"},{"elementDescription":"Clear"}]`. The extension
-refreshes app state before element-targeted sequence steps so stale numeric
-indices are easier to diagnose, but ID/description targeting remains safer.
-Failed ID/description lookups return available `element_index` lines so the
-agent can fall back without a separate state call. If a sequence fails after it
-starts, the result includes all completed steps plus a failed-step diagnostic and
-resume hint instead of discarding partial evidence. Per-step `allowError: true`
-also covers element resolution errors, so optional/fallback steps can fail and
-the sequence can continue.
+Calculator `Add`, role/name selectors such as `{ "role": "button", "name":
+"Add" }`, or `arguments.targets` fallback objects such as
+`[{"elementId":"AllClear"},{"elementDescription":"Clear"},{"role":"button","name":"Clear"}]`.
+The extension refreshes app state before element-targeted sequence steps so
+stale numeric indices are easier to diagnose, but ID/description/role-name
+targeting remains safer. Raw `element_index` targets can include
+`expectedRole`, `expectedName`, `expectedDescription`, `expectedId`, or
+`expectedValue`; mismatches fail before mutation with a stale-target diagnostic.
+Failed target lookups return available `element_index` lines so the agent can
+fall back without a separate state call. If a sequence fails after it starts, the
+result includes all completed steps plus a failed-step diagnostic and resume hint
+instead of discarding partial evidence. Per-step `allowError: true` also covers
+element resolution errors, so optional/fallback steps can fail and the sequence
+can continue.
 Pointer-based `click` steps additionally require
 `allowPointerClick: true`; pointer-based `drag` steps require
 `allowPointerDrag: true` and use extension-level mouse restoration.
@@ -567,14 +571,28 @@ matching, which makes accessibility text assertions such as `text 1` reliable;
 `expectVisibleText` checks parsed visible text values directly, such as `0` or
 `1`, so agents do not need to copy accessibility line formats for display
 assertions. `codex_cu_get_app_state` supports `detail: "minimal"` for app/window,
-visible text, and concise target hints, `detail: "compact"` for interactive elements,
-and `detail: "full"` for raw trees. Sequence `detail: "minimal"` suppresses
-successful action and state bodies for lower-token action logs while still
-showing assertion pass snippets and failure evidence; `compact` remains the
-default and `full` keeps raw trees. `get_app_state` and sequence
-`get_app_state` step details include machine-readable parsed element metadata
-with target hints. `includeImage` is model/host dependent; use `saveImagePath`
-when screenshot artifacts must be reliable.
+visible text, and concise target hints, `detail: "compact"` for grouped
+interactive elements, and `detail: "full"` for raw trees. `targetScope: "main"`
+suppresses likely browser/app chrome and OS window controls in transformed
+output where possible. Sequence `detail: "minimal"` suppresses successful action
+and state bodies for lower-token action logs while still showing assertion pass
+snippets, target resolution, stale-index warnings, changed-state summaries, and
+failure evidence; `compact` remains the default and `full` keeps raw trees.
+Sequence wait helper pseudo-tools (`waitForText` for parsed visible text,
+`waitForElement`, `waitUntilElementEnabled`, `waitUntilElementDisabled`, and
+best-effort `waitForURL` / `waitForTitle`) poll `get_app_state` and reduce
+manual sleep / resnapshot loops. `get_app_state` and sequence `get_app_state`
+step details
+include machine-readable parsed element metadata with target hints, `visibleText`,
+`targets`, `changed`, `warnings`, and `nextActions` where available.
+`includeImage` is model/host dependent; use `saveImagePath` when screenshot
+artifacts must be reliable. When upstream Computer Use returns timeout errors
+such as `-10005 timeoutReached`, macuse now annotates the result with a clear
+blocker: filtering modes only reduce output after upstream responds and cannot
+make a hung browser accessibility snapshot safe. For Chrome/web tasks, use
+`agent_browser` when browser automation is acceptable, or retry Computer Use
+after `/macuse-restart`, increasing `toolTimeoutMs`, or reducing heavy browser
+windows/tabs.
 
 ### Rerun after Codex or Computer Use updates
 

@@ -240,7 +240,8 @@ factory({
       { tool: 'press_key', arguments: { key: 'Escape' } },
       { tool: 'perform_secondary_action', arguments: { elementId: 'AllClear', action: 'Press' } },
       { tool: 'perform_secondary_action', arguments: { elementDescription: 'Add', action: 'NotARealAction' }, allowError: true },
-      { tool: 'perform_secondary_action', arguments: { elementId: 'One', action: 'Press' } },
+      { tool: 'perform_secondary_action', arguments: { role: 'button', name: '1', action: 'Press' } },
+      { tool: 'waitForText', arguments: { text: '1', timeoutMs: 5000 } },
       { tool: 'get_app_state', arguments: {}, expectVisibleText: '1' },
       { tool: 'perform_secondary_action', arguments: { targets: [{ elementId: 'AllClear' }, { elementDescription: 'Clear' }], action: 'Press' } },
       { tool: 'get_app_state', arguments: {}, expectVisibleText: '0' },
@@ -248,21 +249,74 @@ factory({
       { tool: 'get_app_state', arguments: {}, expectText: 'text 0' },
     ],
     allowMutating: true,
-    safetyNote: 'Validate Calculator-only default app, minimal output, normalized expectText, element_index coercion, elementId and elementDescription targeting, and restore to zero.',
+    safetyNote: 'Validate Calculator-only default app, minimal output, normalized expectText, waits, element_index coercion, role/name, elementId and elementDescription targeting, and restore to zero.',
     detail: 'minimal',
-    maxTextChars: 1200,
+    targetScope: 'main',
+    maxTextChars: 1600,
     toolTimeoutMs: 90000,
   }, signal, () => {});
   if (sequence.details.computerUse.defaultApp !== 'Calculator') throw new Error('pi extension did not record the sequence-level default app');
   if (sequence.details.computerUse.steps.some((step) => step.arguments.app !== 'Calculator')) throw new Error('pi extension did not apply the sequence-level default app to every step');
-  if (!Array.isArray(sequence.details.computerUse.steps[5].elements) || sequence.details.computerUse.steps[5].elements.length === 0) throw new Error('pi extension did not expose machine-readable get_app_state elements in sequence details');
+  if (sequence.details.computerUse.targetScope !== 'main') throw new Error('pi extension did not record sequence targetScope');
+  if (!Array.isArray(sequence.details.computerUse.steps[6].elements) || sequence.details.computerUse.steps[6].elements.length === 0) throw new Error('pi extension did not expose machine-readable get_app_state elements in sequence details');
+  if (!Array.isArray(sequence.details.computerUse.steps[6].visibleText) || !sequence.details.computerUse.steps[6].visibleText.includes('1')) throw new Error('pi extension did not expose machine-readable visibleText in sequence details');
   if (sequence.details.computerUse.steps[2].arguments.element_index !== '6') throw new Error('pi extension did not resolve Calculator elementId AllClear to current element_index');
   if (sequence.details.computerUse.steps[3].arguments.element_index !== '20') throw new Error('pi extension did not resolve Calculator elementDescription Add to current element_index');
-  if (sequence.details.computerUse.steps[4].arguments.element_index !== '17') throw new Error('pi extension did not resolve Calculator elementId One to current element_index');
-  if (sequence.details.computerUse.steps[6].arguments.element_index !== '6') throw new Error('pi extension did not resolve Calculator fallback targets to current Clear element_index');
-  if (!String(sequence.details.computerUse.steps[6].targetResolution || '').includes('targets[')) throw new Error('pi extension did not report fallback target resolution');
-  if (sequence.details.computerUse.steps[8].arguments.element_index !== '6') throw new Error('pi extension did not coerce numeric element_index to string');
+  if (sequence.details.computerUse.steps[4].arguments.element_index !== '17') throw new Error('pi extension did not resolve Calculator role/name target One to current element_index');
+  if (!String(sequence.details.computerUse.steps[5].targetResolution || '').includes('waitForText matched')) throw new Error('pi extension waitForText helper did not report a match');
+  if (sequence.details.computerUse.steps[7].arguments.element_index !== '6') throw new Error('pi extension did not resolve Calculator fallback targets to current Clear element_index');
+  if (!String(sequence.details.computerUse.steps[7].targetResolution || '').includes('targets[')) throw new Error('pi extension did not report fallback target resolution');
+  if (sequence.details.computerUse.steps[9].arguments.element_index !== '6') throw new Error('pi extension did not coerce numeric element_index to string');
   if (sequence.details.computerUse.implicitRefreshes < 5) throw new Error('pi extension did not refresh before element-targeted sequence steps');
+  const staleGuard = await tools.get('codex_cu_sequence').execute('stale-guard', {
+    app: 'Calculator',
+    steps: [
+      { tool: 'perform_secondary_action', arguments: { element_index: 17, expectedName: 'Not One', action: 'Press' } },
+    ],
+    allowMutating: true,
+    safetyNote: 'Validate Calculator-only raw-index stale guard rejects mismatched expectedName before mutation.',
+    detail: 'minimal',
+    maxTextChars: 2000,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  if (!staleGuard.details.computerUse.failed) throw new Error('pi extension stale guard did not fail');
+  if (!staleGuard.content[0].text.includes('Stale element_index')) throw new Error('pi extension stale guard did not explain stale element_index');
+  const waitTargets = await tools.get('codex_cu_sequence').execute('wait-targets', {
+    app: 'Calculator',
+    steps: [
+      { tool: 'waitForElement', arguments: { targets: [{ elementId: 'AllClear' }, { role: 'button', name: 'Clear' }], timeoutMs: 5000 } },
+    ],
+    detail: 'minimal',
+    maxTextChars: 2000,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  if (waitTargets.details.computerUse.failed) throw new Error('pi extension waitForElement targets fallback failed');
+  if (!String(waitTargets.details.computerUse.steps[0].targetResolution || '').includes('waitForElement matched')) throw new Error('pi extension waitForElement targets fallback did not report match');
+  const negativeStarted = Date.now();
+  const negativeWait = await tools.get('codex_cu_sequence').execute('negative-wait', {
+    app: 'Calculator',
+    steps: [
+      { tool: 'waitForText', arguments: { text: '999-not-visible', timeoutMs: 1000, intervalMs: 5000 } },
+    ],
+    detail: 'minimal',
+    maxTextChars: 2000,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  const negativeElapsed = Date.now() - negativeStarted;
+  if (!negativeWait.details.computerUse.failed) throw new Error('pi extension negative waitForText did not fail');
+  if (!negativeWait.content[0].text.includes('waitForText timed out')) throw new Error('pi extension negative waitForText did not report timeout');
+  if (negativeElapsed > 3000) throw new Error('pi extension negative waitForText exceeded timeout budget: ' + negativeElapsed);
+  const staleWait = await tools.get('codex_cu_sequence').execute('stale-wait', {
+    app: 'Calculator',
+    steps: [
+      { tool: 'waitForElement', arguments: { element_index: 17, expectedName: 'Not One', timeoutMs: 1000 } },
+    ],
+    detail: 'minimal',
+    maxTextChars: 2000,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  if (!staleWait.details.computerUse.failed) throw new Error('pi extension stale waitForElement guard did not fail');
+  if (!staleWait.content[0].text.includes('Stale element_index')) throw new Error('pi extension stale waitForElement did not explain stale element_index');
   const readOnlyDefaultApp = await tools.get('codex_cu_sequence').execute('read-only-default-app', {
     app: 'Calculator',
     steps: [

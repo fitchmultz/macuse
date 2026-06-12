@@ -17,7 +17,8 @@ const VERSION = "0.2.0";
 const DEFAULT_CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex";
 const DEFAULT_TOOL_TIMEOUT_MS = 90_000;
 const DEFAULT_MAX_TEXT_CHARS = 20_000;
-const READ_ONLY_TOOLS = new Set(["list_apps", "get_app_state"]);
+const WAIT_TOOLS = new Set(["waitForText", "waitForURL", "waitForTitle", "waitForElement", "waitUntilElementEnabled", "waitUntilElementDisabled"]);
+const READ_ONLY_TOOLS = new Set(["list_apps", "get_app_state", ...WAIT_TOOLS]);
 const APP_SCOPED_TOOLS = new Set([
 	"get_app_state",
 	"perform_secondary_action",
@@ -28,6 +29,7 @@ const APP_SCOPED_TOOLS = new Set([
 	"scroll",
 	"click",
 	"drag",
+	...WAIT_TOOLS,
 ]);
 const FEATURE_FLAGS = ["computer_use", "plugins", "tool_call_mcp_elicitation"];
 
@@ -81,12 +83,15 @@ type ListAppsParams = {
 	toolTimeoutMs?: number;
 };
 
+type TargetScope = "all" | "main";
+
 type GetAppStateParams = {
 	app: string;
 	approval?: ApprovalMode;
 	includeImage?: boolean;
 	saveImagePath?: string;
 	detail?: DetailMode;
+	targetScope?: TargetScope;
 	maxTextChars?: number;
 	toolTimeoutMs?: number;
 };
@@ -102,6 +107,7 @@ type SequenceParams = {
 	includeImage?: boolean;
 	saveImagePath?: string;
 	detail?: DetailMode;
+	targetScope?: TargetScope;
 	maxTextChars?: number;
 	toolTimeoutMs?: number;
 };
@@ -112,11 +118,36 @@ type ElementInfo = {
 	index: string;
 	id?: string;
 	description?: string;
+	role: string;
+	name: string;
+	value?: string;
+	disabled: boolean;
+	group: "content" | "chrome" | "window" | "other";
 	line: string;
 	secondaryActions: string[];
 };
 
-type MachineElement = Pick<ElementInfo, "index" | "id" | "description" | "secondaryActions"> & { targetHint: string; line: string };
+type MachineElement = Pick<ElementInfo, "index" | "id" | "description" | "role" | "name" | "value" | "disabled" | "group" | "secondaryActions"> & { targetHint: string; line: string };
+
+type StateSummary = {
+	app: string | null;
+	window: string | null;
+	title: string | null;
+	url: string | null;
+	visibleText: string[];
+	targets: MachineElement[];
+};
+
+type ChangeSummary = {
+	visibleTextChanged: boolean;
+	addedVisibleText: string[];
+	removedVisibleText: string[];
+	targetsAdded: string[];
+	targetsRemoved: string[];
+	titleChanged: boolean;
+	urlChanged: boolean;
+	summary: string[];
+};
 
 type SequenceFailure = {
 	index: number;
@@ -138,7 +169,11 @@ type SequencedResult = {
 	expectVisibleText: string[];
 	allowError: boolean;
 	targetResolution?: string;
+	targetWarnings: string[];
 	elements: MachineElement[];
+	visibleText: string[];
+	changed: ChangeSummary | null;
+	nextActions: string[];
 	acceptedElicitations: number;
 	elicitationCount: number;
 };
@@ -309,21 +344,62 @@ function contentText(content: ContentBlock[] | undefined): string {
 		.join("\n");
 }
 
+function normalizeRole(value: string): string {
+	const normalized = value.toLowerCase().replace(/[\s_-]+/g, " ").trim();
+	if (normalized === "textbox" || normalized === "text box" || normalized === "input") return "text field";
+	if (normalized === "secure textbox" || normalized === "password") return "secure text field";
+	return normalized;
+}
+
+function parseElementRole(body: string): string {
+	const match = body.match(/^(standard window|split group|container|scroll area|text entry area|secure text field|text field|edit field|close button|zoom button|minimize button|radio button|menu bar|menu item|button|checkbox|slider|combo box|tab|link|row|text|toolbar|group|web area)\b/i);
+	return normalizeRole(match?.[1] ?? body.split(/\s+/)[0] ?? "unknown");
+}
+
+function roleMatches(actual: string, expected: string): boolean {
+	const wanted = normalizeRole(expected);
+	const got = normalizeRole(actual);
+	if (wanted === got) return true;
+	if (wanted === "text field") return ["text field", "edit field", "text entry area", "secure text field", "scroll area"].includes(got);
+	return false;
+}
+
+function parseElementName(body: string, role: string, id?: string, description?: string): string {
+	if (description) return description;
+	const withoutRole = body.replace(new RegExp(`^${role.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*`, "i"), "").trim();
+	const beforeComma = withoutRole.split(/,\s*(?:ID:|Help:|Secondary Actions:)/)[0]?.trim() ?? "";
+	const cleaned = beforeComma.replace(/^Description:\s*/i, "").replace(/\s*\(disabled\)\s*$/i, "").trim();
+	return cleaned || id || role;
+}
+
+function elementGroup(line: string, role: string): ElementInfo["group"] {
+	if (/\b(?:standard window|close button|zoom button|minimize button)\b/i.test(line)) return "window";
+	if (/\b(?:menu bar|toolbar)\b/i.test(line)) return "chrome";
+	if (/\b(?:tab group|tab|address|bookmark|extension|sidebar|show sidebar|mode:)\b/i.test(line)) return "chrome";
+	if (["button", "text field", "edit field", "text entry area", "secure text field", "checkbox", "radio button", "slider", "combo box", "link", "row", "text", "scroll area"].includes(role)) return "content";
+	return "other";
+}
+
 function parseElementInfo(text: string): ElementInfo[] {
 	const elements: ElementInfo[] = [];
 	for (const rawLine of text.split("\n")) {
 		const match = rawLine.match(/^\s*(\d+)\s+(.+)$/);
 		if (!match) continue;
 		const line = match[0].trim();
+		const body = stripInvisibleBidiMarks(match[2] ?? "");
 		const id = line.match(/(?:^|[\s,])ID:\s*([^,\n]+)/)?.[1]?.trim();
 		const explicitDescription = line.match(/Description:\s*([^,\n]+)/)?.[1]?.trim();
+		const role = parseElementRole(body);
 		const buttonLabel = line.match(/^\d+\s+button\s+([^,]+?)(?:,\s|$)/)?.[1]?.trim();
-		const description = explicitDescription ?? (buttonLabel && !buttonLabel.startsWith("Description:") ? buttonLabel : undefined);
+		const description = explicitDescription ?? (buttonLabel && !buttonLabel.startsWith("Description:") ? stripInvisibleBidiMarks(buttonLabel) : undefined);
+		const value = role === "text" ? body.replace(/^text\s+/i, "").trim() : undefined;
+		const name = parseElementName(body, role, id, description);
 		const secondaryActions = line.match(/Secondary Actions:\s*([^\n]+)/)?.[1]
 			?.split(",")
 			.map((item) => item.trim())
 			.filter(Boolean) ?? [];
-		elements.push({ index: match[1], id, description, line, secondaryActions });
+		const disabled = /\bdisabled\b|\(disabled\)/i.test(line);
+		elements.push({ index: match[1], id, description, role, name, value, disabled, group: elementGroup(line, role), line, secondaryActions });
 	}
 	return elements;
 }
@@ -338,6 +414,7 @@ function isInteractiveElement(element: ElementInfo): boolean {
 function elementTargetHint(element: ElementInfo): string {
 	if (element.id) return `target: { elementId: ${JSON.stringify(element.id)} }`;
 	if (element.description) return `target: { elementDescription: ${JSON.stringify(element.description)} }`;
+	if (element.name && element.role) return `target: { role: ${JSON.stringify(element.role)}, name: ${JSON.stringify(element.name)} }`;
 	return `fallback: { element_index: ${JSON.stringify(element.index)} }`;
 }
 
@@ -346,8 +423,25 @@ function elementLineWithTargetHint(element: ElementInfo): string {
 }
 
 function shortElementLabel(element: ElementInfo): string {
-	const raw = element.description ?? element.id ?? stripInvisibleBidiMarks(element.line.replace(/^\d+\s+/, ""));
+	const raw = element.name || element.description || element.id || stripInvisibleBidiMarks(element.line.replace(/^\d+\s+/, ""));
 	return truncateString(raw.replace(/,\s*Help:.*$/, ""), 80);
+}
+
+function rankElement(element: ElementInfo): number {
+	let score = 0;
+	if (element.group === "content") score -= 100;
+	if (element.group === "chrome") score += 80;
+	if (element.group === "window") score += 120;
+	if (element.id) score -= 15;
+	if (element.description || element.name) score -= 10;
+	if (element.disabled) score += 20;
+	return score + Number(element.index);
+}
+
+function prioritizedElements(elements: ElementInfo[], scope: TargetScope = "all"): ElementInfo[] {
+	return elements
+		.filter((element) => scope === "all" || element.group === "content")
+		.sort((a, b) => rankElement(a) - rankElement(b));
 }
 
 function elementStabilityNote(text: string): string | null {
@@ -358,16 +452,24 @@ function elementStabilityNote(text: string): string | null {
 	return `Note: ${withoutIds} of ${interactive.length} interactive elements lack stable IDs. Prefer elementId when present, elementDescription when shown, press_key/type_text when practical, or re-snapshot before using element_index after mutations.`;
 }
 
-function compactText(text: string): string {
+function compactText(text: string, scope: TargetScope = "all"): string {
 	const lines = text.split("\n");
 	const header = lines.filter((line) => /^(Computer Use state|<app_state>|App=|Window:)/.test(line.trim())).slice(0, 4);
-	const interactive = parseElementInfo(text).filter(isInteractiveElement);
+	const interactive = prioritizedElements(parseElementInfo(text).filter(isInteractiveElement), scope);
 	const note = elementStabilityNote(text);
-	const body = interactive.map(elementLineWithTargetHint);
+	const groups = ["content", "chrome", "window", "other"] as const;
+	const body: string[] = [];
+	for (const group of groups) {
+		const groupElements = interactive.filter((element) => element.group === group);
+		if (groupElements.length === 0) continue;
+		body.push(`${group[0].toUpperCase()}${group.slice(1)} targets:`);
+		body.push(...groupElements.slice(0, group === "content" ? 40 : 12).map(elementLineWithTargetHint));
+		if (groupElements.length > (group === "content" ? 40 : 12)) body.push(`…${groupElements.length - (group === "content" ? 40 : 12)} more ${group} targets omitted`);
+	}
 	return [...header, ...body, ...(note ? [note] : [])].join("\n") || truncateString(stripInvisibleBidiMarks(text), DEFAULT_MAX_TEXT_CHARS);
 }
 
-function minimalText(text: string): string {
+function minimalText(text: string, scope: TargetScope = "all"): string {
 	const lines = text.split("\n");
 	const header = lines.filter((line) => /^(Computer Use state|App=|Window:)/.test(line.trim())).slice(0, 3);
 	const elements = parseElementInfo(text);
@@ -375,27 +477,33 @@ function minimalText(text: string): string {
 		.filter((element) => /\btext\b/i.test(element.line))
 		.slice(0, 8)
 		.map((element) => `${element.index} ${stripInvisibleBidiMarks(element.line.replace(/^\d+\s+/, ""))}`);
-	const targets = elements
-		.filter(isInteractiveElement)
-		.filter((element) => !/\b(?:standard window|menu bar|close button|zoom button|minimize button)\b/i.test(element.line))
+	const ranked = prioritizedElements(elements.filter(isInteractiveElement), scope);
+	const targets = ranked
+		.filter((element) => element.group !== "window")
 		.slice(0, 24)
-		.map((element) => `${element.index} ${shortElementLabel(element)} — ${elementTargetHint(element)}`);
+		.map((element) => `${element.index} ${shortElementLabel(element)} [${element.role}${element.disabled ? ", disabled" : ""}] — ${elementTargetHint(element)}`);
+	const omittedByGroup = ["content", "chrome", "window", "other"]
+		.map((group) => ({ group, count: ranked.filter((element) => element.group === group).length }))
+		.filter((item) => item.count > 0)
+		.map((item) => `${item.group}:${item.count}`)
+		.join(", ");
 	const sections = [...header];
 	if (visibleText.length > 0) sections.push("Visible text:", ...visibleText);
 	if (targets.length > 0) sections.push("Targets:", ...targets);
+	if (omittedByGroup) sections.push(`Target groups: ${omittedByGroup}`);
 	return sections.join("\n") || truncateString(stripInvisibleBidiMarks(text), DEFAULT_MAX_TEXT_CHARS);
 }
 
-function compactContent(content: ContentBlock[]): ContentBlock[] {
+function compactContent(content: ContentBlock[], scope: TargetScope = "all"): ContentBlock[] {
 	return content.map((block) => {
-		if (isTextBlock(block)) return { ...block, text: compactText(block.text) };
+		if (isTextBlock(block)) return { ...block, text: compactText(block.text, scope) };
 		return block;
 	});
 }
 
-function minimalContent(content: ContentBlock[]): ContentBlock[] {
+function minimalContent(content: ContentBlock[], scope: TargetScope = "all"): ContentBlock[] {
 	return content.map((block) => {
-		if (isTextBlock(block)) return { ...block, text: minimalText(block.text) };
+		if (isTextBlock(block)) return { ...block, text: minimalText(block.text, scope) };
 		return block;
 	});
 }
@@ -429,15 +537,70 @@ function visibleTextValues(content: ContentBlock[]): string[] {
 		.filter(Boolean);
 }
 
-function machineElements(content: ContentBlock[]): MachineElement[] {
-	return parseElementInfo(contentText(content)).map((element) => ({
+function machineElements(content: ContentBlock[], scope: TargetScope = "all"): MachineElement[] {
+	return prioritizedElements(parseElementInfo(contentText(content)), scope).map((element) => ({
 		index: element.index,
 		...(element.id ? { id: element.id } : {}),
 		...(element.description ? { description: element.description } : {}),
+		role: element.role,
+		name: element.name,
+		...(element.value ? { value: element.value } : {}),
+		disabled: element.disabled,
+		group: element.group,
 		secondaryActions: element.secondaryActions,
 		targetHint: elementTargetHint(element),
 		line: stripInvisibleBidiMarks(element.line),
 	}));
+}
+
+function stateSummary(content: ContentBlock[], scope: TargetScope = "all"): StateSummary {
+	const text = contentText(content);
+	const app = text.match(/^App=([^\n]+)/m)?.[1]?.trim() ?? null;
+	const windowLine = text.match(/^Window:\s*([^\n]+)/m)?.[1]?.trim() ?? null;
+	const title = windowLine?.match(/^"([^"]+)"/)?.[1] ?? null;
+	const url = text.match(/https?:\/\/[^\s"'<>]+/)?.[0] ?? null;
+	return {
+		app,
+		window: windowLine,
+		title,
+		url,
+		visibleText: visibleTextValues(content),
+		targets: machineElements(content, scope),
+	};
+}
+
+function diffLists(before: string[], after: string[], limit = 8): { added: string[]; removed: string[] } {
+	const beforeSet = new Set(before);
+	const afterSet = new Set(after);
+	return {
+		added: after.filter((item) => !beforeSet.has(item)).slice(0, limit),
+		removed: before.filter((item) => !afterSet.has(item)).slice(0, limit),
+	};
+}
+
+function compareState(before: StateSummary | null, after: StateSummary | null): ChangeSummary | null {
+	if (!before || !after) return null;
+	const visible = diffLists(before.visibleText, after.visibleText);
+	const beforeTargets = before.targets.map((target) => `${target.role}:${target.name}:${target.disabled ? "disabled" : "enabled"}`);
+	const afterTargets = after.targets.map((target) => `${target.role}:${target.name}:${target.disabled ? "disabled" : "enabled"}`);
+	const targets = diffLists(beforeTargets, afterTargets, 6);
+	const titleChanged = before.title !== after.title;
+	const urlChanged = before.url !== after.url;
+	const summary: string[] = [];
+	if (urlChanged) summary.push(`URL changed ${before.url ?? "<none>"} → ${after.url ?? "<none>"}`);
+	if (titleChanged) summary.push(`title changed ${before.title ?? "<none>"} → ${after.title ?? "<none>"}`);
+	if (visible.added.length || visible.removed.length) summary.push(`visible text changed${visible.added.length ? `; added ${JSON.stringify(visible.added.join(" | "))}` : ""}${visible.removed.length ? `; removed ${JSON.stringify(visible.removed.join(" | "))}` : ""}`);
+	if (targets.added.length || targets.removed.length) summary.push(`targets changed${targets.added.length ? `; added ${targets.added.length}` : ""}${targets.removed.length ? `; removed ${targets.removed.length}` : ""}`);
+	return {
+		visibleTextChanged: visible.added.length > 0 || visible.removed.length > 0,
+		addedVisibleText: visible.added,
+		removedVisibleText: visible.removed,
+		targetsAdded: targets.added,
+		targetsRemoved: targets.removed,
+		titleChanged,
+		urlChanged,
+		summary,
+	};
 }
 
 function normalizeToolArguments(args: Record<string, JsonValue>): Record<string, JsonValue> {
@@ -456,7 +619,11 @@ function hasElementTarget(args: Record<string, JsonValue>): boolean {
 		typeof args.elementId === "string" ||
 		typeof args.element_id === "string" ||
 		typeof args.elementDescription === "string" ||
-		typeof args.element_description === "string";
+		typeof args.element_description === "string" ||
+		typeof args.role === "string" ||
+		typeof args.elementRole === "string" ||
+		typeof args.name === "string" ||
+		typeof args.elementName === "string";
 }
 
 function isJsonRecord(value: JsonValue): value is Record<string, JsonValue> {
@@ -471,7 +638,7 @@ function withoutTargets(args: Record<string, JsonValue>): Record<string, JsonVal
 
 function selectorFromTarget(target: Record<string, JsonValue>): Record<string, JsonValue> {
 	const selector: Record<string, JsonValue> = {};
-	for (const key of ["element_index", "element", "elementId", "element_id", "elementDescription", "element_description"] as const) {
+	for (const key of ["element_index", "element", "elementId", "element_id", "elementDescription", "element_description", "role", "elementRole", "name", "elementName", "expectedRole", "expectedName", "expectedDescription", "expectedId", "expectedValue"] as const) {
 		if (target[key] !== undefined) selector[key] = target[key];
 	}
 	return selector;
@@ -511,7 +678,7 @@ function editDistance(a: string, b: string): number {
 	return previous[bb.length] ?? 0;
 }
 
-function closestElementSuggestions(elements: ElementInfo[], value: string, field: "id" | "description", limit = 3): string {
+function closestElementSuggestions(elements: ElementInfo[], value: string, field: "id" | "description" | "name", limit = 3): string {
 	const candidates = elements
 		.map((element) => ({ element, value: element[field] }))
 		.filter((candidate): candidate is { element: ElementInfo; value: string } => typeof candidate.value === "string" && candidate.value.length > 0)
@@ -536,6 +703,36 @@ function resolveElementId(args: Record<string, JsonValue>, cache: Map<string, El
 	normalized.element_index = match.index;
 	delete normalized.elementId;
 	delete normalized.element_id;
+	return normalized;
+}
+
+function resolveElementRoleName(args: Record<string, JsonValue>, cache: Map<string, ElementInfo[]>): Record<string, JsonValue> {
+	const normalized = normalizeToolArguments(args);
+	if (normalized.element_index !== undefined) return normalized;
+	const rawRole = normalized.role ?? normalized.elementRole;
+	const rawName = normalized.name ?? normalized.elementName;
+	if (typeof rawRole !== "string" && typeof rawName !== "string") return normalized;
+	if (typeof normalized.app !== "string") throw new Error("role/name targeting requires an app argument.");
+	const elements = cache.get(normalized.app) ?? [];
+	const matches = elements.filter((element) => {
+		if (typeof rawRole === "string" && !roleMatches(element.role, rawRole)) return false;
+		if (typeof rawName === "string") {
+			const expected = normalizeAssertionText(rawName).toLowerCase();
+			const names = [element.name, element.description, element.id, element.value].filter((item): item is string => typeof item === "string");
+			if (!names.some((name) => normalizeAssertionText(name).toLowerCase() === expected)) return false;
+		}
+		return true;
+	});
+	if (matches.length !== 1) {
+		const reason = matches.length === 0 ? "No" : `Ambiguous ${matches.length}`;
+		const closest = typeof rawName === "string" ? closestElementSuggestions(elements, rawName, "name") : "";
+		throw new Error(`${reason} role/name target found for ${normalized.app}. Match is exact and case-insensitive.${closest ? `\nClosest name matches: ${closest}.` : ""}\nAvailable targets:\n${actionableElementSummary(elements)}`);
+	}
+	normalized.element_index = matches[0].index;
+	delete normalized.role;
+	delete normalized.elementRole;
+	delete normalized.name;
+	delete normalized.elementName;
 	return normalized;
 }
 
@@ -573,13 +770,14 @@ function resolveElementTargetFallbacks(args: Record<string, JsonValue>, cache: M
 			continue;
 		}
 		if (!hasElementTarget(target)) {
-			failures.push(`target ${index} does not contain element_index, elementId, or elementDescription`);
+			failures.push(`target ${index} does not contain element_index, elementId, elementDescription, or role/name`);
 			continue;
 		}
 		try {
 			let candidate = withoutTargets({ ...args, ...selectorFromTarget(target) });
 			candidate = resolveElementId(candidate, cache);
 			candidate = resolveElementDescription(candidate, cache);
+			candidate = resolveElementRoleName(candidate, cache);
 			if (typeof candidate.element_index !== "string") throw new Error("target did not resolve to element_index");
 			return candidate;
 		} catch (error) {
@@ -587,6 +785,37 @@ function resolveElementTargetFallbacks(args: Record<string, JsonValue>, cache: M
 		}
 	}
 	throw new Error(`Rejected unsafe target fallback: no valid target resolved. No mutation performed.\n${failures.join("\n")}\nAvailable targets:\n${actionableElementSummary(availableElements)}`);
+}
+
+function hasStableSelector(args: Record<string, JsonValue>): boolean {
+	return typeof args.elementId === "string" || typeof args.element_id === "string" || typeof args.elementDescription === "string" || typeof args.element_description === "string" || typeof args.role === "string" || typeof args.elementRole === "string" || typeof args.name === "string" || typeof args.elementName === "string" || Array.isArray(args.targets);
+}
+
+function validateIndexedTarget(args: Record<string, JsonValue>, cache: Map<string, ElementInfo[]>, stableSelectorUsed = false): string[] {
+	if (typeof args.app !== "string" || typeof args.element_index !== "string") return [];
+	const element = (cache.get(args.app) ?? []).find((item) => item.index === args.element_index);
+	if (!element) throw new Error(`element_index ${args.element_index} is not present in the latest ${args.app} snapshot. Re-run get_app_state and target by elementId, elementDescription, or role/name.`);
+	const expectations: Array<[string, JsonValue | undefined, string | undefined]> = [
+		["expectedRole", args.expectedRole, element.role],
+		["expectedName", args.expectedName, element.name],
+		["expectedDescription", args.expectedDescription, element.description],
+		["expectedId", args.expectedId, element.id],
+		["expectedValue", args.expectedValue, element.value],
+	];
+	for (const [field, expected, actual] of expectations) {
+		if (typeof expected !== "string") continue;
+		const ok = field === "expectedRole" ? roleMatches(actual ?? "", expected) : normalizeAssertionText(actual ?? "").toLowerCase() === normalizeAssertionText(expected).toLowerCase();
+		if (!ok) throw new Error(`Stale element_index ${args.element_index}: ${field} expected ${JSON.stringify(expected)} but latest target is ${JSON.stringify(actual ?? "")}. No mutation performed; re-snapshot or use elementId/elementDescription/role/name.`);
+	}
+	const hasExpectation = expectations.some(([, expected]) => typeof expected === "string");
+	if (!stableSelectorUsed && !hasExpectation) return [`Target selected by raw element_index ${args.element_index}; indices can go stale after rerenders. Prefer elementId, elementDescription, role/name, targets fallback, or pass expectedRole/expectedName to fail closed.`];
+	return [];
+}
+
+function stripSelectorOnlyKeys(args: Record<string, JsonValue>): Record<string, JsonValue> {
+	const normalized = { ...args };
+	for (const key of ["expectedRole", "expectedName", "expectedDescription", "expectedId", "expectedValue"] as const) delete normalized[key];
+	return normalized;
 }
 
 function describeTargetResolution(originalArgs: Record<string, JsonValue>, resolvedArgs: Record<string, JsonValue>, cache: Map<string, ElementInfo[]>): string | undefined {
@@ -602,6 +831,10 @@ function describeTargetResolution(originalArgs: Record<string, JsonValue>, resol
 		const description = element?.description?.toLowerCase();
 		if (typeof target.elementDescription === "string" && target.elementDescription.toLowerCase() === description) return true;
 		if (typeof target.element_description === "string" && target.element_description.toLowerCase() === description) return true;
+		const targetRole = typeof target.role === "string" ? target.role : typeof target.elementRole === "string" ? target.elementRole : undefined;
+		const targetName = typeof target.name === "string" ? target.name : typeof target.elementName === "string" ? target.elementName : undefined;
+		if (targetRole && element && !roleMatches(element.role, targetRole)) return false;
+		if (targetName && element) return [element.name, element.description, element.id, element.value].some((name) => typeof name === "string" && name.toLowerCase() === targetName.toLowerCase());
 		return false;
 	});
 	return targetIndex >= 0 ? `targets[${targetIndex}] ${resolved}` : resolved;
@@ -650,6 +883,24 @@ function appendImageWarning(result: FilteredToolResult, opts: { includeImage?: b
 	appendSavedImageArtifact(result);
 	if (!opts.includeImage) return;
 	appendText(result, `Image blocks were requested. Display depends on the current model and pi host support; use saveImagePath for reliable screenshot artifacts${opts.saveImagePath ? ` (saved first image to ${path.resolve(opts.saveImagePath)})` : ""}.`);
+}
+
+function computerUseDiagnostic(result: FilteredToolResult, tool: string, args: Record<string, JsonValue>): string | null {
+	const text = toolResultText(result);
+	const app = typeof args.app === "string" ? args.app : "the target app";
+	if (/-10005|timeoutReached/i.test(text)) {
+		return `Diagnostic: upstream Computer Use timed out while collecting state for ${app}. macuse cannot safely operate that app until upstream get_app_state succeeds. detail:\"minimal\" and targetScope filtering reduce returned tokens only after upstream responds, so they cannot fix this timeout. Try /macuse-restart, a larger toolTimeoutMs, closing heavy browser windows/tabs, or use agent_browser for web/Chrome tasks when browser automation is acceptable.`;
+	}
+	if (/Computer Use is not active .*first must call get_app_state|first must call get_app_state/i.test(text)) {
+		return `Diagnostic: upstream Computer Use refused ${tool} because ${app} has no active state session. No mutation was performed by macuse. A successful codex_cu_get_app_state for the same app is required first; if that state call times out, this is an upstream Computer Use blocker rather than a target-selection problem.`;
+	}
+	return null;
+}
+
+function appendComputerUseDiagnostic(result: FilteredToolResult, tool: string, args: Record<string, JsonValue>): string | null {
+	const diagnostic = computerUseDiagnostic(result, tool, args);
+	if (diagnostic) appendText(result, diagnostic);
+	return diagnostic;
 }
 
 function failureResult(message: string, maxTextChars: number): FilteredToolResult {
@@ -972,6 +1223,86 @@ class AppServerClient {
 	}
 }
 
+function isWaitTool(tool: string): boolean {
+	return WAIT_TOOLS.has(tool);
+}
+
+function validateWaitArguments(tool: string, args: Record<string, JsonValue>): void {
+	if (typeof args.app !== "string") throw new Error(`${tool} requires an app argument or sequence-level app default.`);
+	if (tool === "waitForText" && typeof args.text !== "string") throw new Error("waitForText requires arguments.text.");
+	if (tool === "waitForURL" && typeof args.url !== "string") throw new Error("waitForURL requires arguments.url.");
+	if (tool === "waitForTitle" && typeof args.title !== "string") throw new Error("waitForTitle requires arguments.title.");
+	if (["waitForElement", "waitUntilElementEnabled", "waitUntilElementDisabled"].includes(tool) && !hasElementTarget(args) && !Array.isArray(args.targets)) throw new Error(`${tool} requires an element target such as elementId, elementDescription, role/name, or targets.`);
+}
+
+function waitConditionMet(tool: string, args: Record<string, JsonValue>, result: FilteredToolResult, cache: Map<string, ElementInfo[]>): string | null {
+	const app = typeof args.app === "string" ? args.app : "";
+	if (tool === "waitForText") {
+		if (typeof args.text !== "string") throw new Error("waitForText requires arguments.text.");
+		const expected = normalizeAssertionText(args.text);
+		const visible = visibleTextValues(result.content);
+		return visible.some((value) => value.includes(expected)) ? `waitForText matched visible text ${JSON.stringify(args.text)}` : null;
+	}
+	if (tool === "waitForURL") {
+		if (typeof args.url !== "string") throw new Error("waitForURL requires arguments.url.");
+		const summary = stateSummary(result.content);
+		return summary.url && summary.url.includes(args.url) ? `waitForURL matched ${JSON.stringify(args.url)} at ${summary.url}` : null;
+	}
+	if (tool === "waitForTitle") {
+		if (typeof args.title !== "string") throw new Error("waitForTitle requires arguments.title.");
+		const summary = stateSummary(result.content);
+		return summary.title && summary.title.includes(args.title) ? `waitForTitle matched ${JSON.stringify(args.title)} at ${summary.title}` : null;
+	}
+	let resolved = resolveElementTargetFallbacks(args, cache);
+	resolved = resolveElementId(resolved, cache);
+	resolved = resolveElementDescription(resolved, cache);
+	resolved = resolveElementRoleName(resolved, cache);
+	validateIndexedTarget(resolved, cache, hasStableSelector(args));
+	const element = (cache.get(app) ?? []).find((item) => item.index === resolved.element_index);
+	if (!element) return null;
+	if (tool === "waitUntilElementEnabled" && element.disabled) return null;
+	if (tool === "waitUntilElementDisabled" && !element.disabled) return null;
+	return `${tool} matched element_index ${element.index} (${elementLineWithTargetHint(element)})`;
+}
+
+async function runWaitStep(step: SequenceStep, args: Record<string, JsonValue>, opts: { approval: ApprovalMode; timeoutMs: number; maxTextChars: number; signal?: AbortSignal; cache: Map<string, ElementInfo[]>; beforeState: StateSummary | null; scope: TargetScope }): Promise<{ result: FilteredToolResult; durationMs: number; targetResolution?: string; elements: MachineElement[]; visibleText: string[]; changed: ChangeSummary | null; nextActions: string[] }> {
+	validateWaitArguments(step.tool, args);
+	const started = Date.now();
+	const deadline = started + asInt(args.timeoutMs, opts.timeoutMs);
+	const intervalMs = Math.max(100, Math.min(asInt(args.intervalMs, 750), 10_000));
+	let last: FilteredToolResult | null = null;
+	let lastMessage = "condition did not match";
+	for (;;) {
+		const remainingMs = deadline - Date.now();
+		if (remainingMs <= 0) break;
+		const call = await client.callTool("get_app_state", { app: args.app }, { approval: opts.approval, timeoutMs: Math.min(opts.timeoutMs, remainingMs), signal: opts.signal });
+		const result = filterToolResult(call.result, { maxTextChars: opts.maxTextChars });
+		appendComputerUseDiagnostic(result, "get_app_state", { app: args.app });
+		updateElementCache(opts.cache, args.app, result.content);
+		updateElementCache(sessionElementCache, args.app, result.content);
+		last = result;
+		try {
+			const matched = waitConditionMet(step.tool, args, result, opts.cache);
+			if (matched) {
+				appendText(result, matched);
+				const after = stateSummary(result.content, opts.scope);
+				return { result, durationMs: Date.now() - started, targetResolution: matched, elements: machineElements(result.content, opts.scope), visibleText: after.visibleText, changed: compareState(opts.beforeState, after), nextActions: [] };
+			}
+		} catch (error) {
+			lastMessage = errorMessage(error);
+			if (lastMessage.includes("Stale element_index")) throw error;
+		}
+		const sleepMs = Math.min(intervalMs, deadline - Date.now());
+		if (sleepMs <= 0) break;
+		await new Promise((resolve) => setTimeout(resolve, sleepMs));
+	}
+	const message = `${step.tool} timed out after ${asInt(args.timeoutMs, opts.timeoutMs)}ms: ${lastMessage}. Next action: re-run codex_cu_get_app_state with detail:"minimal" for ${args.app}.`;
+	if (last) appendText(last, message);
+	else last = failureResult(message, opts.maxTextChars);
+	last.isError = true;
+	throw new ComputerUseError(message, last);
+}
+
 function normalizeSequenceSteps(value: unknown): SequenceStep[] {
 	if (!Array.isArray(value) || value.length === 0) throw new Error("codex_cu_sequence requires at least one step.");
 	return value.map((step, index) => {
@@ -1040,13 +1371,19 @@ function sequenceContent(steps: SequencedResult[], includeImages = false, failed
 	const orderedSteps = failed ? [steps[failed.index], ...steps.filter((step) => step.index !== failed.index)].filter((step): step is SequencedResult => Boolean(step)) : steps;
 	const text = `${summary}\n\n${orderedSteps.map((step) => {
 		const header = `Step ${step.index + 1} (index ${step.index}): ${step.tool} (${step.durationMs}ms, isError=${step.result.isError}, elicitations=${step.elicitationCount}, accepted=${step.acceptedElicitations})`;
+		const diagnostics = [
+			step.targetResolution,
+			...step.targetWarnings.map((warning) => `warning: ${warning}`),
+			...(step.changed?.summary ?? []).map((line) => `changed: ${line}`),
+			...step.nextActions.map((action) => `next: ${action}`),
+		].filter(Boolean);
 		if (detail === "minimal" && !step.result.isError) {
 			const assertions = assertionSummary(step);
-			const lines = [step.targetResolution, assertions].filter(Boolean);
+			const lines = [...diagnostics, assertions].filter(Boolean);
 			return lines.length > 0 ? `${header}\n${lines.join("\n")}` : header;
 		}
 		const shouldShowBody = detail !== "minimal" || step.result.isError;
-		return shouldShowBody ? `${header}\n${summarizeContent(step.result.content)}` : header;
+		return shouldShowBody ? `${header}\n${[...diagnostics, summarizeContent(step.result.content)].filter(Boolean).join("\n")}` : `${header}${diagnostics.length ? `\n${diagnostics.join("\n")}` : ""}`;
 	}).join("\n\n---\n\n")}`;
 	const content: ContentBlock[] = [{ type: "text", text: truncateString(text, maxTextChars) }];
 	if (includeImages) {
@@ -1133,7 +1470,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "codex_cu_get_app_state",
 		label: "Codex CU Get App State",
-		description: "Read-only: get a target macOS app's accessibility tree and optional screenshot through persistent OpenAI Codex Computer Use. Pass detail:'minimal' for app/window/display summary plus concise target hints, detail:'compact' for interactive elements, or detail:'full' for the raw tree.",
+		description: "Read-only: get a target macOS app's accessibility tree and optional screenshot through persistent OpenAI Codex Computer Use. Pass detail:'minimal' for app/window/display summary plus concise target hints, detail:'compact' for grouped interactive elements, or detail:'full' for the raw tree. targetScope:'main' suppresses likely chrome/window targets in transformed output.",
 		promptSnippet: "Inspect a local macOS app window with Codex Computer Use.",
 		promptGuidelines: [
 			"Use codex_cu_get_app_state for read-only inspection of a local macOS app when file, CLI, or browser tools are insufficient.",
@@ -1146,6 +1483,7 @@ export default function (pi: ExtensionAPI) {
 			includeImage: Type.Optional(Type.Boolean({ description: "Attach the screenshot image returned by Computer Use when the current model/host supports image blocks. Use saveImagePath for reliable screenshot artifacts. Default false to keep turns light." })),
 			saveImagePath: Type.Optional(Type.String({ description: "Optional filesystem path where the screenshot should be saved." })),
 			detail: detailParam,
+			targetScope: Type.Optional(StringEnum(["all", "main"] as const, { description: "Output target scope. all includes app/window/chrome targets; main prioritizes likely app/page content controls." })),
 			maxTextChars: maxTextParam,
 			toolTimeoutMs: timeoutParam,
 		}),
@@ -1157,6 +1495,7 @@ export default function (pi: ExtensionAPI) {
 			const toolTimeoutMs = asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
 			const maxTextChars = asInt(input.maxTextChars, DEFAULT_MAX_TEXT_CHARS);
 			const detail = normalizeDetail(input.detail, "full");
+			const targetScope: TargetScope = input.targetScope === "main" ? "main" : "all";
 			const call = await client.callTool("get_app_state", { app }, { approval, timeoutMs: toolTimeoutMs, signal });
 			const result = filterToolResult(call.result, {
 				includeImage: Boolean(input.includeImage),
@@ -1164,9 +1503,10 @@ export default function (pi: ExtensionAPI) {
 				maxTextChars,
 			});
 			updateElementCache(sessionElementCache, app, result.content);
+			const diagnostics = [appendComputerUseDiagnostic(result, "get_app_state", { app })].filter((item): item is string => Boolean(item));
 			if (detail === "full") appendElementStabilityNote(result);
 			appendImageWarning(result, { includeImage: Boolean(input.includeImage), saveImagePath: input.saveImagePath });
-			const transformedContent = detail === "minimal" ? minimalContent(result.content) : detail === "compact" ? compactContent(result.content) : result.content;
+			const transformedContent = detail === "minimal" ? minimalContent(result.content, targetScope) : detail === "compact" ? compactContent(result.content, targetScope) : result.content;
 			const outputContent = truncateTextContent(transformedContent, maxTextChars);
 			return {
 				content: outputContent,
@@ -1180,7 +1520,10 @@ export default function (pi: ExtensionAPI) {
 					savedImageArtifact: result.savedImageArtifact,
 					imageSupportNote: input.includeImage ? "Image rendering is model/host dependent; saveImagePath is the reliable screenshot artifact path." : null,
 					detail,
-					elements: machineElements(result.content),
+					targetScope,
+					...stateSummary(result.content, targetScope),
+					diagnostics,
+					elements: machineElements(result.content, targetScope),
 					acceptedElicitations: call.acceptedElicitations,
 					elicitationCount: call.elicitationCount,
 					durationMs: call.durationMs,
@@ -1192,7 +1535,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "codex_cu_sequence",
 		label: "Codex CU Sequence",
-		description: "Run Codex Computer Use calls in one persistent app-server thread. Valid tools: list_apps, get_app_state, perform_secondary_action, press_key, type_text, set_value, select_text, scroll, click, drag. Element targets use element_index as a string; numbers are coerced, element is accepted as an alias, elementId resolves IDs like One or AllClear, and elementDescription exact-matches accessibility descriptions like Add. Example step: {tool:'perform_secondary_action', arguments:{app:'Calculator', elementDescription:'Add', action:'Press'}}.",
+		description: "Run Codex Computer Use calls in one persistent app-server thread. Valid tools: list_apps, get_app_state, perform_secondary_action, press_key, type_text, set_value, select_text, scroll, click, drag, waitForText, waitForURL, waitForTitle, waitForElement, waitUntilElementEnabled, waitUntilElementDisabled. Element targets use element_index as a string; numbers are coerced, element is accepted as an alias, elementId resolves IDs like One or AllClear, elementDescription exact-matches descriptions like Add, and role/name selectors match parsed accessibility targets. Example step: {tool:'perform_secondary_action', arguments:{app:'Calculator', role:'button', name:'Add', action:'Press'}}.",
 		promptSnippet: "Run a sequence of local macOS Computer Use actions.",
 		promptGuidelines: [
 			"Use codex_cu_sequence only after codex_cu_get_app_state has identified the target app/window or when the first sequence step is get_app_state.",
@@ -1206,7 +1549,7 @@ export default function (pi: ExtensionAPI) {
 		],
 		parameters: Type.Object({
 			app: Type.Optional(Type.String({ description: "Optional default app name/bundle/path applied to steps whose arguments omit app." })),
-			steps: Type.Array(Type.Any({ description: "Ordered Computer Use tool calls. Each step must be an object with tool, optional arguments, optional label, expectText, expectAbsentText, expectVisibleText, and allowError. Element-targeted tools accept element_index as string or number, element as an alias, elementId/element_id, elementDescription/element_description, or arguments.targets fallback objects. set_value can put value inside arguments or as top-level step.value. select_text selects by text string, not start/end offsets." }), { minItems: 1, description: "Ordered Computer Use tool calls to run in one persistent app-server thread." }),
+			steps: Type.Array(Type.Any({ description: "Ordered Computer Use tool calls. Each step must be an object with tool, optional arguments, optional label, expectText, expectAbsentText, expectVisibleText, and allowError. Element-targeted tools accept element_index as string or number, element as an alias, elementId/element_id, elementDescription/element_description, role/name selectors, or arguments.targets fallback objects; raw index targets may pass expectedRole/expectedName/expectedDescription/expectedId/expectedValue for stale-target guards. Wait helpers accept timeoutMs and intervalMs. set_value can put value inside arguments or as top-level step.value. select_text selects by text string, not start/end offsets." }), { minItems: 1, description: "Ordered Computer Use tool calls to run in one persistent app-server thread." }),
 			approval: approvalParam,
 			allowMutating: Type.Optional(Type.Boolean({ description: "Required when any step is not list_apps or get_app_state." })),
 			allowPointerClick: Type.Optional(Type.Boolean({ description: "Required to use the pointer-based click tool. Prefer perform_secondary_action action=Press when possible." })),
@@ -1215,6 +1558,7 @@ export default function (pi: ExtensionAPI) {
 			includeImage: Type.Optional(Type.Boolean({ description: "Attach screenshot image blocks returned by sequence steps when the current model/host supports image blocks. Use saveImagePath for reliable screenshot artifacts. Default false." })),
 			saveImagePath: Type.Optional(Type.String({ description: "Optional filesystem path where the first returned screenshot should be saved." })),
 			detail: Type.Optional(StringEnum(["minimal", "compact", "full"] as const, { description: "Output detail. Default compact for sequences. minimal suppresses successful non-state action bodies; full returns full accessibility trees for every step." })),
+			targetScope: Type.Optional(StringEnum(["all", "main"] as const, { description: "Output target scope for parsed targets. main suppresses likely app/browser chrome and window controls where possible." })),
 			maxTextChars: maxTextParam,
 			toolTimeoutMs: timeoutParam,
 		}),
@@ -1244,9 +1588,11 @@ export default function (pi: ExtensionAPI) {
 			const toolTimeoutMs = asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
 			const maxTextChars = asInt(input.maxTextChars, DEFAULT_MAX_TEXT_CHARS);
 			const detail = normalizeDetail(input.detail, "compact");
+			const targetScope: TargetScope = input.targetScope === "main" ? "main" : "all";
 			const mouseBefore = hasPointerClick || hasPointerDrag ? getMousePosition() : null;
 			const results: SequencedResult[] = [];
 			const elementCache = new Map(sessionElementCache);
+			const stateCache = new Map<string, StateSummary>();
 			let failed: SequenceFailure | null = null;
 			let implicitRefreshes = 0;
 			try {
@@ -1255,12 +1601,45 @@ export default function (pi: ExtensionAPI) {
 					let stepArgs = originalStepArgs;
 					let targetResolution: string | undefined;
 					try {
+						const beforeState = typeof stepArgs.app === "string" ? stateCache.get(stepArgs.app) ?? null : null;
+						if (isWaitTool(step.tool)) {
+							const waited = await runWaitStep(step, stepArgs, { approval, timeoutMs: toolTimeoutMs, maxTextChars, signal, cache: elementCache, beforeState, scope: targetScope });
+							const row: SequencedResult = {
+								index,
+								label: step.label,
+								tool: step.tool,
+								arguments: stepArgs,
+								durationMs: waited.durationMs,
+								result: waited.result,
+								expectText: step.expectText,
+								expectAbsentText: step.expectAbsentText,
+								expectVisibleText: step.expectVisibleText,
+								allowError: step.allowError,
+								targetResolution: waited.targetResolution,
+								targetWarnings: [],
+								elements: waited.elements,
+								visibleText: waited.visibleText,
+								changed: waited.changed,
+								nextActions: waited.nextActions,
+								acceptedElicitations: 0,
+								elicitationCount: 0,
+							};
+							if (typeof stepArgs.app === "string") stateCache.set(stepArgs.app, stateSummary(waited.result.content, targetScope));
+							validateStepResult(row);
+							if (detail === "compact") row.result.content = compactContent(row.result.content, targetScope);
+							results.push(row);
+							continue;
+						}
 						const elementId = stepArgs.elementId ?? stepArgs.element_id;
 						const elementDescription = stepArgs.elementDescription ?? stepArgs.element_description;
+						const elementRole = stepArgs.role ?? stepArgs.elementRole;
+						const elementName = stepArgs.name ?? stepArgs.elementName;
 						const targetsElement = step.tool !== "get_app_state" && typeof stepArgs.app === "string" && (
 							stepArgs.element_index !== undefined ||
 							typeof elementId === "string" ||
 							typeof elementDescription === "string" ||
+							typeof elementRole === "string" ||
+							typeof elementName === "string" ||
 							Array.isArray(stepArgs.targets)
 						);
 						if (targetsElement && typeof stepArgs.app === "string") {
@@ -1268,28 +1647,40 @@ export default function (pi: ExtensionAPI) {
 							const refreshed = filterToolResult(refresh.result, { maxTextChars });
 							updateElementCache(elementCache, stepArgs.app, refreshed.content);
 							updateElementCache(sessionElementCache, stepArgs.app, refreshed.content);
+							stateCache.set(stepArgs.app, stateSummary(refreshed.content, targetScope));
 							implicitRefreshes += 1;
 						}
 						stepArgs = resolveElementTargetFallbacks(stepArgs, elementCache);
 						stepArgs = resolveElementId(stepArgs, elementCache);
 						stepArgs = resolveElementDescription(stepArgs, elementCache);
+						stepArgs = resolveElementRoleName(stepArgs, elementCache);
+						const targetWarnings = validateIndexedTarget(stepArgs, elementCache, hasStableSelector(originalStepArgs));
 						targetResolution = describeTargetResolution(originalStepArgs, stepArgs, elementCache);
-						const call = await client.callTool(step.tool, stepArgs, { approval, timeoutMs: toolTimeoutMs, signal });
+						const callArgs = stripSelectorOnlyKeys(stepArgs);
+						const call = await client.callTool(step.tool, callArgs, { approval, timeoutMs: toolTimeoutMs, signal });
 						const filtered = filterToolResult(call.result, {
 							includeImage: Boolean(input.includeImage),
 							saveImagePath: index === 0 ? input.saveImagePath : undefined,
 							maxTextChars,
 						});
+						const diagnostics = [appendComputerUseDiagnostic(filtered, step.tool, stepArgs)].filter((item): item is string => Boolean(item));
+						const afterState = stateSummary(filtered.content, targetScope);
 						updateElementCache(elementCache, stepArgs.app, filtered.content);
 						updateElementCache(sessionElementCache, stepArgs.app, filtered.content);
+						if (typeof stepArgs.app === "string") stateCache.set(stepArgs.app, afterState);
 						if (detail === "full") appendElementStabilityNote(filtered);
 						appendImageWarning(filtered, { includeImage: Boolean(input.includeImage), saveImagePath: index === 0 ? input.saveImagePath : undefined });
 						enrichActionError(filtered, stepArgs, elementCache);
+						const changed = compareState(beforeState, afterState);
+						const nextActions = [
+							...(changed && (changed.urlChanged || changed.titleChanged || changed.visibleTextChanged) && !step.tool.startsWith("get_app_state") ? [`If the UI rerendered or navigated, call codex_cu_get_app_state({app:${JSON.stringify(stepArgs.app)}, detail:"minimal"}) before using raw element_index targets.`] : []),
+							...(diagnostics.length > 0 ? [`Resolve upstream Computer Use state for ${JSON.stringify(stepArgs.app)} before retrying mutating actions; use agent_browser for web/Chrome if Computer Use state keeps timing out.`] : []),
+						];
 						const row: SequencedResult = {
 							index,
 							label: step.label,
 							tool: step.tool,
-							arguments: stepArgs,
+							arguments: callArgs,
 							durationMs: call.durationMs,
 							result: filtered,
 							expectText: step.expectText,
@@ -1297,7 +1688,11 @@ export default function (pi: ExtensionAPI) {
 							expectVisibleText: step.expectVisibleText,
 							allowError: step.allowError,
 							targetResolution,
-							elements: step.tool === "get_app_state" ? machineElements(filtered.content) : [],
+							targetWarnings,
+							elements: step.tool === "get_app_state" ? machineElements(filtered.content, targetScope) : [],
+							visibleText: afterState.visibleText,
+							changed,
+							nextActions,
 							acceptedElicitations: call.acceptedElicitations,
 							elicitationCount: call.elicitationCount,
 						};
@@ -1308,7 +1703,7 @@ export default function (pi: ExtensionAPI) {
 							appendText(row.result, `Sequence stopped: ${errorMessage(error)}`);
 							failed = { index, stepNumber: index + 1, tool: step.tool, label: step.label, message: errorMessage(error) };
 						}
-						if (detail === "compact") row.result.content = compactContent(row.result.content);
+						if (detail === "compact") row.result.content = compactContent(row.result.content, targetScope);
 						results.push(row);
 						if (failed) break;
 					} catch (error) {
@@ -1327,7 +1722,11 @@ export default function (pi: ExtensionAPI) {
 							expectVisibleText: step.expectVisibleText,
 							allowError: step.allowError,
 							targetResolution,
+							targetWarnings: [],
 							elements: [],
+							visibleText: [],
+							changed: null,
+							nextActions: ["Inspect the failed-step diagnostic, then re-run codex_cu_get_app_state with detail:\"minimal\" before retrying any raw element_index target."],
 							acceptedElicitations: 0,
 							elicitationCount: 0,
 						});
@@ -1344,6 +1743,7 @@ export default function (pi: ExtensionAPI) {
 					tool: "sequence",
 					threadId: client.status().threadId,
 					detail,
+					targetScope,
 					failed,
 					failedStepIndex: failed?.index ?? null,
 					failedStepNumber: failed?.stepNumber ?? null,
@@ -1365,6 +1765,10 @@ export default function (pi: ExtensionAPI) {
 						acceptedElicitations: step.acceptedElicitations,
 						elicitationCount: step.elicitationCount,
 						targetResolution: step.targetResolution ?? null,
+						targetWarnings: step.targetWarnings,
+						visibleText: step.visibleText,
+						changed: step.changed,
+						nextActions: step.nextActions,
 						elements: step.elements,
 					})),
 					mousePreservation: mouseBefore ? { before: mouseBefore, restored: mouseAfter } : null,

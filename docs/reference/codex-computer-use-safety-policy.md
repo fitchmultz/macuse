@@ -146,10 +146,13 @@ persistent `codex_cu_sequence` wrapper requires or enforces:
   app/window specificity requirement in the `safetyNote`
 - element-targeted tools accept `element_index` as a string or number, `element`
   as an alias, `elementId` / `element_id`, exact `elementDescription` /
-  `element_description` matches, or `arguments.targets` fallback objects such as
-  `[{"elementId":"AllClear"},{"elementDescription":"Clear"}]`; prefer stable
-  IDs/descriptions when available because numeric indices can shift, and use
-  failed lookup fallback hints when IDs or descriptions are absent or stale
+  `element_description` matches, role/name selectors, or `arguments.targets`
+  fallback objects such as
+  `[{"elementId":"AllClear"},{"elementDescription":"Clear"},{"role":"button","name":"Clear"}]`;
+  prefer stable IDs/descriptions/role-name selectors when available because
+  numeric indices can shift. Raw `element_index` targets can pass
+  `expectedRole`, `expectedName`, `expectedDescription`, `expectedId`, or
+  `expectedValue`; mismatches fail before mutation with a stale-target diagnostic
 - optional per-step `expectText`, `expectAbsentText`, and `expectVisibleText`
   assertions to stop the sequence when state evidence does not match
   expectations; `expectText`/`expectAbsentText` strip invisible bidi marks before
@@ -166,12 +169,19 @@ persistent `codex_cu_sequence` wrapper requires or enforces:
   Pointer drag/click sequences use extension-level mouse restoration.
 - a `safetyNote` that states target app, intended effect, and stop boundary
 - sequence `detail: "minimal"` for token-efficient action logs that suppress
-  successful action and state bodies while preserving assertion pass snippets and
+  successful action and state bodies while preserving target resolution,
+  stale-index warnings, changed-state summaries, assertion pass snippets, and
   failure evidence; `detail: "compact"` remains the default and `detail: "full"`
-  keeps raw trees
-- machine-readable parsed element metadata in tool result `details` for
-  `get_app_state` steps, including target hints, stable IDs, descriptions, and
-  secondary actions where Computer Use exposes them
+  keeps raw trees. `targetScope: "main"` suppresses likely chrome/window controls
+  in transformed output where possible
+- sequence wait helper pseudo-tools (`waitForText` for parsed visible text,
+  `waitForElement`, `waitUntilElementEnabled`, `waitUntilElementDisabled`, plus
+  best-effort `waitForURL` / `waitForTitle`) that poll `get_app_state` instead
+  of requiring manual sleeps
+- machine-readable parsed state and element metadata in tool result `details`,
+  including `visibleText`, `targets`/`elements`, target hints, stable IDs,
+  descriptions, role/name, disabled state, changed-state summaries, warnings,
+  and next-action hints where Computer Use exposes enough accessibility evidence
 - extension-level refusal of mutating calls unless `allowMutating: true` is passed
 
 The app-server-backed standard MCP wrapper at
