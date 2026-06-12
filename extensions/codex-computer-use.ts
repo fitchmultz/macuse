@@ -122,12 +122,13 @@ type ElementInfo = {
 	name: string;
 	value?: string;
 	disabled: boolean;
+	tags: string[];
 	group: "content" | "chrome" | "window" | "other";
 	line: string;
 	secondaryActions: string[];
 };
 
-type MachineElement = Pick<ElementInfo, "index" | "id" | "description" | "role" | "name" | "value" | "disabled" | "group" | "secondaryActions"> & { targetHint: string; line: string };
+type MachineElement = Pick<ElementInfo, "index" | "id" | "description" | "role" | "name" | "value" | "disabled" | "tags" | "group" | "secondaryActions"> & { targetHint: string; line: string };
 
 type StateSummary = {
 	app: string | null;
@@ -147,6 +148,25 @@ type ChangeSummary = {
 	titleChanged: boolean;
 	urlChanged: boolean;
 	summary: string[];
+};
+
+type AppMetadata = {
+	name: string;
+	path: string | null;
+	bundleId: string | null;
+	flags: string[];
+	running: boolean;
+	frontmost: boolean;
+	lastUsed: string | null;
+	line: string;
+};
+
+type FocusSnapshot = {
+	frontmost: AppMetadata[];
+	frontmostNames: string[];
+	changed: boolean | null;
+	before: AppMetadata[] | null;
+	after: AppMetadata[] | null;
 };
 
 type SequenceFailure = {
@@ -348,11 +368,12 @@ function normalizeRole(value: string): string {
 	const normalized = value.toLowerCase().replace(/[\s_-]+/g, " ").trim();
 	if (normalized === "textbox" || normalized === "text box" || normalized === "input") return "text field";
 	if (normalized === "secure textbox" || normalized === "password") return "secure text field";
+	if (normalized === "search field" || normalized === "search text field" || normalized === "searchfield") return "search";
 	return normalized;
 }
 
 function parseElementRole(body: string): string {
-	const match = body.match(/^(standard window|split group|container|scroll area|text entry area|secure text field|text field|edit field|close button|zoom button|minimize button|radio button|menu bar|menu item|button|checkbox|slider|combo box|tab|link|row|text|toolbar|group|web area)\b/i);
+	const match = body.match(/^(standard window|split group|container|scroll area|text entry area|secure text field|search text field|text field|edit field|close button|zoom button|minimize button|radio button|menu bar|menu item|button|checkbox|slider|combo box|tab|link|row|text|toolbar|group|web area|search)\b/i);
 	return normalizeRole(match?.[1] ?? body.split(/\s+/)[0] ?? "unknown");
 }
 
@@ -360,23 +381,45 @@ function roleMatches(actual: string, expected: string): boolean {
 	const wanted = normalizeRole(expected);
 	const got = normalizeRole(actual);
 	if (wanted === got) return true;
-	if (wanted === "text field") return ["text field", "edit field", "text entry area", "secure text field", "scroll area"].includes(got);
+	if (wanted === "text field") return ["text field", "edit field", "text entry area", "secure text field", "scroll area", "search"].includes(got);
+	if (wanted === "search") return ["search", "search text field"].includes(got);
 	return false;
+}
+
+function settableFieldValue(body: string): string | undefined {
+	const valueMatch = body.match(/(?:^|,\s*)Value:\s*(.+)$/i);
+	if (valueMatch?.[1]) return valueMatch[1].trim();
+	const settableMatch = body.match(/\((?:settable|editable),\s*string\)\s+(.+)$/i);
+	return settableMatch?.[1]?.trim();
+}
+
+function stableFieldName(value: string): string {
+	return value.replace(/(\((?:settable|editable),\s*string\))\s+.+$/i, "$1").trim();
 }
 
 function parseElementName(body: string, role: string, id?: string, description?: string): string {
 	if (description) return description;
 	const withoutRole = body.replace(new RegExp(`^${role.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*`, "i"), "").trim();
 	const beforeComma = withoutRole.split(/,\s*(?:ID:|Help:|Secondary Actions:)/)[0]?.trim() ?? "";
-	const cleaned = beforeComma.replace(/^Description:\s*/i, "").replace(/\s*\(disabled\)\s*$/i, "").trim();
+	const cleaned = stableFieldName(beforeComma.replace(/^Description:\s*/i, "").replace(/\s*\(disabled\)\s*$/i, "").trim());
 	return cleaned || id || role;
+}
+
+function elementTags(line: string, role: string, name: string, description?: string): string[] {
+	const haystack = `${line} ${role} ${name} ${description ?? ""}`.toLowerCase();
+	const tags = new Set<string>();
+	if (/\bsettable\b|\beditable\b/.test(haystack)) tags.add("settable-field");
+	if (role === "search" || /\bsearch\b/.test(haystack)) tags.add("search-field");
+	if (/\b(cancel|clear)\b/.test(haystack)) tags.add("clear-control");
+	if (/\b(delete|erase|remove|trash|force quit|quit process|stop process|kill|sign out|log out|password|privacy|security|payment|purchase|send|submit)\b/.test(haystack)) tags.add("risk-sensitive-control");
+	return [...tags];
 }
 
 function elementGroup(line: string, role: string): ElementInfo["group"] {
 	if (/\b(?:standard window|close button|zoom button|minimize button)\b/i.test(line)) return "window";
 	if (/\b(?:menu bar|toolbar)\b/i.test(line)) return "chrome";
 	if (/\b(?:tab group|tab|address|bookmark|extension|sidebar|show sidebar|mode:)\b/i.test(line)) return "chrome";
-	if (["button", "text field", "edit field", "text entry area", "secure text field", "checkbox", "radio button", "slider", "combo box", "link", "row", "text", "scroll area"].includes(role)) return "content";
+	if (["button", "search", "text field", "edit field", "text entry area", "secure text field", "checkbox", "radio button", "slider", "combo box", "link", "row", "text", "scroll area"].includes(role)) return "content";
 	return "other";
 }
 
@@ -392,14 +435,15 @@ function parseElementInfo(text: string): ElementInfo[] {
 		const role = parseElementRole(body);
 		const buttonLabel = line.match(/^\d+\s+button\s+([^,]+?)(?:,\s|$)/)?.[1]?.trim();
 		const description = explicitDescription ?? (buttonLabel && !buttonLabel.startsWith("Description:") ? stripInvisibleBidiMarks(buttonLabel) : undefined);
-		const value = role === "text" ? body.replace(/^text\s+/i, "").trim() : undefined;
+		const value = role === "text" ? body.replace(/^text\s+/i, "").trim() : settableFieldValue(body);
 		const name = parseElementName(body, role, id, description);
 		const secondaryActions = line.match(/Secondary Actions:\s*([^\n]+)/)?.[1]
 			?.split(",")
 			.map((item) => item.trim())
 			.filter(Boolean) ?? [];
 		const disabled = /\bdisabled\b|\(disabled\)/i.test(line);
-		elements.push({ index: match[1], id, description, role, name, value, disabled, group: elementGroup(line, role), line, secondaryActions });
+		const tags = elementTags(line, role, name, description);
+		elements.push({ index: match[1], id, description, role, name, value, disabled, tags, group: elementGroup(line, role), line, secondaryActions });
 	}
 	return elements;
 }
@@ -407,7 +451,7 @@ function parseElementInfo(text: string): ElementInfo[] {
 function isInteractiveElement(element: ElementInfo): boolean {
 	return Boolean(element.id) ||
 		element.secondaryActions.length > 0 ||
-		/\b(button|text entry area|text field|edit field|field|menu|menu item|row|checkbox|radio|slider|scroll area|combo box|tab|link)\b/i.test(element.line) ||
+		/\b(button|search|text entry area|text field|edit field|field|menu|menu item|row|checkbox|radio|slider|scroll area|combo box|tab|link)\b/i.test(element.line) ||
 		/\btext\s+‎/.test(element.line);
 }
 
@@ -419,7 +463,9 @@ function elementTargetHint(element: ElementInfo): string {
 }
 
 function elementLineWithTargetHint(element: ElementInfo): string {
-	return `${stripInvisibleBidiMarks(element.line)} — ${elementTargetHint(element)}`;
+	const tags = element.tags.length > 0 ? ` tags=${element.tags.join(",")}` : "";
+	const value = element.value ? ` value=${JSON.stringify(element.value)}` : "";
+	return `${stripInvisibleBidiMarks(element.line)}${value}${tags} — ${elementTargetHint(element)}`;
 }
 
 function shortElementLabel(element: ElementInfo): string {
@@ -432,6 +478,9 @@ function rankElement(element: ElementInfo): number {
 	if (element.group === "content") score -= 100;
 	if (element.group === "chrome") score += 80;
 	if (element.group === "window") score += 120;
+	if (element.tags.includes("search-field")) score -= 60;
+	if (element.tags.includes("settable-field")) score -= 45;
+	if (element.tags.includes("risk-sensitive-control")) score += 60;
 	if (element.id) score -= 15;
 	if (element.description || element.name) score -= 10;
 	if (element.disabled) score += 20;
@@ -476,12 +525,12 @@ function minimalText(text: string, scope: TargetScope = "all"): string {
 	const visibleText = elements
 		.filter((element) => /\btext\b/i.test(element.line))
 		.slice(0, 8)
-		.map((element) => `${element.index} ${stripInvisibleBidiMarks(element.line.replace(/^\d+\s+/, ""))}`);
+		.map((element) => `${element.index} ${stripInvisibleBidiMarks(element.line.replace(/^\d+\s+/, ""))}${element.value ? ` value=${JSON.stringify(element.value)}` : ""}${element.tags.length > 0 ? ` tags=${element.tags.join(",")}` : ""}`);
 	const ranked = prioritizedElements(elements.filter(isInteractiveElement), scope);
 	const targets = ranked
 		.filter((element) => element.group !== "window")
 		.slice(0, 24)
-		.map((element) => `${element.index} ${shortElementLabel(element)} [${element.role}${element.disabled ? ", disabled" : ""}] — ${elementTargetHint(element)}`);
+		.map((element) => `${element.index} ${shortElementLabel(element)} [${element.role}${element.disabled ? ", disabled" : ""}${element.tags.length > 0 ? `; tags=${element.tags.join(",")}` : ""}${element.value ? `; value=${JSON.stringify(element.value)}` : ""}] — ${elementTargetHint(element)}`);
 	const omittedByGroup = ["content", "chrome", "window", "other"]
 		.map((group) => ({ group, count: ranked.filter((element) => element.group === group).length }))
 		.filter((item) => item.count > 0)
@@ -547,6 +596,7 @@ function machineElements(content: ContentBlock[], scope: TargetScope = "all"): M
 		...(element.value ? { value: element.value } : {}),
 		disabled: element.disabled,
 		group: element.group,
+		tags: element.tags,
 		secondaryActions: element.secondaryActions,
 		targetHint: elementTargetHint(element),
 		line: stripInvisibleBidiMarks(element.line),
@@ -714,19 +764,28 @@ function resolveElementRoleName(args: Record<string, JsonValue>, cache: Map<stri
 	if (typeof rawRole !== "string" && typeof rawName !== "string") return normalized;
 	if (typeof normalized.app !== "string") throw new Error("role/name targeting requires an app argument.");
 	const elements = cache.get(normalized.app) ?? [];
-	const matches = elements.filter((element) => {
-		if (typeof rawRole === "string" && !roleMatches(element.role, rawRole)) return false;
-		if (typeof rawName === "string") {
-			const expected = normalizeAssertionText(rawName).toLowerCase();
-			const names = [element.name, element.description, element.id, element.value].filter((item): item is string => typeof item === "string");
-			if (!names.some((name) => normalizeAssertionText(name).toLowerCase() === expected)) return false;
-		}
-		return true;
+	const roleFiltered = elements.filter((element) => typeof rawRole !== "string" || roleMatches(element.role, rawRole));
+	let matches = roleFiltered.filter((element) => {
+		if (typeof rawName !== "string") return true;
+		const expected = normalizeAssertionText(rawName).toLowerCase();
+		const names = [element.name, element.description, element.id, element.value].filter((item): item is string => typeof item === "string");
+		return names.some((name) => normalizeAssertionText(name).toLowerCase() === expected);
 	});
+	if (matches.length === 0 && typeof rawName === "string") {
+		const expected = normalizeAssertionText(rawName).toLowerCase();
+		matches = roleFiltered.filter((element) => {
+			if (!element.tags.includes("settable-field") && element.role !== "search") return false;
+			const names = [element.name, element.description, element.id].filter((item): item is string => typeof item === "string");
+			return names.some((name) => {
+				const normalizedName = normalizeAssertionText(name).toLowerCase();
+				return normalizedName.startsWith(expected) || expected.startsWith(normalizedName);
+			});
+		});
+	}
 	if (matches.length !== 1) {
 		const reason = matches.length === 0 ? "No" : `Ambiguous ${matches.length}`;
 		const closest = typeof rawName === "string" ? closestElementSuggestions(elements, rawName, "name") : "";
-		throw new Error(`${reason} role/name target found for ${normalized.app}. Match is exact and case-insensitive.${closest ? `\nClosest name matches: ${closest}.` : ""}\nAvailable targets:\n${actionableElementSummary(elements)}`);
+		throw new Error(`${reason} role/name target found for ${normalized.app}. Match is exact first, then prefix-compatible for one settable/search field.${closest ? `\nClosest name matches: ${closest}.` : ""}\nAvailable targets:\n${actionableElementSummary(elements)}`);
 	}
 	normalized.element_index = matches[0].index;
 	delete normalized.role;
@@ -805,7 +864,10 @@ function validateIndexedTarget(args: Record<string, JsonValue>, cache: Map<strin
 	for (const [field, expected, actual] of expectations) {
 		if (typeof expected !== "string") continue;
 		const ok = field === "expectedRole" ? roleMatches(actual ?? "", expected) : normalizeAssertionText(actual ?? "").toLowerCase() === normalizeAssertionText(expected).toLowerCase();
-		if (!ok) throw new Error(`Stale element_index ${args.element_index}: ${field} expected ${JSON.stringify(expected)} but latest target is ${JSON.stringify(actual ?? "")}. No mutation performed; re-snapshot or use elementId/elementDescription/role/name.`);
+		if (!ok) {
+			const identity = `role=${JSON.stringify(element.role)}, name=${JSON.stringify(element.name)}, id=${JSON.stringify(element.id ?? null)}, description=${JSON.stringify(element.description ?? null)}, value=${JSON.stringify(element.value ?? null)}`;
+			throw new Error(`Guard failed before mutation: guard=failed; mutation=false; index=${args.element_index}; ${field} expected ${JSON.stringify(expected)}; actual=${JSON.stringify(actual ?? "")}; actualTarget={${identity}}. No mutation performed; re-snapshot or use elementId/elementDescription/role/name.`);
+		}
 	}
 	const hasExpectation = expectations.some(([, expected]) => typeof expected === "string");
 	if (!stableSelectorUsed && !hasExpectation) return [`Target selected by raw element_index ${args.element_index}; indices can go stale after rerenders. Prefer elementId, elementDescription, role/name, targets fallback, or pass expectedRole/expectedName to fail closed.`];
@@ -821,7 +883,8 @@ function stripSelectorOnlyKeys(args: Record<string, JsonValue>): Record<string, 
 function describeTargetResolution(originalArgs: Record<string, JsonValue>, resolvedArgs: Record<string, JsonValue>, cache: Map<string, ElementInfo[]>): string | undefined {
 	if (typeof resolvedArgs.app !== "string" || typeof resolvedArgs.element_index !== "string") return undefined;
 	const element = (cache.get(resolvedArgs.app) ?? []).find((item) => item.index === resolvedArgs.element_index);
-	const resolved = `resolved target: element_index ${resolvedArgs.element_index}${element ? ` (${elementLineWithTargetHint(element)})` : ""}`;
+	const identity = element ? `role=${JSON.stringify(element.role)}, name=${JSON.stringify(element.name)}, id=${JSON.stringify(element.id ?? null)}, description=${JSON.stringify(element.description ?? null)}, value=${JSON.stringify(element.value ?? null)}` : "";
+	const resolved = `resolved target: element_index ${resolvedArgs.element_index}${element ? ` (${identity}; ${elementTargetHint(element)})` : ""}`;
 	if (!Array.isArray(originalArgs.targets)) return hasElementTarget(originalArgs) ? resolved : undefined;
 	const targetIndex = originalArgs.targets.findIndex((target) => {
 		if (!isJsonRecord(target)) return false;
@@ -858,18 +921,85 @@ function enrichActionError(result: FilteredToolResult, args: Record<string, Json
 	appendText(result, `Target element ${element.index}: ${element.line}\nValid secondary actions: ${actions}`);
 }
 
+function filteredAppListLines(content: ContentBlock[], opts: { runningOnly?: boolean; filter?: string }): string[] {
+	let lines = contentText(content).split("\n").map((line) => line.trim()).filter(Boolean);
+	if (opts.runningOnly) lines = lines.filter((line: string) => /\[(?:[^\]]*,\s*)?(?:frontmost,\s*)?running(?:[,\]])/.test(line) || line.includes("[frontmost, running"));
+	if (opts.filter) {
+		const needle = opts.filter.toLowerCase();
+		lines = lines.filter((line: string) => line.toLowerCase().includes(needle));
+	}
+	return lines;
+}
+
+function parseAppListLine(line: string): AppMetadata {
+	const [left, flagsPart = ""] = line.split(/\s+\[([^\]]+)\]\s*$/).filter((part) => part !== undefined);
+	const parts = (left || line).split(" — ").map((part) => part.trim());
+	const flags = flagsPart
+		.split(",")
+		.map((flag) => flag.trim())
+		.filter(Boolean);
+	const lastUsedFlag = flags.find((flag) => /^last[- ]used:/i.test(flag));
+	return {
+		name: parts[0] || line,
+		path: parts[1] || null,
+		bundleId: parts[2] || null,
+		flags,
+		running: flags.some((flag) => flag.toLowerCase() === "running"),
+		frontmost: flags.some((flag) => flag.toLowerCase() === "frontmost"),
+		lastUsed: lastUsedFlag?.replace(/^last[- ]used:\s*/i, "") ?? null,
+		line,
+	};
+}
+
+function parseAppListContent(content: ContentBlock[], opts: { runningOnly?: boolean; filter?: string } = {}): AppMetadata[] {
+	return filteredAppListLines(content, opts).map(parseAppListLine);
+}
+
 function filterAppListContent(content: ContentBlock[], opts: { runningOnly?: boolean; filter?: string; maxTextChars: number }): ContentBlock[] {
-	return content.map((block) => {
-		if (!isTextBlock(block)) return block;
-		let lines = block.text.split("\n").filter(Boolean);
-		if (opts.runningOnly) lines = lines.filter((line: string) => /\[(?:[^\]]*,\s*)?(?:frontmost,\s*)?running(?:[,\]])/.test(line) || line.includes("[frontmost, running"));
-		if (opts.filter) {
-			const needle = opts.filter.toLowerCase();
-			lines = lines.filter((line: string) => line.toLowerCase().includes(needle));
-		}
-		const text = lines.join("\n") || "No apps matched the requested filter.";
-		return { ...block, text: truncateString(text, opts.maxTextChars) };
-	});
+	const lines = filteredAppListLines(content, opts);
+	const apps = lines.map(parseAppListLine);
+	const frontmost = apps.filter((app) => app.frontmost).map((app) => app.name).join(", ") || "<none>";
+	const summary = `Structured app summary: count=${apps.length}; frontmost=${frontmost}; fields=name,path,bundleId,flags,running,frontmost,lastUsed`;
+	const text = lines.length > 0 ? `${summary}\n${lines.join("\n")}` : "No apps matched the requested filter.";
+	return [{ type: "text", text: truncateString(text, opts.maxTextChars) }];
+}
+
+async function captureFocusSnapshot(approval: ApprovalMode, timeoutMs: number, maxTextChars: number, signal?: AbortSignal): Promise<AppMetadata[] | null> {
+	try {
+		const call = await client.callTool("list_apps", {}, { approval, timeoutMs, signal });
+		const result = filterToolResult(call.result, { maxTextChars });
+		return parseAppListContent(result.content, { runningOnly: true }).filter((app) => app.frontmost);
+	} catch {
+		return null;
+	}
+}
+
+function focusSnapshot(before: AppMetadata[] | null, after: AppMetadata[] | null): FocusSnapshot {
+	const afterNames = (after ?? []).map((app) => app.name);
+	const beforeNames = (before ?? []).map((app) => app.name);
+	const changed = before && after ? beforeNames.join("|") !== afterNames.join("|") : null;
+	return {
+		frontmost: after ?? [],
+		frontmostNames: afterNames,
+		changed,
+		before,
+		after,
+	};
+}
+
+function appMatches(app: AppMetadata, target: string): boolean {
+	const expected = target.toLowerCase();
+	return [app.name, app.path, app.bundleId]
+		.filter((value): value is string => typeof value === "string")
+		.some((value) => value.toLowerCase() === expected || value.toLowerCase().includes(expected));
+}
+
+function focusSummaryText(focus: FocusSnapshot, targetApp?: string): string {
+	const before = focus.before?.map((app) => app.name).join(", ") || "<unknown>";
+	const after = focus.after?.map((app) => app.name).join(", ") || "<unknown>";
+	const targetBecameFrontmost = targetApp ? Boolean(focus.after?.some((app) => appMatches(app, targetApp)) && !focus.before?.some((app) => appMatches(app, targetApp))) : null;
+	const targetFrontmostAfter = targetApp ? Boolean(focus.after?.some((app) => appMatches(app, targetApp))) : null;
+	return `Focus summary: before=${before}; after=${after}; frontmostChanged=${focus.changed ?? "unknown"}${targetApp ? `; targetAppFrontmostAfter=${targetFrontmostAfter}; targetAppBecameFrontmost=${targetBecameFrontmost}` : ""}`;
 }
 
 function appendSavedImageArtifact(result: FilteredToolResult): void {
@@ -1241,7 +1371,9 @@ function waitConditionMet(tool: string, args: Record<string, JsonValue>, result:
 		if (typeof args.text !== "string") throw new Error("waitForText requires arguments.text.");
 		const expected = normalizeAssertionText(args.text);
 		const visible = visibleTextValues(result.content);
-		return visible.some((value) => value.includes(expected)) ? `waitForText matched visible text ${JSON.stringify(args.text)}` : null;
+		const raw = normalizeAssertionText(contentText(result.content));
+		if (visible.some((value) => value.includes(expected))) return `waitForText matched visible text ${JSON.stringify(args.text)}`;
+		return raw.includes(expected) ? `waitForText matched raw app state text/value ${JSON.stringify(args.text)}` : null;
 	}
 	if (tool === "waitForURL") {
 		if (typeof args.url !== "string") throw new Error("waitForURL requires arguments.url.");
@@ -1362,14 +1494,16 @@ function assertionSummary(step: SequencedResult): string | null {
 	return lines.length > 0 ? lines.join("\n") : null;
 }
 
-function sequenceContent(steps: SequencedResult[], includeImages = false, failed: SequenceFailure | null = null, totalSteps = steps.length, detail: DetailMode = "compact", maxTextChars = DEFAULT_MAX_TEXT_CHARS): ContentBlock[] {
+function sequenceContent(steps: SequencedResult[], includeImages = false, failed: SequenceFailure | null = null, totalSteps = steps.length, detail: DetailMode = "compact", maxTextChars = DEFAULT_MAX_TEXT_CHARS, focus?: FocusSnapshot, targetApp?: string, mousePreservation?: { before: MousePosition; after: MousePosition | null; restored: boolean }): ContentBlock[] {
 	if (steps.length === 0) return [{ type: "text", text: "Computer Use sequence returned no steps." }];
 	const completedStepCount = failed ? failed.index : steps.length;
 	const summary = failed
 		? `Sequence failed at step ${failed.stepNumber} of ${totalSteps} (index ${failed.index}, ${failed.tool}). Completed ${completedStepCount} step${completedStepCount === 1 ? "" : "s"}. To resume, start a new sequence from step index ${failed.index} against current app state.`
 		: `Sequence completed ${steps.length} of ${totalSteps} step${totalSteps === 1 ? "" : "s"}.`;
+	const focusLine = focus ? `\n${focusSummaryText(focus, targetApp)}` : "";
+	const mouseLine = mousePreservation ? `\nMouse preservation: before=(${mousePreservation.before.x},${mousePreservation.before.y}); after=(${mousePreservation.after?.x ?? "unknown"},${mousePreservation.after?.y ?? "unknown"}); restored=${mousePreservation.restored}` : "";
 	const orderedSteps = failed ? [steps[failed.index], ...steps.filter((step) => step.index !== failed.index)].filter((step): step is SequencedResult => Boolean(step)) : steps;
-	const text = `${summary}\n\n${orderedSteps.map((step) => {
+	const text = `${summary}${focusLine}${mouseLine}\n\n${orderedSteps.map((step) => {
 		const header = `Step ${step.index + 1} (index ${step.index}): ${step.tool} (${step.durationMs}ms, isError=${step.result.isError}, elicitations=${step.elicitationCount}, accepted=${step.acceptedElicitations})`;
 		const diagnostics = [
 			step.targetResolution,
@@ -1449,6 +1583,7 @@ export default function (pi: ExtensionAPI) {
 			const maxTextChars = asInt(input.maxTextChars, DEFAULT_MAX_TEXT_CHARS);
 			const call = await client.callTool("list_apps", {}, { approval: "inherit", timeoutMs: toolTimeoutMs, signal });
 			const result = filterToolResult(call.result, { maxTextChars });
+			const appMetadata = parseAppListContent(result.content, { runningOnly: Boolean(input.runningOnly), filter: input.filter });
 			const outputContent = filterAppListContent(result.content, { runningOnly: Boolean(input.runningOnly), filter: input.filter, maxTextChars });
 			return {
 				content: outputContent,
@@ -1459,6 +1594,8 @@ export default function (pi: ExtensionAPI) {
 					omittedImages: result.omittedImages,
 					runningOnly: Boolean(input.runningOnly),
 					filter: input.filter ?? null,
+					apps: appMetadata,
+					frontmostApps: appMetadata.filter((app) => app.frontmost),
 					acceptedElicitations: call.acceptedElicitations,
 					elicitationCount: call.elicitationCount,
 					durationMs: call.durationMs,
@@ -1496,7 +1633,9 @@ export default function (pi: ExtensionAPI) {
 			const maxTextChars = asInt(input.maxTextChars, DEFAULT_MAX_TEXT_CHARS);
 			const detail = normalizeDetail(input.detail, "full");
 			const targetScope: TargetScope = input.targetScope === "main" ? "main" : "all";
+			const frontmostBefore = await captureFocusSnapshot(approval, toolTimeoutMs, maxTextChars, signal);
 			const call = await client.callTool("get_app_state", { app }, { approval, timeoutMs: toolTimeoutMs, signal });
+			const frontmostAfter = await captureFocusSnapshot(approval, toolTimeoutMs, maxTextChars, signal);
 			const result = filterToolResult(call.result, {
 				includeImage: Boolean(input.includeImage),
 				saveImagePath: input.saveImagePath,
@@ -1506,8 +1645,9 @@ export default function (pi: ExtensionAPI) {
 			const diagnostics = [appendComputerUseDiagnostic(result, "get_app_state", { app })].filter((item): item is string => Boolean(item));
 			if (detail === "full") appendElementStabilityNote(result);
 			appendImageWarning(result, { includeImage: Boolean(input.includeImage), saveImagePath: input.saveImagePath });
+			const focus = focusSnapshot(frontmostBefore, frontmostAfter);
 			const transformedContent = detail === "minimal" ? minimalContent(result.content, targetScope) : detail === "compact" ? compactContent(result.content, targetScope) : result.content;
-			const outputContent = truncateTextContent(transformedContent, maxTextChars);
+			const outputContent = truncateTextContent([...transformedContent, { type: "text", text: focusSummaryText(focus, app) }], maxTextChars);
 			return {
 				content: outputContent,
 				details: bridgeDetails({
@@ -1522,6 +1662,7 @@ export default function (pi: ExtensionAPI) {
 					detail,
 					targetScope,
 					...stateSummary(result.content, targetScope),
+					focus,
 					diagnostics,
 					elements: machineElements(result.content, targetScope),
 					acceptedElicitations: call.acceptedElicitations,
@@ -1590,6 +1731,8 @@ export default function (pi: ExtensionAPI) {
 			const detail = normalizeDetail(input.detail, "compact");
 			const targetScope: TargetScope = input.targetScope === "main" ? "main" : "all";
 			const mouseBefore = hasPointerClick || hasPointerDrag ? getMousePosition() : null;
+			let mouseRestored = false;
+			const frontmostBefore = await captureFocusSnapshot(approval, toolTimeoutMs, maxTextChars, signal);
 			const results: SequencedResult[] = [];
 			const elementCache = new Map(sessionElementCache);
 			const stateCache = new Map<string, StateSummary>();
@@ -1656,13 +1799,36 @@ export default function (pi: ExtensionAPI) {
 						stepArgs = resolveElementRoleName(stepArgs, elementCache);
 						const targetWarnings = validateIndexedTarget(stepArgs, elementCache, hasStableSelector(originalStepArgs));
 						targetResolution = describeTargetResolution(originalStepArgs, stepArgs, elementCache);
-						const callArgs = stripSelectorOnlyKeys(stepArgs);
-						const call = await client.callTool(step.tool, callArgs, { approval, timeoutMs: toolTimeoutMs, signal });
-						const filtered = filterToolResult(call.result, {
+						let callTool = step.tool;
+						let callArgs = stripSelectorOnlyKeys(stepArgs);
+						if (step.tool === "set_value" && stepArgs.value === "" && typeof stepArgs.app === "string") {
+							const clearCandidates = (elementCache.get(stepArgs.app) ?? []).filter((element) => element.role === "button" && element.tags.includes("clear-control") && !element.tags.includes("risk-sensitive-control"));
+							if (clearCandidates.length === 1) {
+								const clearTarget = clearCandidates[0];
+								callTool = "perform_secondary_action";
+								callArgs = { app: stepArgs.app, element_index: clearTarget.index, action: "Press" };
+								targetResolution = `${targetResolution ?? "resolved target"}; empty set_value fallback used clear-control button element_index ${clearTarget.index} (${elementLineWithTargetHint(clearTarget)})`;
+							}
+						}
+						const call = await client.callTool(callTool, callArgs, { approval, timeoutMs: toolTimeoutMs, signal });
+						let filtered = filterToolResult(call.result, {
 							includeImage: Boolean(input.includeImage),
 							saveImagePath: index === 0 ? input.saveImagePath : undefined,
 							maxTextChars,
 						});
+						if (step.tool === "set_value" && typeof stepArgs.value === "string" && stepArgs.value.length > 0 && typeof stepArgs.app === "string") {
+							const verify = await client.callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
+							const verified = filterToolResult(verify.result, { maxTextChars });
+							updateElementCache(elementCache, stepArgs.app, verified.content);
+							updateElementCache(sessionElementCache, stepArgs.app, verified.content);
+							if (normalizeAssertionText(contentText(verified.content)).includes(normalizeAssertionText(stepArgs.value))) {
+								appendText(verified, `set_value verified in post-action app state: ${JSON.stringify(stepArgs.value)}`);
+								filtered = verified;
+							} else {
+								filtered.isError = true;
+								appendText(filtered, `set_value did not appear in post-action app state; upstream may have reported a false positive for target ${targetResolution ?? "<unknown>"}. Expected value: ${JSON.stringify(stepArgs.value)}. Try a focused keyboard fallback only when the target document/window is unambiguous.`);
+							}
+						}
 						const diagnostics = [appendComputerUseDiagnostic(filtered, step.tool, stepArgs)].filter((item): item is string => Boolean(item));
 						const afterState = stateSummary(filtered.content, targetScope);
 						updateElementCache(elementCache, stepArgs.app, filtered.content);
@@ -1672,8 +1838,9 @@ export default function (pi: ExtensionAPI) {
 						appendImageWarning(filtered, { includeImage: Boolean(input.includeImage), saveImagePath: index === 0 ? input.saveImagePath : undefined });
 						enrichActionError(filtered, stepArgs, elementCache);
 						const changed = compareState(beforeState, afterState);
+						const rawIndexTarget = originalStepArgs.element_index !== undefined || originalStepArgs.element !== undefined;
 						const nextActions = [
-							...(changed && (changed.urlChanged || changed.titleChanged || changed.visibleTextChanged) && !step.tool.startsWith("get_app_state") ? [`If the UI rerendered or navigated, call codex_cu_get_app_state({app:${JSON.stringify(stepArgs.app)}, detail:"minimal"}) before using raw element_index targets.`] : []),
+							...(rawIndexTarget && changed && (changed.urlChanged || changed.titleChanged || changed.visibleTextChanged) && !step.tool.startsWith("get_app_state") ? [`If the UI rerendered or navigated, call codex_cu_get_app_state({app:${JSON.stringify(stepArgs.app)}, detail:"minimal"}) before using raw element_index targets.`] : []),
 							...(diagnostics.length > 0 ? [`Resolve upstream Computer Use state for ${JSON.stringify(stepArgs.app)} before retrying mutating actions; use agent_browser for web/Chrome if Computer Use state keeps timing out.`] : []),
 						];
 						const row: SequencedResult = {
@@ -1734,11 +1901,14 @@ export default function (pi: ExtensionAPI) {
 					}
 				}
 			} finally {
-				if (mouseBefore) restoreMousePosition(mouseBefore);
+				if (mouseBefore) mouseRestored = restoreMousePosition(mouseBefore);
 			}
 			const mouseAfter = mouseBefore ? getMousePosition() : null;
+			const frontmostAfter = await captureFocusSnapshot(approval, toolTimeoutMs, maxTextChars, signal);
+			const focus = focusSnapshot(frontmostBefore, frontmostAfter);
+			const mousePreservation = mouseBefore ? { before: mouseBefore, after: mouseAfter, restored: mouseRestored } : undefined;
 			return {
-				content: sequenceContent(results, Boolean(input.includeImage), failed, steps.length, detail, maxTextChars),
+				content: sequenceContent(results, Boolean(input.includeImage), failed, steps.length, detail, maxTextChars, focus, defaultApp, mousePreservation),
 				details: bridgeDetails({
 					tool: "sequence",
 					threadId: client.status().threadId,
@@ -1753,6 +1923,8 @@ export default function (pi: ExtensionAPI) {
 					defaultApp: defaultApp ?? null,
 					implicitRefreshes,
 					imageSupportNote: input.includeImage ? "Image rendering is model/host dependent; saveImagePath is the reliable screenshot artifact path." : null,
+					focus,
+					pointerToolsUsed: hasPointerClick || hasPointerDrag,
 					steps: results.map((step) => ({
 						index: step.index,
 						tool: step.tool,
@@ -1771,7 +1943,7 @@ export default function (pi: ExtensionAPI) {
 						nextActions: step.nextActions,
 						elements: step.elements,
 					})),
-					mousePreservation: mouseBefore ? { before: mouseBefore, restored: mouseAfter } : null,
+					mousePreservation: mousePreservation ?? null,
 				}, client.status().stderrTail),
 			};
 		},

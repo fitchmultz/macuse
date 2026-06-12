@@ -565,7 +565,13 @@ mouse/system focus. `press_key` uses xdotool-style key names, such as `5`,
 for literal text entry. `select_text` selects by matching a text string; upstream
 Computer Use does not currently support start/end offset selection. `set_value`
 accepts `value` inside `arguments`, and pi sequences also normalize top-level
-step `value` into `arguments.value`. Per-step `expectText` /
+step `value` into `arguments.value`. Search fields normalize
+`role:"search text field"` to the parsed `role:"search"`; settable/search
+fields expose semantic `tags` and stable names even when the accessible value is
+folded into the raw line. Empty `set_value` uses a conservative clear-control
+fallback when exactly one non-risky clear/cancel button is available. Non-empty
+`set_value` is verified with a post-action state read so upstream false positives
+on text areas are reported before later assertions. Per-step `expectText` /
 `expectAbsentText` assertions strip invisible bidi marks before substring
 matching, which makes accessibility text assertions such as `text 1` reliable;
 `expectVisibleText` checks parsed visible text values directly, such as `0` or
@@ -578,13 +584,16 @@ output where possible. Sequence `detail: "minimal"` suppresses successful action
 and state bodies for lower-token action logs while still showing assertion pass
 snippets, target resolution, stale-index warnings, changed-state summaries, and
 failure evidence; `compact` remains the default and `full` keeps raw trees.
-Sequence wait helper pseudo-tools (`waitForText` for parsed visible text,
-`waitForElement`, `waitUntilElementEnabled`, `waitUntilElementDisabled`, and
-best-effort `waitForURL` / `waitForTitle`) poll `get_app_state` and reduce
-manual sleep / resnapshot loops. `get_app_state` and sequence `get_app_state`
-step details
+Sequence wait helper pseudo-tools (`waitForText` for parsed visible text or raw
+text-entry values, `waitForElement`, `waitUntilElementEnabled`,
+`waitUntilElementDisabled`, and best-effort `waitForURL` / `waitForTitle`) poll
+`get_app_state` and reduce manual sleep / resnapshot loops. `get_app_state` and
+sequence output include focus summaries (`before`, `after`, `frontmostChanged`,
+and target-app frontmost checks) so background-control runs can prove whether the
+target app stole focus. `get_app_state` and sequence `get_app_state` step details
 include machine-readable parsed element metadata with target hints, `visibleText`,
-`targets`, `changed`, `warnings`, and `nextActions` where available.
+`targets`, semantic `tags`, `changed`, `warnings`, and `nextActions` where
+available.
 `includeImage` is model/host dependent; use `saveImagePath` when screenshot
 artifacts must be reliable. When upstream Computer Use returns timeout errors
 such as `-10005 timeoutReached`, macuse now annotates the result with a clear

@@ -174,14 +174,21 @@ persistent `codex_cu_sequence` wrapper requires or enforces:
   failure evidence; `detail: "compact"` remains the default and `detail: "full"`
   keeps raw trees. `targetScope: "main"` suppresses likely chrome/window controls
   in transformed output where possible
-- sequence wait helper pseudo-tools (`waitForText` for parsed visible text,
-  `waitForElement`, `waitUntilElementEnabled`, `waitUntilElementDisabled`, plus
-  best-effort `waitForURL` / `waitForTitle`) that poll `get_app_state` instead
-  of requiring manual sleeps
+- sequence wait helper pseudo-tools (`waitForText` for parsed visible text or
+  raw text-entry values, `waitForElement`, `waitUntilElementEnabled`,
+  `waitUntilElementDisabled`, plus best-effort `waitForURL` / `waitForTitle`)
+  that poll `get_app_state` instead of requiring manual sleeps
+- focus summaries on read and sequence outputs (`before`, `after`,
+  `frontmostChanged`, and target-app frontmost checks), plus pointer mouse
+  restoration evidence when pointer tools are used
 - machine-readable parsed state and element metadata in tool result `details`,
   including `visibleText`, `targets`/`elements`, target hints, stable IDs,
-  descriptions, role/name, disabled state, changed-state summaries, warnings,
-  and next-action hints where Computer Use exposes enough accessibility evidence
+  descriptions, role/name, value, semantic tags (`settable-field`,
+  `search-field`, `clear-control`, `risk-sensitive-control`), disabled state,
+  changed-state summaries, warnings, and next-action hints where Computer Use
+  exposes enough accessibility evidence
+- search-field role normalization and conservative empty-`set_value` clear
+  fallback when a single non-risky clear/cancel control is available
 - extension-level refusal of mutating calls unless `allowMutating: true` is passed
 
 The app-server-backed standard MCP wrapper at
