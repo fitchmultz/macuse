@@ -914,7 +914,8 @@ function stripSelectorOnlyKeys(args: Record<string, JsonValue>): Record<string, 
 function describeTargetResolution(originalArgs: Record<string, JsonValue>, resolvedArgs: Record<string, JsonValue>, cache: Map<string, ElementInfo[]>): string | undefined {
 	if (typeof resolvedArgs.app !== "string" || typeof resolvedArgs.element_index !== "string") return undefined;
 	const element = (cache.get(resolvedArgs.app) ?? []).find((item) => item.index === resolvedArgs.element_index);
-	const identity = element ? `role=${JSON.stringify(element.role)}, name=${JSON.stringify(element.name)}, id=${JSON.stringify(element.id ?? null)}, description=${JSON.stringify(element.description ?? null)}, value=${JSON.stringify(element.value ?? null)}` : "";
+	const tags = element?.tags.length ? `, tags=${JSON.stringify(element.tags)}` : "";
+	const identity = element ? `role=${JSON.stringify(element.role)}, name=${JSON.stringify(element.name)}, id=${JSON.stringify(element.id ?? null)}, description=${JSON.stringify(element.description ?? null)}, value=${JSON.stringify(element.value ?? null)}${tags}` : "";
 	const resolved = `resolved target: element_index ${resolvedArgs.element_index}${element ? ` (${identity}; ${elementTargetHint(element)})` : ""}`;
 	if (!Array.isArray(originalArgs.targets)) return hasElementTarget(originalArgs) ? resolved : undefined;
 	const targetIndex = originalArgs.targets.findIndex((target) => {
@@ -1857,6 +1858,43 @@ function assertionSummary(step: SequencedResult): string | null {
 	return lines.length > 0 ? lines.join("\n") : null;
 }
 
+function sequenceTargetMethod(step: SequencedResult): string {
+	if (step.tool === "get_app_state" || isWaitTool(step.tool)) return "read-only";
+	const resolution = step.targetResolution ?? "";
+	if (resolution.includes("targets[")) return "targets fallback";
+	if (resolution.includes("elementId")) return "elementId";
+	if (resolution.includes("elementDescription")) return "elementDescription";
+	if (resolution.includes("role=") && resolution.includes("name=")) return "role/name";
+	if (resolution.includes("element_index")) return "element_index";
+	if (step.tool === "press_key" || step.tool === "type_text") return "keyboard/text";
+	return "none";
+}
+
+function sequenceRunSummary(steps: SequencedResult[], failed: SequenceFailure | null, focus?: FocusSnapshot, mousePreservation?: { before: MousePosition; after: MousePosition | null; restored: boolean }): string {
+	const apps = [...new Set(steps.map((step) => typeof step.arguments.app === "string" ? step.arguments.app : null).filter((app): app is string => Boolean(app)))];
+	const actionSteps = steps.filter((step) => !READ_ONLY_TOOLS.has(step.tool));
+	const finalStep = [...steps].reverse().find((step) => step.visibleText.length > 0) ?? steps.at(-1);
+	const finalVisible = finalStep?.visibleText.slice(0, 8) ?? [];
+	const tagMatches = steps.flatMap((step) => [...(step.targetResolution?.matchAll(/tags=\[(.*?)\]/g) ?? [])].map((match) => match[1] ?? ""));
+	const tags = [...new Set(tagMatches.flatMap((match) => match.split(",").map((item) => item.replace(/["\s]/g, "")).filter(Boolean)))];
+	const readbackDrift = steps
+		.filter((step, index) => index > 0 && step.tool === "get_app_state" && Boolean(step.changed?.visibleTextChanged))
+		.slice(0, 3)
+		.map((step) => `step ${step.index + 1} readback changed visible text`);
+	const lines = [
+		"Run summary:",
+		`- apps: ${apps.length ? apps.join(", ") : "<none>"}`,
+		`- actions: ${actionSteps.length ? actionSteps.map((step) => `${step.index + 1}:${step.tool}/${sequenceTargetMethod(step)}`).join(", ") : "none (read-only)"}`,
+		`- safety tags on resolved targets: ${tags.length ? tags.join(", ") : "none reported"}`,
+		`- final visible text: ${finalVisible.length ? JSON.stringify(finalVisible.join(" | ")) : "<none parsed>"}`,
+		...(focus ? [`- focus: before=${focus.before?.map((app) => app.name).join(", ") || "<unknown>"}; after=${focus.after?.map((app) => app.name).join(", ") || "<unknown>"}; changed=${focus.changed ?? "unknown"}`] : []),
+		...(mousePreservation ? [`- mouse: restored=${mousePreservation.restored}`] : []),
+		...(failed ? [`- failure: step ${failed.stepNumber} ${failed.tool}: ${failed.message}`] : []),
+		...(readbackDrift.length ? [`- anomaly hints: ${readbackDrift.join("; ")}`] : []),
+	];
+	return lines.join("\n");
+}
+
 function sequenceContent(steps: SequencedResult[], includeImages = false, failed: SequenceFailure | null = null, totalSteps = steps.length, detail: DetailMode = "compact", maxTextChars = DEFAULT_MAX_TEXT_CHARS, focus?: FocusSnapshot, targetApp?: string, mousePreservation?: { before: MousePosition; after: MousePosition | null; restored: boolean }): ContentBlock[] {
 	if (steps.length === 0) return [{ type: "text", text: "Computer Use sequence returned no steps." }];
 	const completedStepCount = failed ? failed.index : steps.length;
@@ -1865,8 +1903,9 @@ function sequenceContent(steps: SequencedResult[], includeImages = false, failed
 		: `Sequence completed ${steps.length} of ${totalSteps} step${totalSteps === 1 ? "" : "s"}.`;
 	const focusLine = focus ? `\n${focusSummaryText(focus, targetApp)}` : "";
 	const mouseLine = mousePreservation ? `\nMouse preservation: before=(${mousePreservation.before.x},${mousePreservation.before.y}); after=(${mousePreservation.after?.x ?? "unknown"},${mousePreservation.after?.y ?? "unknown"}); restored=${mousePreservation.restored}` : "";
+	const runSummary = sequenceRunSummary(steps, failed, focus, mousePreservation);
 	const orderedSteps = failed ? [steps[failed.index], ...steps.filter((step) => step.index !== failed.index)].filter((step): step is SequencedResult => Boolean(step)) : steps;
-	const text = `${summary}${focusLine}${mouseLine}\n\n${orderedSteps.map((step) => {
+	const text = `${summary}${focusLine}${mouseLine}\n\n${runSummary}\n\n${orderedSteps.map((step) => {
 		const header = `Step ${step.index + 1} (index ${step.index}): ${step.tool} (${step.durationMs}ms, isError=${step.result.isError}, elicitations=${step.elicitationCount}, accepted=${step.acceptedElicitations})`;
 		const diagnostics = [
 			step.targetResolution,
