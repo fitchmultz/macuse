@@ -18,6 +18,7 @@ const DEFAULT_CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex";
 const DEFAULT_TOOL_TIMEOUT_MS = 90_000;
 const DEFAULT_MAX_TEXT_CHARS = 20_000;
 const WAIT_TOOLS = new Set(["waitForText", "waitForURL", "waitForTitle", "waitForElement", "waitUntilElementEnabled", "waitUntilElementDisabled"]);
+const UPSTREAM_COMPUTER_USE_TOOLS = ["click", "drag", "get_app_state", "list_apps", "perform_secondary_action", "press_key", "scroll", "select_text", "set_value", "type_text"] as const;
 const READ_ONLY_TOOLS = new Set(["list_apps", "get_app_state", ...WAIT_TOOLS]);
 const APP_SCOPED_TOOLS = new Set([
 	"get_app_state",
@@ -47,6 +48,15 @@ type ComputerUseToolResult = {
 	is_error?: boolean;
 	_meta?: JsonValue;
 	meta?: JsonValue;
+};
+
+type ComputerUseInventory = {
+	present: boolean;
+	authStatus: string | null;
+	toolNames: string[];
+	toolCount: number;
+	missingTools: string[];
+	checkedAt: string | null;
 };
 
 type SavedImageArtifact = {
@@ -1342,6 +1352,28 @@ function parseJsonMessage(line: string): JsonRpcMessage | null {
 	}
 }
 
+function summarizeComputerUseInventory(statusResult: unknown): ComputerUseInventory {
+	const servers = isRecord(statusResult) && Array.isArray(statusResult.data) ? statusResult.data : [];
+	const server = servers.find((candidate) => isRecord(candidate) && candidate.name === "computer-use");
+	if (!isRecord(server)) {
+		return { present: false, authStatus: null, toolNames: [], toolCount: 0, missingTools: [...UPSTREAM_COMPUTER_USE_TOOLS], checkedAt: new Date().toISOString() };
+	}
+	const tools = isRecord(server.tools) ? Object.keys(server.tools).sort() : [];
+	return {
+		present: true,
+		authStatus: typeof server.authStatus === "string" ? server.authStatus : null,
+		toolNames: tools,
+		toolCount: tools.length,
+		missingTools: UPSTREAM_COMPUTER_USE_TOOLS.filter((tool) => !tools.includes(tool)),
+		checkedAt: new Date().toISOString(),
+	};
+}
+
+function mergeComputerUseInventories(current: ComputerUseInventory, next: ComputerUseInventory): ComputerUseInventory {
+	if (current.present) return current;
+	return next;
+}
+
 class AppServerClient {
 	private proc: ChildProcessWithoutNullStreams | null = null;
 	private nextId = 1;
@@ -1360,6 +1392,7 @@ class AppServerClient {
 	private processRecord: ProcessRecord | null = null;
 	private watchdog: ChildProcess | null = null;
 	private staleReapSummary: ReapSummary[] = [];
+	private computerUseInventory: ComputerUseInventory | null = null;
 
 	constructor(private readonly codexBin = process.env.CODEX_BIN || DEFAULT_CODEX_BIN, private readonly cwd = process.cwd()) {
 		this.staleReapSummary = reapStaleAppServers(this.cwd, this.codexBin);
@@ -1377,6 +1410,7 @@ class AppServerClient {
 			registryDir: PROCESS_REGISTRY_DIR,
 			staleReapSummary: this.staleReapSummary,
 			threadId: this.thread?.id ?? null,
+			computerUse: this.computerUseInventory,
 			acceptedElicitations: this.acceptedElicitations,
 			elicitationCount: this.elicitationCount,
 			notifications: this.notifications.slice(-10),
@@ -1427,9 +1461,10 @@ class AppServerClient {
 
 		this.initialized = await this.request("initialize", {
 			clientInfo: { name: "pi-macuse-computer-use", version: VERSION },
-			capabilities: { experimental_api: true, mcp_elicitations: true },
+			capabilities: { experimentalApi: true, requestAttestation: false },
 		}, Math.min(timeoutMs, 15_000), signal);
 		this.notify("notifications/initialized");
+		await this.verifyComputerUseInventory(Math.min(Math.max(timeoutMs, 10_000), 30_000), signal);
 		const threadStart = await this.request("thread/start", {
 			cwd: this.cwd,
 			ephemeral: true,
@@ -1446,6 +1481,26 @@ class AppServerClient {
 		const thread = isRecord(threadStart) && isRecord(threadStart.thread) ? threadStart.thread : null;
 		if (typeof thread?.id !== "string") throw new ComputerUseError("thread/start response did not include thread.id", threadStart);
 		this.thread = thread as AppServerThread;
+	}
+
+	private async verifyComputerUseInventory(timeoutMs: number, signal?: AbortSignal): Promise<void> {
+		const deadline = Date.now() + timeoutMs;
+		let cursor: string | null = null;
+		let inventory: ComputerUseInventory = { present: false, authStatus: null, toolNames: [], toolCount: 0, missingTools: [...UPSTREAM_COMPUTER_USE_TOOLS], checkedAt: null };
+		for (let page = 0; page < 10; page += 1) {
+			const remaining = Math.max(1_000, deadline - Date.now());
+			if (remaining <= 1_000 && page > 0) break;
+			const params: Record<string, unknown> = { detail: "toolsAndAuthOnly", limit: 100 };
+			if (cursor) params.cursor = cursor;
+			const status = await this.request("mcpServerStatus/list", params, Math.min(remaining, 10_000), signal);
+			inventory = mergeComputerUseInventories(inventory, summarizeComputerUseInventory(status));
+			const nextCursor = isRecord(status) && typeof status.nextCursor === "string" ? status.nextCursor : null;
+			if (inventory.present || !nextCursor) break;
+			cursor = nextCursor;
+		}
+		this.computerUseInventory = inventory;
+		if (!inventory.present) throw new ComputerUseError("Codex app-server did not list the computer-use MCP server.", inventory);
+		if (inventory.missingTools.length > 0) throw new ComputerUseError(`Computer Use MCP server is missing required tools: ${inventory.missingTools.join(", ")}`, inventory);
 	}
 
 	private onStdout(chunk: string): void {
@@ -1521,6 +1576,7 @@ class AppServerClient {
 		this.proc = null;
 		this.thread = null;
 		this.initialized = null;
+		this.computerUseInventory = null;
 		if (this.processRecord) safeUnlink(this.processRecord.pidFile);
 		this.processRecord = null;
 		this.watchdog = null;
@@ -1606,6 +1662,7 @@ class AppServerClient {
 		this.proc = null;
 		this.thread = null;
 		this.initialized = null;
+		this.computerUseInventory = null;
 		this.processRecord = null;
 		this.watchdog = null;
 		if (record) safeUnlink(record.pidFile);
@@ -1836,7 +1893,8 @@ export default function (pi: ExtensionAPI) {
 		handler: async (_args, ctx) => {
 			const status = client.status();
 			const reaped = status.staleReapSummary.filter((item) => item.action === "reaped-orphan").length;
-			ctx.ui.notify(`macuse ${status.running ? "running" : "stopped"}${status.threadId ? ` thread=${status.threadId}` : ""}${status.processPid ? ` pid=${status.processPid}` : ""}${status.watchdogPid ? ` watchdog=${status.watchdogPid}` : ""}${reaped ? ` reaped=${reaped}` : ""}`, status.running ? "info" : "warning");
+			const computerUse = status.computerUse ? ` computer-use=${status.computerUse.present ? `${status.computerUse.toolCount} tools` : "missing"}${status.computerUse.missingTools.length ? ` missing=${status.computerUse.missingTools.join(",")}` : ""}` : "";
+			ctx.ui.notify(`macuse ${status.running ? "running" : "stopped"}${status.threadId ? ` thread=${status.threadId}` : ""}${status.processPid ? ` pid=${status.processPid}` : ""}${status.watchdogPid ? ` watchdog=${status.watchdogPid}` : ""}${computerUse}${reaped ? ` reaped=${reaped}` : ""}`, status.running ? "info" : "warning");
 		},
 	});
 

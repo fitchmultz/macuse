@@ -630,6 +630,7 @@ async function main() {
   requireOk('app-server status', status);
   const computerUse = status.computerUse ?? status.status?.servers?.find((server) => server.name === 'computer-use');
   if (!computerUse?.present && !computerUse?.toolNames) throw new Error('app-server status did not include computer-use');
+  if (Array.isArray(computerUse.missingTools) && computerUse.missingTools.length > 0) throw new Error(`app-server status missing Computer Use tools: ${computerUse.missingTools.join(', ')}`);
   printPass('app-server status', `${computerUse.toolCount ?? computerUse.toolNames?.length ?? 0} tools`);
 
   if (opts.mode === 'read-only' || opts.mode === 'mutating' || opts.mode === 'focus') {

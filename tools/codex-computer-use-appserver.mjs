@@ -13,6 +13,7 @@ const DEFAULT_SHUTDOWN_TIMEOUT_MS = 3000;
 const DEFAULT_MAX_TEXT_CHARS = 20000;
 const DEFAULT_COMPUTER_USE_PLUGIN_ROOT = '/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use';
 const FEATURE_FLAGS = ['computer_use', 'plugins', 'tool_call_mcp_elicitation'];
+const EXPECTED_COMPUTER_USE_TOOLS = ['click', 'drag', 'get_app_state', 'list_apps', 'perform_secondary_action', 'press_key', 'scroll', 'select_text', 'set_value', 'type_text'];
 
 const EXIT = Object.freeze({
   OK: 0,
@@ -738,11 +739,13 @@ function summarizeStatus(statusResult) {
 function summarizeComputerUseStatus(statusResult) {
   const server = (statusResult.data || []).find((candidate) => candidate.name === 'computer-use');
   const summarized = server ? summarizeServer(server) : null;
+  const toolNames = summarized?.toolNames ?? [];
   return {
     present: Boolean(summarized),
     authStatus: summarized?.authStatus ?? null,
-    toolCount: summarized?.toolNames?.length ?? 0,
-    toolNames: summarized?.toolNames ?? [],
+    toolCount: toolNames.length,
+    toolNames,
+    missingTools: EXPECTED_COMPUTER_USE_TOOLS.filter((tool) => !toolNames.includes(tool)),
     resourceCount: summarized?.resourceCount ?? 0,
     resourceTemplateCount: summarized?.resourceTemplateCount ?? 0,
   };
@@ -754,7 +757,7 @@ async function runWithThread(opts, fn) {
     client.start();
     const initialized = await client.request('initialize', {
       clientInfo: { name: 'macuse-codex-computer-use-bridge', version: VERSION },
-      capabilities: { experimental_api: true, mcp_elicitations: true },
+      capabilities: { experimentalApi: true, requestAttestation: false },
     }, opts.startupTimeoutMs);
     client.notify('notifications/initialized');
     const threadStart = await client.request('thread/start', threadStartParams(opts), opts.threadTimeoutMs);
@@ -783,7 +786,7 @@ async function runStatus(opts) {
     client.start();
     const initialized = await client.request('initialize', {
       clientInfo: { name: 'macuse-codex-computer-use-bridge', version: VERSION },
-      capabilities: { experimental_api: true, mcp_elicitations: true },
+      capabilities: { experimentalApi: true, requestAttestation: false },
     }, opts.startupTimeoutMs);
     client.notify('notifications/initialized');
     const status = await client.request('mcpServerStatus/list', { detail: 'toolsAndAuthOnly', limit: 100 }, opts.toolTimeoutMs);

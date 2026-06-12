@@ -293,12 +293,13 @@ Computer Use MCP:
 
 The host client must then:
 
-1. Send app-server `initialize` with experimental API and MCP elicitation support.
+1. Send app-server `initialize` with current camelCase capability fields, for example `capabilities: { experimentalApi: true, requestAttestation: false }`.
 2. Send `notifications/initialized`.
-3. Send `thread/start` to create an ephemeral thread with `approvalPolicy: "on-request"` so app-server can forward MCP app-approval elicitations instead of auto-denying them.
-4. Send `mcpServer/tool/call` with `threadId`, `server: "computer-use"`, the tool
+3. Optionally send `mcpServerStatus/list` with `detail: "toolsAndAuthOnly"` to verify the `computer-use` MCP server and expected tool inventory before starting work.
+4. Send `thread/start` to create an ephemeral thread with `approvalPolicy: "on-request"` so app-server can forward MCP app-approval elicitations instead of auto-denying them.
+5. Send `mcpServer/tool/call` with `threadId`, `server: "computer-use"`, the tool
    name, and tool arguments.
-5. Answer any app-server `mcpServer/elicitation/request` server-to-client
+6. Answer any app-server `mcpServer/elicitation/request` server-to-client
    requests with an explicit `accept`, `decline`, or `cancel` response.
 
 Validated app-server calls from this repo:
@@ -890,7 +891,7 @@ def wait(request_id, timeout=30):
                 if msg.get('id') == request_id:
                     return msg
     return None
-send({'jsonrpc':'2.0','id':1,'method':'initialize','params':{'clientInfo':{'name':'auth-probe','version':'0.1.0'},'capabilities':{'experimental_api':True}}})
+send({'jsonrpc':'2.0','id':1,'method':'initialize','params':{'clientInfo':{'name':'auth-probe','version':'0.1.0'},'capabilities':{'experimentalApi':True,'requestAttestation':False}}})
 wait(1)
 send({'jsonrpc':'2.0','method':'notifications/initialized','params':{}})
 send({'jsonrpc':'2.0','id':2,'method':'getAuthStatus','params':{'includeToken':True,'refreshToken':False}})
