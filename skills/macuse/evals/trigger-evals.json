@@ -1,0 +1,32 @@
+[
+  {
+    "query": "Use macuse to inspect Calculator without stealing focus.",
+    "should_trigger": true,
+    "reason": "Directly asks to use macuse for local macOS app inspection."
+  },
+  {
+    "query": "Dogfood the Computer Use extension on Finder and report pain points.",
+    "should_trigger": true,
+    "reason": "Requests macuse/Computer Use dogfood against native macOS apps."
+  },
+  {
+    "query": "Use codex_cu_sequence to press Calculator buttons and verify the result.",
+    "should_trigger": true,
+    "reason": "Names a macuse tool and asks for safe local app control."
+  },
+  {
+    "query": "Open this website and fill the signup form in the browser DOM.",
+    "should_trigger": false,
+    "reason": "Ordinary web-page automation should use browser tooling, not macuse native app control."
+  },
+  {
+    "query": "Change the pi extension lifecycle code and update package metadata.",
+    "should_trigger": false,
+    "reason": "Generic pi extension development should use the pi extension development workflow, not the macuse usage skill."
+  },
+  {
+    "query": "Probe raw SkyComputerUseClient MCP and compare protocol messages.",
+    "should_trigger": false,
+    "reason": "Raw MCP protocol investigation is outside the macuse tool-use workflow."
+  }
+]

@@ -70,6 +70,8 @@ The project-local pi extension keeps a persistent Codex app-server thread for th
 
 The persistent session avoids spawning the bridge for every pi tool call. On startup it uses app-server `mcpServerStatus/list` with `detail: "toolsAndAuthOnly"` to fail fast if the `computer-use` MCP server or its expected 10-tool inventory is missing; `/macuse-status` reports the cached inventory once running. Use `/macuse-stop` to stop the app-server process while leaving it available for lazy restart on the next tool call, and `/macuse-restart` to stop-and-lazily-restart after a suspected stale Computer Use state. The extension writes a macOS temp PID record under `/tmp/macuse-appserver`, starts a small watchdog, and reaps only matching macuse-owned orphaned `codex app-server` processes on startup; it does not try to own or kill Codex's global `SkyComputerUseService`. Use `codex_cu_list_apps({ runningOnly: true })` for a short currently-running app list.
 
+The package also ships `/skill:macuse`, a small Agent Skill that teaches agents the safe default macuse workflow, target-selection order, mutation guardrails, and evidence to report when using the `codex_cu_*` tools.
+
 ## Pi tool cookbook
 
 List running apps:

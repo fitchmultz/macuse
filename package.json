@@ -23,7 +23,8 @@
     "configs",
     "docs",
     "README.md",
-    "AGENTS.md"
+    "AGENTS.md",
+    "skills"
   ],
   "bin": {
     "macuse-doctor": "tools/macuse-doctor.mjs",
@@ -33,6 +34,9 @@
   "pi": {
     "extensions": [
       "./extensions/codex-computer-use.ts"
+    ],
+    "skills": [
+      "./skills"
     ]
   },
   "scripts": {
