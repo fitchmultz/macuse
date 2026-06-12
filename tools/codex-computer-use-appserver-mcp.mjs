@@ -242,7 +242,7 @@ class AppServerClient {
       this.pending.clear();
       this.threadId = null;
     });
-    await this.request('initialize', { clientInfo: { name: 'macuse-appserver-mcp', version: VERSION }, capabilities: { experimental_api: true, mcp_elicitations: true } }, 15_000);
+    await this.request('initialize', { clientInfo: { name: 'macuse-appserver-mcp', version: VERSION }, capabilities: { experimentalApi: true, requestAttestation: false } }, 15_000);
     this.notify('notifications/initialized', {});
     const start = await this.request('thread/start', {
       cwd: this.cwd,

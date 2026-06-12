@@ -385,7 +385,7 @@ function normalizeRole(value: string): string {
 }
 
 function parseElementRole(body: string): string {
-	const match = body.match(/^(standard window|split group|container|scroll area|text entry area|secure text field|search text field|text field|edit field|close button|zoom button|minimize button|radio button|menu bar|menu item|button|checkbox|slider|combo box|tab|link|row|text|toolbar|group|web area|search)\b/i);
+	const match = body.match(/^(standard window|split group|container|scroll area|text entry area|secure text field|search text field|text field|edit field|close button|zoom button|minimize button|radio button|pop up button|menu bar|menu item|button|checkbox|switch|slider|splitter|combo box|tab|link|row|text|toolbar|group|web area|search)\b/i);
 	return normalizeRole(match?.[1] ?? body.split(/\s+/)[0] ?? "unknown");
 }
 
@@ -409,11 +409,22 @@ function stableFieldName(value: string): string {
 	return value.replace(/(\((?:settable|editable),\s*string\))\s+.+$/i, "$1").trim();
 }
 
+function stripElementAttributes(value: string): string {
+	return value.replace(/^\([^)]*\)\s*/, "").replace(/^Description:\s*/i, "").replace(/\s*\(disabled\)\s*$/i, "").trim();
+}
+
+function rolePrefixPattern(role: string): RegExp {
+	const escaped = role.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+	if (role === "search") return /^(?:search(?:\s+text\s+field)?|text\s+field)\s*/i;
+	return new RegExp(`^${escaped}\\s*`, "i");
+}
+
 function parseElementName(body: string, role: string, id?: string, description?: string): string {
 	if (description) return description;
-	const withoutRole = body.replace(new RegExp(`^${role.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*`, "i"), "").trim();
-	const beforeComma = withoutRole.split(/,\s*(?:ID:|Help:|Secondary Actions:)/)[0]?.trim() ?? "";
-	const cleaned = stableFieldName(beforeComma.replace(/^Description:\s*/i, "").replace(/\s*\(disabled\)\s*$/i, "").trim());
+	const withoutRole = body.replace(rolePrefixPattern(role), "").trim();
+	const beforeComma = withoutRole.split(/,\s*(?:ID:|Help:|Secondary Actions:|URL:|Value:|Placeholder:)/)[0]?.trim() ?? "";
+	const textFieldLike = ["text field", "search", "edit field", "text entry area", "secure text field"].includes(role);
+	const cleaned = textFieldLike ? stableFieldName(stripElementAttributes(beforeComma)) : stripElementAttributes(beforeComma);
 	return cleaned || id || role;
 }
 
@@ -431,7 +442,8 @@ function elementGroup(line: string, role: string): ElementInfo["group"] {
 	if (/\b(?:standard window|close button|zoom button|minimize button)\b/i.test(line)) return "window";
 	if (/\b(?:menu bar|toolbar)\b/i.test(line)) return "chrome";
 	if (/\b(?:tab group|tab|address|bookmark|extension|sidebar|show sidebar|mode:)\b/i.test(line)) return "chrome";
-	if (["button", "search", "text field", "edit field", "text entry area", "secure text field", "checkbox", "radio button", "slider", "combo box", "link", "row", "text", "scroll area"].includes(role)) return "content";
+	if (/\b(?:Back|Forward|Reload|Home|Bookmark this tab|View site information|Share this page|Brave Shields|Brave Rewards|Extensions|Tab Search|Control your music|Address and search bar)\b/i.test(line)) return "chrome";
+	if (["button", "pop up button", "search", "text field", "edit field", "text entry area", "secure text field", "checkbox", "switch", "radio button", "slider", "splitter", "combo box", "link", "row", "text", "scroll area"].includes(role)) return "content";
 	return "other";
 }
 
@@ -445,8 +457,8 @@ function parseElementInfo(text: string): ElementInfo[] {
 		const id = line.match(/(?:^|[\s,])ID:\s*([^,\n]+)/)?.[1]?.trim();
 		const explicitDescription = line.match(/Description:\s*([^,\n]+)/)?.[1]?.trim();
 		const role = parseElementRole(body);
-		const buttonLabel = line.match(/^\d+\s+button\s+([^,]+?)(?:,\s|$)/)?.[1]?.trim();
-		const description = explicitDescription ?? (buttonLabel && !buttonLabel.startsWith("Description:") ? stripInvisibleBidiMarks(buttonLabel) : undefined);
+		const controlLabel = ["button", "pop up button", "switch", "checkbox", "radio button", "combo box", "link"].includes(role) ? stripElementAttributes(body.replace(rolePrefixPattern(role), "").split(/,\s*(?:ID:|Help:|Secondary Actions:|URL:|Value:|Placeholder:)/)[0]?.trim() ?? "") : "";
+		const description = explicitDescription ?? (controlLabel && !controlLabel.startsWith("Description:") ? stripInvisibleBidiMarks(controlLabel) : undefined);
 		const value = role === "text" ? body.replace(/^text\s+/i, "").trim() : settableFieldValue(body);
 		const name = parseElementName(body, role, id, description);
 		const secondaryActions = line.match(/Secondary Actions:\s*([^\n]+)/)?.[1]
@@ -508,9 +520,14 @@ function prioritizedElements(elements: ElementInfo[], scope: TargetScope = "all"
 function elementStabilityNote(text: string): string | null {
 	const interactive = parseElementInfo(text).filter(isInteractiveElement);
 	if (interactive.length === 0) return null;
-	const withoutIds = interactive.filter((element) => !element.id).length;
-	if (withoutIds === 0) return null;
-	return `Note: ${withoutIds} of ${interactive.length} interactive elements lack stable IDs. Prefer elementId when present, elementDescription when shown, press_key/type_text when practical, or re-snapshot before using element_index after mutations.`;
+	const withIds = interactive.filter((element) => Boolean(element.id)).length;
+	const withDescriptions = interactive.filter((element) => !element.id && Boolean(element.description)).length;
+	const roleNameCounts = new Map<string, number>();
+	for (const element of interactive) roleNameCounts.set(`${element.role}\u0000${element.name}`, (roleNameCounts.get(`${element.role}\u0000${element.name}`) ?? 0) + 1);
+	const uniqueRoleName = interactive.filter((element) => !element.id && !element.description && (roleNameCounts.get(`${element.role}\u0000${element.name}`) ?? 0) === 1).length;
+	const rawIndexOnly = interactive.length - withIds - withDescriptions - uniqueRoleName;
+	if (rawIndexOnly === 0 && withIds === interactive.length) return null;
+	return `Target stability: ${interactive.length} interactive elements; elementId=${withIds}; elementDescription=${withDescriptions}; unique role/name=${uniqueRoleName}; raw index only=${rawIndexOnly}. Prefer elementId, then elementDescription, then unique role/name or press_key/type_text; use element_index with expectedRole/expectedName guards after mutations.`;
 }
 
 function compactText(text: string, scope: TargetScope = "all"): string {

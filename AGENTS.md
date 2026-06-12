@@ -16,6 +16,10 @@ This repo investigates OpenAI Codex Computer Use reuse from non-Codex agents suc
 - Local install facts: `docs/reference/codex-computer-use-local-install.md`
 - Safety policy: `docs/reference/codex-computer-use-safety-policy.md`
 
+## Development policy
+
+- No backwards-compatibility shims for Codex app-server, Computer Use, or pi extension APIs during development. Cut fully to the protocol and runtime shape required by the currently installed pi and Codex Computer Use versions, update all repo tools/docs/tests together, and remove stale aliases instead of carrying compatibility paths.
+
 ## Safety
 
 - Read-only Computer Use probes are allowed: `list_apps` and `get_app_state`.
