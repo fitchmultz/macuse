@@ -1,6 +1,6 @@
 # Computer Use parity matrix
 
-Source: Local `macuse` probes against Codex app-server, the project-local pi extension, and the app-server-backed MCP wrapper.
+Source: Local `macuse` probes against Codex app-server, the packaged pi extension, and the app-server-backed MCP wrapper.
 Created: May 22, 2026
 Status: Current working parity tracker; refresh after Codex or Computer Use updates.
 

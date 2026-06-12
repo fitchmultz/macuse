@@ -40,7 +40,7 @@ What is proven:
 - A controlled TextEdit scroll probe against `/tmp/macuse-scroll-test.txt` returned successful `scroll down` and `scroll up` steps for scroll area element `1`; screenshot hashes changed across the sequence.
 - Controlled TextEdit probes against disposable `/tmp/macuse-type-test.txt` and `/tmp/macuse-set-value-test.txt` succeeded for `type_text` and `set_value`, with saved file contents matching the expected probe strings.
 - A controlled TextEdit selection probe against `/tmp/macuse-select-test.txt` succeeded for `select_text` with prefix/suffix disambiguation; file contents were unchanged.
-- This repository now includes both a CLI bridge and a project-local pi extension
+- This repository now includes both a CLI bridge and a packaged pi extension
   that expose the working app-server path. The pi extension keeps a persistent
   app-server thread for the session and provides a sequence wrapper for mutating
   flows.
@@ -515,13 +515,13 @@ node tools/codex-computer-use-appserver.mjs list-apps --quiet --pretty
 node tools/codex-computer-use-appserver.mjs get-state --app Calculator --quiet --pretty
 ```
 
-The project-local pi extension is:
+The installable pi extension source is:
 
 ```text
-.pi/extensions/codex-computer-use.ts
+extensions/codex-computer-use.ts
 ```
 
-It registers two standalone read-only pi tools and one persistent-session sequence tool:
+It is declared through `package.json#pi.extensions` and registers two standalone read-only pi tools plus one persistent-session sequence tool:
 
 - `codex_cu_list_apps`
 - `codex_cu_get_app_state`
@@ -731,9 +731,7 @@ Reusable now for broad pi operation:
 - Codex app-server supplies the thread/session/lifecycle wrapper that direct raw
   MCP was missing in these probes.
 - The Codex skill and app-specific instruction files are available locally.
-- pi can load `.pi/extensions/codex-computer-use.ts` and expose standalone
-  read-only tools plus the persistent-session `codex_cu_sequence` tool backed by
-  a live Codex app-server thread.
+- pi can load `extensions/codex-computer-use.ts` through the package manifest and expose standalone read-only tools plus the persistent-session `codex_cu_sequence` tool backed by a live Codex app-server thread.
 - A harmless Calculator mutating smoke test has passed through the app-server
   sequence path.
 

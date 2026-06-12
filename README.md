@@ -62,7 +62,7 @@ node tools/codex-computer-use-appserver.mjs list-apps --running-only --filter Ca
 node tools/codex-computer-use-appserver.mjs get-state --app Calculator --quiet --pretty
 ```
 
-The project-local pi extension keeps a persistent Codex app-server thread for the session and registers:
+The packaged pi extension keeps a persistent Codex app-server thread for the session and registers:
 
 - `codex_cu_list_apps`
 - `codex_cu_get_app_state`
@@ -117,7 +117,7 @@ Save a screenshot artifact:
 
 Tool details include saved image path, bytes, SHA-256, width, and height when an image is saved.
 
-The installable extension source lives at `extensions/codex-computer-use.ts` and is declared in `package.json#pi.extensions`. The project-local `.pi/extensions/codex-computer-use.ts` file is only a dogfood shim for checkout development and `/reload`.
+The installable extension source lives at `extensions/codex-computer-use.ts` and is declared in `package.json#pi.extensions`. This package also declares `skills/` in `package.json#pi.skills`; there is no project-local `.pi/extensions` shim.
 
 For local global install testing from this checkout:
 

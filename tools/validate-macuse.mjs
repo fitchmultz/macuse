@@ -142,7 +142,7 @@ function runPiExtensionSmoke(verbose) {
   const script = String.raw`
 const { createJiti } = require('jiti');
 const jiti = createJiti(process.cwd() + '/validate-extension.js', { interopDefault: true });
-const mod = jiti('./.pi/extensions/codex-computer-use.ts');
+const mod = jiti('./extensions/codex-computer-use.ts');
 const factory = mod.default || mod;
 const tools = [];
 factory({
@@ -174,7 +174,7 @@ function runPiExtensionPersistentSmoke(verbose) {
   const script = String.raw`
 const { createJiti } = require('jiti');
 const jiti = createJiti(process.cwd() + '/validate-extension-persistent.js', { interopDefault: true });
-const mod = jiti('./.pi/extensions/codex-computer-use.ts');
+const mod = jiti('./extensions/codex-computer-use.ts');
 const factory = mod.default || mod;
 const tools = new Map();
 const commands = new Map();
@@ -233,7 +233,7 @@ function runPiExtensionElementTargetSmoke(verbose) {
   const script = String.raw`
 const { createJiti } = require('jiti');
 const jiti = createJiti(process.cwd() + '/validate-extension-element-targets.js', { interopDefault: true });
-const mod = jiti('./.pi/extensions/codex-computer-use.ts');
+const mod = jiti('./extensions/codex-computer-use.ts');
 const factory = mod.default || mod;
 const tools = new Map();
 const handlers = new Map();

@@ -3,7 +3,7 @@
 Source: Local policy for this `macuse` investigation, based on the installed Codex Computer Use skill, OpenAI's Computer Use docs snapshot, and local bridge behavior.
 Author: Local investigation notes
 Created: May 22, 2026
-Status: Active guardrails for the project-local pi extension; read-only tools and a persistent-session sequence tool are enabled
+Status: Active guardrails for the packaged pi extension; read-only tools and a persistent-session sequence tool are enabled
 
 ## Current allowed scope
 
@@ -27,7 +27,7 @@ Not allowed as always-on standalone tools:
 - `select_text`
 - `perform_secondary_action`
 
-The project-local pi extension exposes standalone read-only tools plus one
+The packaged pi extension exposes standalone read-only tools plus one
 persistent-session sequence tool. It does not expose standalone mutating tools.
 
 ## Preconditions before any mutating action

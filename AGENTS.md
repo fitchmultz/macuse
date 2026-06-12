@@ -11,7 +11,6 @@ This repo investigates OpenAI Codex Computer Use reuse from non-Codex agents suc
 - Standard MCP wrapper for Cursor/non-pi clients: `tools/codex-computer-use-appserver-mcp.mjs`
 - Direct raw-MCP probe harness: `tools/probe-codex-computer-use-mcp.mjs`
 - Installable pi extension source with persistent app-server session: `extensions/codex-computer-use.ts`
-- Project-local pi extension shim for checkout dogfooding/reload: `.pi/extensions/codex-computer-use.ts`
 - Main findings: `docs/reference/codex-computer-use-external-harness.md`
 - Local install facts: `docs/reference/codex-computer-use-local-install.md`
 - Safety policy: `docs/reference/codex-computer-use-safety-policy.md`
@@ -48,8 +47,8 @@ node --check tools/codex-computer-use-appserver.mjs
 node tools/probe-codex-computer-use-mcp.mjs discover
 node tools/probe-codex-computer-use-mcp.mjs deny --app Finder
 node tools/codex-computer-use-appserver.mjs status --quiet --pretty
-node tools/codex-computer-use-appserver.mjs list-apps --quiet --pretty
+node tools/codex-computer-use-appserver.mjs list-apps --running-only --filter Calculator --quiet --pretty
 node tools/codex-computer-use-appserver.mjs get-state --app Calculator --quiet --pretty
 ```
 
-Use `PI_OFFLINE=1 pi --no-context-files --no-skills --no-prompt-templates --no-themes --no-extensions -e .pi/extensions/codex-computer-use.ts --list-models '__no_such_model__'` as a cheap extension-load smoke test.
+Use `PI_OFFLINE=1 pi --no-context-files --no-skills --no-prompt-templates --no-themes --no-extensions -e ./extensions/codex-computer-use.ts --list-models '__no_such_model__'` as a cheap extension-load smoke test. Use `PI_OFFLINE=1 pi --approve --no-context-files --no-prompt-templates --no-themes -e . --list-models '__no_such_model__'` to smoke-load the package manifest, extension, and bundled skill together.
