@@ -565,10 +565,12 @@ function minimalText(text: string, scope: TargetScope = "all"): string {
 		.filter((item) => item.count > 0)
 		.map((item) => `${item.group}:${item.count}`)
 		.join(", ");
+	const note = elementStabilityNote(text);
 	const sections = [...header];
 	if (visibleText.length > 0) sections.push("Visible text:", ...visibleText);
 	if (targets.length > 0) sections.push("Targets:", ...targets);
 	if (omittedByGroup) sections.push(`Target groups: ${omittedByGroup}`);
+	if (note) sections.push(note);
 	return sections.join("\n") || truncateString(stripInvisibleBidiMarks(text), DEFAULT_MAX_TEXT_CHARS);
 }
 
