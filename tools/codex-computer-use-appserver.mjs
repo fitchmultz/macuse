@@ -70,7 +70,7 @@ class ChildExitError extends CliError {
 }
 
 function printHelp() {
-  process.stdout.write(`Codex Computer Use app-server bridge ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver.mjs status [--full] [options]\n  node tools/codex-computer-use-appserver.mjs list-apps [options]\n  node tools/codex-computer-use-appserver.mjs get-state --app <app> [--approval inherit|accept-all|accept-once|deny] [options]\n  node tools/codex-computer-use-appserver.mjs call --tool <tool> --arguments-json <json> [options]\n  node tools/codex-computer-use-appserver.mjs sequence --steps-json <json-array> [options]\n\nModes:\n  status\n      Start Codex app-server and print compact Computer Use status. This proves\n      the app-server can discover the Computer Use MCP server and its tools.\n      Pass --full to print every app-server MCP server for diagnostics.\n\n  list-apps\n      Call the read-only Computer Use list_apps tool through Codex app-server.\n      This is the safest positive service-backed regression probe.\n\n  get-state --app <app> [--approval inherit|accept-all|accept-once|deny]\n      Call the read-only get_app_state tool through Codex app-server.\n      Default approval=inherit auto-accepts Computer Use app-approval\n      elicitations, matching Codex's Any App setting for this external bridge.\n\n  call --tool <tool> --arguments-json <json>\n      Generic app-server-backed tool call. By default only read-only Computer\n      Use tools are allowed. Pass --allow-mutating to call click/type/scroll/etc.\n      Do not use mutating tools without an explicit task-level safety policy.\n\n  sequence --steps-json <json-array>\n      Run multiple Computer Use tool calls in one app-server thread. Each step\n      is {\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}}.\n      Steps may include label, expectText, expectAbsentText, and allowError.\n      Element-targeted tools accept element_index as a string or number,\n      element as an alias, stable elementId / element_id values, or exact\n      elementDescription / element_description matches. The bridge refreshes\n      app state before resolving stable targets and coerces indexes to strings.\n      Use this for get_app_state -> action -> get_app_state validation.\n\nOptions:\n  --codex <path>                 Codex CLI/app-server binary.\n                                 Default: ${DEFAULT_CODEX_BIN}\n                                 Env: CODEX_BIN\n  --cwd <path>                   Thread cwd. Default: current directory.\n  --app <name|bundle|path>       App for get-state.\n  --tool <name>                  Computer Use tool for call mode.\n  --arguments-json <json>        JSON object arguments for call mode.\n  --steps-json <json-array>      JSON array of sequence steps.\n  --approval <mode>              inherit, accept-all, accept-once, or deny. Default: inherit.\n  --include-image                Keep image blocks in JSON output. Default: omit.\n  --save-image <path>            Save the first returned image block to a file.\n  --max-text-chars <n>           Truncate each text block in output. Default: ${DEFAULT_MAX_TEXT_CHARS}\n  --tool-timeout-ms <ms>         Tool call timeout. Default: ${DEFAULT_TOOL_TIMEOUT_MS}\n  --startup-timeout-ms <ms>      initialize timeout. Default: ${DEFAULT_STARTUP_TIMEOUT_MS}\n  --thread-timeout-ms <ms>       thread/start timeout. Default: ${DEFAULT_THREAD_TIMEOUT_MS}\n  --shutdown-timeout-ms <ms>     app-server shutdown grace period. Default: ${DEFAULT_SHUTDOWN_TIMEOUT_MS}\n  --allow-mutating               Permit call/sequence mode to invoke non-read-only tools.\n  --preserve-mouse               Restore mouse cursor position after the call/sequence.\n  --full                         For status mode, include every app-server MCP server.\n  --pretty                       Pretty-print JSON output.\n  --quiet                        Suppress stderr event logs.\n  -h, --help                     Show this help.\n\nExit codes:\n  0  success\n  1  bridge/app-server failure\n  2  usage error\n  3  missing Codex app-server binary\n  4  timeout\n  5  child process exited unexpectedly\n\nSafety:\n  list-apps and get-state are read-only Computer Use tools, though get-state can\n  reveal screen/app contents and may launch or foreground an app. Mutating tools\n  are blocked unless --allow-mutating is explicitly passed.\n\nExamples:\n  node tools/codex-computer-use-appserver.mjs status --pretty\n  node tools/codex-computer-use-appserver.mjs status --full --pretty\n  node tools/codex-computer-use-appserver.mjs list-apps --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app Calculator --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app Calculator --include-image --save-image .scratch/calculator.jpg\n  node tools/codex-computer-use-appserver.mjs call --tool list_apps --arguments-json '{}' --pretty\n  node tools/codex-computer-use-appserver.mjs sequence --allow-mutating --steps-json '[{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}},{\"tool\":\"perform_secondary_action\",\"arguments\":{\"app\":\"Calculator\",\"elementId\":\"One\",\"action\":\"Press\"}},{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}}]'\n`);
+  process.stdout.write(`Codex Computer Use app-server bridge ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver.mjs status [--full] [options]\n  node tools/codex-computer-use-appserver.mjs list-apps [options]\n  node tools/codex-computer-use-appserver.mjs get-state --app <app> [--approval inherit|accept-all|accept-once|deny] [options]\n  node tools/codex-computer-use-appserver.mjs call --tool <tool> --arguments-json <json> [options]\n  node tools/codex-computer-use-appserver.mjs sequence --steps-json <json-array> [options]\n\nModes:\n  status\n      Start Codex app-server and print compact Computer Use status. This proves\n      the app-server can discover the Computer Use MCP server and its tools.\n      Pass --full to print every app-server MCP server for diagnostics.\n\n  list-apps\n      Call the read-only Computer Use list_apps tool through Codex app-server.\n      This is the safest positive service-backed regression probe.\n\n  get-state --app <app> [--approval inherit|accept-all|accept-once|deny]\n      Call the read-only get_app_state tool through Codex app-server.\n      Default approval=inherit auto-accepts Computer Use app-approval\n      elicitations, matching Codex's Any App setting for this external bridge.\n\n  call --tool <tool> --arguments-json <json>\n      Generic app-server-backed tool call. By default only read-only Computer\n      Use tools are allowed. Pass --allow-mutating to call click/type/scroll/etc.\n      Do not use mutating tools without an explicit task-level safety policy.\n\n  sequence --steps-json <json-array>\n      Run multiple Computer Use tool calls in one app-server thread. Each step\n      is {\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}}.\n      Steps may include label, expectText, expectAbsentText, and allowError.\n      Element-targeted tools accept element_index as a string or number,\n      element as an alias, stable elementId / element_id values, or exact\n      elementDescription / element_description matches. The bridge refreshes\n      app state before resolving stable targets and coerces indexes to strings.\n      Use this for get_app_state -> action -> get_app_state validation.\n\nOptions:\n  --codex <path>                 Codex CLI/app-server binary.\n                                 Default: ${DEFAULT_CODEX_BIN}\n                                 Env: CODEX_BIN\n  --cwd <path>                   Thread cwd. Default: current directory.\n  --app <name|bundle|path>       App for get-state.\n  --tool <name>                  Computer Use tool for call mode.\n  --arguments-json <json>        JSON object arguments for call mode.\n  --steps-json <json-array>      JSON array of sequence steps.\n  --approval <mode>              inherit, accept-all, accept-once, or deny. Default: inherit.\n  --running-only                 For list-apps, return only currently running apps.\n  --filter <text>                For list-apps, substring-filter app name/path/bundle lines.\n  --include-image                Keep image blocks in JSON output. Default: omit.\n  --save-image <path>            Save the first returned image block to a file.\n  --max-text-chars <n>           Truncate each text block in output. Default: ${DEFAULT_MAX_TEXT_CHARS}\n  --tool-timeout-ms <ms>         Tool call timeout. Default: ${DEFAULT_TOOL_TIMEOUT_MS}\n  --startup-timeout-ms <ms>      initialize timeout. Default: ${DEFAULT_STARTUP_TIMEOUT_MS}\n  --thread-timeout-ms <ms>       thread/start timeout. Default: ${DEFAULT_THREAD_TIMEOUT_MS}\n  --shutdown-timeout-ms <ms>     app-server shutdown grace period. Default: ${DEFAULT_SHUTDOWN_TIMEOUT_MS}\n  --allow-mutating               Permit call/sequence mode to invoke non-read-only tools.\n  --preserve-mouse               Restore mouse cursor position after the call/sequence.\n  --full                         For status mode, include every app-server MCP server.\n  --pretty                       Pretty-print JSON output.\n  --quiet                        Suppress stderr event logs.\n  -h, --help                     Show this help.\n\nExit codes:\n  0  success\n  1  bridge/app-server failure\n  2  usage error\n  3  missing Codex app-server binary\n  4  timeout\n  5  child process exited unexpectedly\n\nSafety:\n  list-apps and get-state are read-only Computer Use tools, though get-state can\n  reveal screen/app contents and may launch or foreground an app. Mutating tools\n  are blocked unless --allow-mutating is explicitly passed.\n\nExamples:\n  node tools/codex-computer-use-appserver.mjs status --pretty\n  node tools/codex-computer-use-appserver.mjs status --full --pretty\n  node tools/codex-computer-use-appserver.mjs list-apps --running-only --filter Calculator --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app Calculator --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app Calculator --include-image --save-image .scratch/calculator.jpg\n  node tools/codex-computer-use-appserver.mjs call --tool list_apps --arguments-json '{}' --pretty\n  node tools/codex-computer-use-appserver.mjs sequence --allow-mutating --steps-json '[{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}},{\"tool\":\"perform_secondary_action\",\"arguments\":{\"app\":\"Calculator\",\"elementId\":\"One\",\"action\":\"Press\"}},{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Calculator\"}}]'\n`);
 }
 function normalizeArgTokens(argv) {
   const tokens = [];
@@ -133,6 +133,61 @@ function contentText(content) {
     .filter((block) => block?.type === 'text' && typeof block.text === 'string')
     .map((block) => block.text)
     .join('\n');
+}
+
+function filteredAppListLines(content, opts = {}) {
+  let lines = contentText(content).split('\n').map((line) => line.trim()).filter(Boolean);
+  if (opts.runningOnly) lines = lines.filter((line) => /\[(?:[^\]]*,\s*)?(?:frontmost,\s*)?running(?:[,\]])/.test(line) || line.includes('[frontmost, running'));
+  if (opts.filter) {
+    const needle = String(opts.filter).toLowerCase();
+    lines = lines.filter((line) => line.toLowerCase().includes(needle));
+  }
+  return lines;
+}
+
+function parseAppListLine(line) {
+  const [left, flagsPart = ''] = line.split(/\s+\[([^\]]+)\]\s*$/).filter((part) => part !== undefined);
+  const parts = (left || line).split(' — ').map((part) => part.trim());
+  const flags = flagsPart.split(',').map((flag) => flag.trim()).filter(Boolean);
+  const lastUsedFlag = flags.find((flag) => /^last[- ]used:/i.test(flag));
+  return {
+    name: parts[0] || line,
+    path: parts[1] || null,
+    bundleId: parts[2] || null,
+    flags,
+    running: flags.some((flag) => flag.toLowerCase() === 'running'),
+    frontmost: flags.some((flag) => flag.toLowerCase() === 'frontmost'),
+    lastUsed: lastUsedFlag?.replace(/^last[- ]used:\s*/i, '') ?? null,
+    line,
+  };
+}
+
+function filterListAppsResult(result, opts) {
+  const lines = filteredAppListLines(result.content, opts);
+  const apps = lines.map(parseAppListLine);
+  const frontmost = apps.filter((app) => app.frontmost).map((app) => app.name).join(', ') || '<none>';
+  const summary = `Structured app summary: count=${apps.length}; frontmost=${frontmost}; fields=name,path,bundleId,flags,running,frontmost,lastUsed`;
+  return {
+    ...result,
+    content: [{ type: 'text', text: truncateString(lines.length ? `${summary}\n${lines.join('\n')}` : 'No apps matched the requested filter.', opts.maxTextChars) }],
+    apps,
+    frontmostApps: apps.filter((app) => app.frontmost),
+  };
+}
+
+function listAppsHostOptions(args, opts = {}) {
+  return {
+    runningOnly: Boolean(args?.runningOnly ?? opts.runningOnly),
+    filter: typeof args?.filter === 'string' ? args.filter : opts.filter,
+    maxTextChars: opts.maxTextChars ?? DEFAULT_MAX_TEXT_CHARS,
+  };
+}
+
+function stripListAppsHostArguments(args) {
+  const normalized = { ...args };
+  delete normalized.runningOnly;
+  delete normalized.filter;
+  return normalized;
 }
 
 function parseElementInfo(text) {
@@ -305,6 +360,8 @@ function parseArgs(argv) {
     shutdownTimeoutMs: DEFAULT_SHUTDOWN_TIMEOUT_MS,
     allowMutating: false,
     preserveMouse: false,
+    runningOnly: false,
+    filter: undefined,
     statusFull: false,
     pretty: false,
     quiet: false,
@@ -325,6 +382,8 @@ function parseArgs(argv) {
       case '--arguments-json': opts.arguments = normalizeToolArguments(parseJsonObject('--arguments-json', next())); break;
       case '--steps-json': opts.steps = normalizeSequenceSteps(parseJsonArray('--steps-json', next())); break;
       case '--approval': opts.approval = next(); break;
+      case '--running-only': opts.runningOnly = true; break;
+      case '--filter': opts.filter = next(); break;
       case '--include-image': opts.includeImage = true; break;
       case '--save-image': opts.saveImage = next(); break;
       case '--max-text-chars': opts.maxTextChars = parsePositiveInt('--max-text-chars', next()); break;
@@ -349,7 +408,7 @@ function parseArgs(argv) {
   }
   if (mode === 'list-apps') {
     opts.tool = 'list_apps';
-    opts.arguments = {};
+    opts.arguments = { runningOnly: opts.runningOnly, ...(opts.filter ? { filter: opts.filter } : {}) };
     opts.approval ??= 'inherit';
   }
   if (mode === 'call') {
@@ -675,7 +734,7 @@ function filterToolResult(result, opts) {
   return {
     content,
     isError: result?.isError ?? result?.is_error ?? false,
-    meta: result?._meta ?? result?.meta ?? null,
+    meta: opts.quiet ? null : result?._meta ?? result?.meta ?? null,
     omittedImages,
     savedImagePath,
     savedImageArtifact,
@@ -772,7 +831,7 @@ async function runWithThread(opts, fn) {
       threadId,
       elicitationCount: client.elicitations.length,
       acceptedElicitations: client.acceptedElicitations,
-      notifications: client.notifications.map((n) => ({ method: n.method, params: n.params })).slice(-20),
+      notifications: opts.quiet ? [] : client.notifications.map((n) => ({ method: n.method, params: n.params })).slice(-20),
       ...payload,
     };
   } finally {
@@ -790,7 +849,7 @@ async function runStatus(opts) {
     }, opts.startupTimeoutMs);
     client.notify('notifications/initialized');
     const status = await client.request('mcpServerStatus/list', { detail: 'toolsAndAuthOnly', limit: 100 }, opts.toolTimeoutMs);
-    const notifications = client.notifications.map((n) => ({ method: n.method, params: n.params })).slice(-20);
+    const notifications = opts.quiet ? [] : client.notifications.map((n) => ({ method: n.method, params: n.params })).slice(-20);
     if (opts.statusFull) {
       return {
         ok: true,
@@ -834,20 +893,30 @@ async function runTool(opts) {
     let args = opts.arguments;
     if (targetsElement(opts.tool, args)) await refreshElementCache(client, threadId, args, elementCache, opts);
     args = resolveElementTarget(args, elementCache);
+    const callArgs = opts.tool === 'list_apps' ? stripListAppsHostArguments(args) : args;
     const result = await client.request('mcpServer/tool/call', {
       threadId,
       server: 'computer-use',
       tool: opts.tool,
-      arguments: args,
+      arguments: callArgs,
     }, opts.toolTimeoutMs);
-    const filtered = filterToolResult(result, opts);
+    let filtered = filterToolResult(result, opts);
+    let apps = null;
+    let frontmostApps = null;
+    if (opts.tool === 'list_apps') {
+      filtered = filterListAppsResult(filtered, listAppsHostOptions(args, opts));
+      apps = filtered.apps;
+      frontmostApps = filtered.frontmostApps;
+      delete filtered.apps;
+      delete filtered.frontmostApps;
+    }
     updateElementCache(elementCache, args.app, filtered.content);
     return {
-      initialized,
-      thread: threadStart.thread,
+      ...(!opts.quiet ? { initialized, thread: threadStart.thread } : {}),
       tool: opts.tool,
       arguments: args,
       result: filtered,
+      ...(apps ? { apps, frontmostApps } : {}),
     };
   });
 }
@@ -863,13 +932,15 @@ async function runSequence(opts) {
       try {
         if (targetsElement(step.tool, stepArgs)) await refreshElementCache(client, threadId, stepArgs, elementCache, opts);
         stepArgs = resolveElementTarget(stepArgs, elementCache);
+        const callArgs = step.tool === 'list_apps' ? stripListAppsHostArguments(stepArgs) : stepArgs;
         const result = await client.request('mcpServer/tool/call', {
           threadId,
           server: 'computer-use',
           tool: step.tool,
-          arguments: stepArgs,
+          arguments: callArgs,
         }, opts.toolTimeoutMs);
-        const filtered = filterToolResult(result, opts);
+        let filtered = filterToolResult(result, opts);
+        if (step.tool === 'list_apps') filtered = filterListAppsResult(filtered, listAppsHostOptions(stepArgs, opts));
         updateElementCache(elementCache, stepArgs.app, filtered.content);
         const sequencedStep = {
           index,
@@ -912,8 +983,7 @@ async function runSequence(opts) {
     const completedStepCount = failed ? failed.index : steps.length;
     return {
       ok: !failed,
-      initialized,
-      thread: threadStart.thread,
+      ...(!opts.quiet ? { initialized, thread: threadStart.thread } : {}),
       steps,
       failed,
       failedStepIndex: failed?.index ?? null,

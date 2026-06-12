@@ -58,7 +58,7 @@ Use Codex app-server as the compatibility bridge for Computer Use calls. `status
 
 ```bash
 node tools/codex-computer-use-appserver.mjs status --quiet --pretty
-node tools/codex-computer-use-appserver.mjs list-apps --quiet --pretty
+node tools/codex-computer-use-appserver.mjs list-apps --running-only --filter Calculator --quiet --pretty
 node tools/codex-computer-use-appserver.mjs get-state --app Calculator --quiet --pretty
 ```
 
