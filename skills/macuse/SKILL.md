@@ -36,20 +36,22 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
    - unique `role`/`name`
    - `arguments.targets` fallback objects
    - raw `element_index` only with `expectedRole`/`expectedName` guards.
-4. Prefer non-pointer actions: `perform_secondary_action`, `set_value`, `press_key`, `type_text`, `select_text`, and wait helpers. Use pointer `click`/`drag` only when necessary and only with the explicit pointer allow flag.
-5. For mutations, use `codex_cu_sequence` with:
+4. For dynamic controls such as Calculator clear/all-clear buttons, prefer `arguments.targets` fallback objects that include both the stable ID and visible description, for example `[{ "elementId": "AllClear" }, { "elementDescription": "Clear" }, { "elementDescription": "All Clear" }]`.
+5. Prefer non-pointer actions: `perform_secondary_action`, `set_value`, `press_key`, `type_text`, `select_text`, and wait helpers. Use pointer `click`/`drag` only when necessary and only with the explicit pointer allow flag.
+6. For mutations, use `codex_cu_sequence` with:
    - `allowMutating: true`
    - a narrow `safetyNote`
    - before/after `get_app_state`
    - assertions such as `expectText`, `expectAbsentText`, or `expectVisibleText`
    - cleanup/restore steps when practical.
-6. Read the run summary first. Check apps touched, actions, target method, safety tags, final visible text, focus, and anomaly hints before inspecting verbose step details.
-7. If a sequence fails, use `failedStepIndex`, `completedStepCount`, and `resumeFromStepIndex`; do not blindly replay prior mutating steps.
+7. Read the run summary first. Check apps touched, actions, target method, safety tags, final visible text, focus, and anomaly hints before inspecting verbose step details.
+8. If a sequence fails, use `failedStepIndex`, `completedStepCount`, and `resumeFromStepIndex`; do not blindly replay prior mutating steps.
 
 ## Safety rules
 
 - Keep the user's frontmost app and mouse focus intact when possible. Treat focus changes as evidence to report.
 - Treat `risk-sensitive-control` tags as a stop-and-review signal, even when the requested action seems small.
+- Use `expectVisibleText` for UI-visible assertions. Use `expectText` only for app content text/value checks; it intentionally ignores macuse/upstream metadata such as CUA version headers.
 - Do not clear text, select files, open files, submit forms, or press destructive controls unless that exact operation is low-risk and covered by the safety note or user approval.
 - If Computer Use times out or state looks stale, stop mutation and report the blocker. Try `/macuse-restart`, a larger `toolTimeoutMs`, or a read-only re-snapshot before considering another action.
 

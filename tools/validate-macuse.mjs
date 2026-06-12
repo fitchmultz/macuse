@@ -304,6 +304,27 @@ factory({
   }, signal, () => {});
   if (waitTargets.details.computerUse.failed) throw new Error('pi extension waitForElement targets fallback failed');
   if (!String(waitTargets.details.computerUse.steps[0].targetResolution || '').includes('waitForElement matched')) throw new Error('pi extension waitForElement targets fallback did not report match');
+  const waitHelperAbsent = await tools.get('codex_cu_sequence').execute('wait-helper-absent', {
+    app: 'Calculator',
+    steps: [
+      { tool: 'waitForText', arguments: { text: '0', timeoutMs: 5000 }, expectAbsentText: 'waitForText matched' },
+    ],
+    detail: 'minimal',
+    maxTextChars: 2000,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  if (waitHelperAbsent.details.computerUse.failed) throw new Error('pi extension expectAbsentText incorrectly matched macuse wait helper output');
+  const waitHelperExpect = await tools.get('codex_cu_sequence').execute('wait-helper-expect', {
+    app: 'Calculator',
+    steps: [
+      { tool: 'waitForText', arguments: { text: '0', timeoutMs: 5000 }, expectText: 'waitForText matched visible text' },
+    ],
+    detail: 'minimal',
+    maxTextChars: 2000,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  if (!waitHelperExpect.details.computerUse.failed) throw new Error('pi extension expectText passed from macuse wait helper output');
+  if (!waitHelperExpect.content[0].text.includes('missing expected app content text')) throw new Error('pi extension wait-helper expectText failure did not explain app-content-only assertion');
   const negativeStarted = Date.now();
   const negativeWait = await tools.get('codex_cu_sequence').execute('negative-wait', {
     app: 'Calculator',
@@ -341,6 +362,20 @@ factory({
   }, signal, () => {});
   if ('app' in readOnlyDefaultApp.details.computerUse.steps[0].arguments) throw new Error('pi extension incorrectly applied sequence-level app to list_apps');
   if (readOnlyDefaultApp.details.computerUse.steps[1].arguments.app !== 'Calculator') throw new Error('pi extension did not apply sequence-level app to get_app_state');
+  for (const metadataText of ['CUA App Version', 'App=Calculator', '</app_state>']) {
+    const metadataOnlyExpect = await tools.get('codex_cu_sequence').execute('metadata-only-expect-text', {
+      app: 'Calculator',
+      steps: [
+        { tool: 'get_app_state', arguments: {}, expectText: metadataText },
+      ],
+      detail: 'minimal',
+      maxTextChars: 2000,
+      toolTimeoutMs: 90000,
+    }, signal, () => {});
+    if (!metadataOnlyExpect.details.computerUse.failed) throw new Error('pi extension expectText passed from metadata-only text: ' + metadataText);
+    if (!metadataOnlyExpect.content[0].text.includes('missing expected app content text')) throw new Error('pi extension metadata-only expectText failure did not use app-content-only assertion wording: ' + metadataText);
+    if (metadataText === 'CUA App Version' && !metadataOnlyExpect.content[0].text.includes('matched only macuse/upstream metadata')) throw new Error('pi extension exact metadata-only expectText failure did not explain metadata match: ' + metadataText);
+  }
   const compactElementDetails = await tools.get('codex_cu_sequence').execute('compact-element-details', {
     app: 'Calculator',
     steps: [{ tool: 'get_app_state', arguments: {} }],

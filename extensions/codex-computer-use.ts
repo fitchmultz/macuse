@@ -610,6 +610,17 @@ function normalizeAssertionText(value: string): string {
 	return stripInvisibleBidiMarks(value).normalize("NFC");
 }
 
+function assertionContentText(content: ContentBlock[] | undefined): string {
+	const values = new Set<string>();
+	for (const element of parseElementInfo(contentText(content))) {
+		values.add(element.line);
+		for (const value of [element.id, element.description, element.name, element.value]) {
+			if (value) values.add(value);
+		}
+	}
+	return [...values].join("\n");
+}
+
 function visibleTextValues(content: ContentBlock[]): string[] {
 	return parseElementInfo(contentText(content))
 		.filter((element) => /\btext\b/i.test(element.line))
@@ -759,11 +770,25 @@ function editDistance(a: string, b: string): number {
 	return previous[bb.length] ?? 0;
 }
 
+function semanticSuggestionScore(element: ElementInfo, requested: string, candidateValue: string): number {
+	const query = requested.toLowerCase().replace(/[^a-z0-9]+/g, "");
+	const label = [element.id, element.description, element.name, element.value, ...element.tags]
+		.filter((item): item is string => typeof item === "string")
+		.join(" ")
+		.toLowerCase()
+		.replace(/[^a-z0-9]+/g, "");
+	let score = editDistance(requested, candidateValue) * 10 + rankElement(element);
+	if (label && (query.includes(label) || label.includes(query))) score -= 250;
+	if ((query.includes("clear") || query.includes("allclear")) && element.tags.includes("clear-control")) score -= 500;
+	if ((query.includes("delete") || query.includes("remove")) && element.tags.includes("risk-sensitive-control")) score -= 250;
+	return score;
+}
+
 function closestElementSuggestions(elements: ElementInfo[], value: string, field: "id" | "description" | "name", limit = 3): string {
 	const candidates = elements
 		.map((element) => ({ element, value: element[field] }))
 		.filter((candidate): candidate is { element: ElementInfo; value: string } => typeof candidate.value === "string" && candidate.value.length > 0)
-		.map((candidate) => ({ ...candidate, score: editDistance(value, candidate.value) }))
+		.map((candidate) => ({ ...candidate, score: semanticSuggestionScore(candidate.element, value, candidate.value) }))
 		.sort((a, b) => a.score - b.score)
 		.slice(0, limit);
 	if (candidates.length === 0) return "";
@@ -1735,9 +1760,9 @@ function waitConditionMet(tool: string, args: Record<string, JsonValue>, result:
 		if (typeof args.text !== "string") throw new Error("waitForText requires arguments.text.");
 		const expected = normalizeAssertionText(args.text);
 		const visible = visibleTextValues(result.content);
-		const raw = normalizeAssertionText(contentText(result.content));
+		const raw = normalizeAssertionText(assertionContentText(result.content));
 		if (visible.some((value) => value.includes(expected))) return `waitForText matched visible text ${JSON.stringify(args.text)}`;
-		return raw.includes(expected) ? `waitForText matched raw app state text/value ${JSON.stringify(args.text)}` : null;
+		return raw.includes(expected) ? `waitForText matched raw app content text/value ${JSON.stringify(args.text)}` : null;
 	}
 	if (tool === "waitForURL") {
 		if (typeof args.url !== "string") throw new Error("waitForURL requires arguments.url.");
@@ -1825,14 +1850,18 @@ function validateStepResult(step: SequencedResult): void {
 	if (step.result.isError && !step.allowError) {
 		throw new ComputerUseError(`sequence step ${stepNumber} (index ${step.index}) ${step.tool} returned tool error`, step.result);
 	}
-	const text = normalizeAssertionText(toolResultText(step.result));
+	const text = normalizeAssertionText(assertionContentText(step.result.content));
+	const fullText = normalizeAssertionText(toolResultText(step.result));
 	for (const rawExpected of step.expectText || []) {
 		const expected = normalizeAssertionText(rawExpected);
-		if (!text.includes(expected)) throw new ComputerUseError(`sequence step ${stepNumber} (index ${step.index}) ${step.tool} missing expected text: ${rawExpected}`, { expected: rawExpected, normalizedExpected: expected, textPreview: truncateString(text, 1000) });
+		if (!text.includes(expected)) {
+			const metadataOnly = fullText.includes(expected);
+			throw new ComputerUseError(`sequence step ${stepNumber} (index ${step.index}) ${step.tool} missing expected app content text: ${rawExpected}${metadataOnly ? "; expected text matched only macuse/upstream metadata, not app content. Use expectVisibleText for UI-visible assertions." : ""}`, { expected: rawExpected, normalizedExpected: expected, metadataOnly, textPreview: truncateString(text, 1000) });
+		}
 	}
 	for (const rawUnexpected of step.expectAbsentText || []) {
 		const unexpected = normalizeAssertionText(rawUnexpected);
-		if (text.includes(unexpected)) throw new ComputerUseError(`sequence step ${stepNumber} (index ${step.index}) ${step.tool} contained forbidden text: ${rawUnexpected}`, { unexpected: rawUnexpected, normalizedUnexpected: unexpected, textPreview: truncateString(text, 1000) });
+		if (text.includes(unexpected)) throw new ComputerUseError(`sequence step ${stepNumber} (index ${step.index}) ${step.tool} contained forbidden app content text: ${rawUnexpected}`, { unexpected: rawUnexpected, normalizedUnexpected: unexpected, textPreview: truncateString(text, 1000) });
 	}
 	if (step.expectVisibleText.length > 0) {
 		const visible = visibleTextValues(step.result.content);
@@ -1844,7 +1873,7 @@ function validateStepResult(step: SequencedResult): void {
 }
 
 function assertionSummary(step: SequencedResult): string | null {
-	const text = normalizeAssertionText(toolResultText(step.result));
+	const text = normalizeAssertionText(assertionContentText(step.result.content));
 	const lines: string[] = [];
 	for (const rawExpected of step.expectText) {
 		const expected = normalizeAssertionText(rawExpected);
@@ -1905,7 +1934,7 @@ function sequenceContent(steps: SequencedResult[], includeImages = false, failed
 	const mouseLine = mousePreservation ? `\nMouse preservation: before=(${mousePreservation.before.x},${mousePreservation.before.y}); after=(${mousePreservation.after?.x ?? "unknown"},${mousePreservation.after?.y ?? "unknown"}); restored=${mousePreservation.restored}` : "";
 	const runSummary = sequenceRunSummary(steps, failed, focus, mousePreservation);
 	const orderedSteps = failed ? [steps[failed.index], ...steps.filter((step) => step.index !== failed.index)].filter((step): step is SequencedResult => Boolean(step)) : steps;
-	const text = `${summary}${focusLine}${mouseLine}\n\n${runSummary}\n\n${orderedSteps.map((step) => {
+	const stepText = orderedSteps.map((step) => {
 		const header = `Step ${step.index + 1} (index ${step.index}): ${step.tool} (${step.durationMs}ms, isError=${step.result.isError}, elicitations=${step.elicitationCount}, accepted=${step.acceptedElicitations})`;
 		const diagnostics = [
 			step.targetResolution,
@@ -1920,7 +1949,8 @@ function sequenceContent(steps: SequencedResult[], includeImages = false, failed
 		}
 		const shouldShowBody = detail !== "minimal" || step.result.isError;
 		return shouldShowBody ? `${header}\n${[...diagnostics, summarizeContent(step.result.content)].filter(Boolean).join("\n")}` : `${header}${diagnostics.length ? `\n${diagnostics.join("\n")}` : ""}`;
-	}).join("\n\n---\n\n")}`;
+	}).join("\n\n---\n\n");
+	const text = failed ? `${summary}${focusLine}${mouseLine}\n\n${stepText}\n\n${runSummary}` : `${summary}${focusLine}${mouseLine}\n\n${runSummary}\n\n${stepText}`;
 	const content: ContentBlock[] = [{ type: "text", text: truncateString(text, maxTextChars) }];
 	if (includeImages) {
 		for (const step of steps) {
@@ -2234,7 +2264,7 @@ export default function (pi: ExtensionAPI) {
 							const verified = filterToolResult(verify.result, { maxTextChars });
 							updateElementCache(elementCache, stepArgs.app, verified.content);
 							updateElementCache(sessionElementCache, stepArgs.app, verified.content);
-							if (normalizeAssertionText(contentText(verified.content)).includes(normalizeAssertionText(stepArgs.value))) {
+							if (normalizeAssertionText(assertionContentText(verified.content)).includes(normalizeAssertionText(stepArgs.value))) {
 								appendText(verified, `set_value verified in post-action app state: ${JSON.stringify(stepArgs.value)}`);
 								filtered = verified;
 							} else {
@@ -2280,10 +2310,10 @@ export default function (pi: ExtensionAPI) {
 							validateStepResult(row);
 						} catch (error) {
 							row.result.isError = true;
-							appendText(row.result, `Sequence stopped: ${errorMessage(error)}`);
+							row.result.content = [{ type: "text", text: `Sequence stopped: ${errorMessage(error)}` }];
 							failed = { index, stepNumber: index + 1, tool: step.tool, label: step.label, message: errorMessage(error) };
 						}
-						if (detail === "compact") row.result.content = compactContent(row.result.content, targetScope);
+						if (detail === "compact" && !row.result.isError) row.result.content = compactContent(row.result.content, targetScope);
 						results.push(row);
 						if (failed) break;
 					} catch (error) {
