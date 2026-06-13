@@ -9,6 +9,7 @@ import {
   commandLine,
   ensureDir,
   fileExists,
+  frontmostApp,
   isExecutable,
   markdownTable,
   parseJsonOutput,
@@ -79,6 +80,63 @@ function commandCheck(name, command, args, opts = {}) {
   };
 }
 
+function textBlocks(result) {
+  return (result?.content || [])
+    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
+    .map((block) => block.text)
+    .join('\n');
+}
+
+function classifyComputerUseProblem(text) {
+  if (/cgWindowNotFound/i.test(text)) {
+    return 'cgWindowNotFound: the target app may have no visible window, or the console GUI may be locked/asleep/screensaver-frontmost. Unlock/wake the console session and retry get_app_state.';
+  }
+  if (/timed out|timeout/i.test(text)) {
+    return 'Computer Use call timed out: if raw MCP discovery works but list_apps/get_app_state hangs, inspect macOS TCC logs for kTCCServiceAppleEvents denial from the launcher/responsible process to com.openai.sky.CUAService.';
+  }
+  if (/kTCCServiceAppleEvents|automation\.apple-events|ACCESS DENIED/i.test(text)) {
+    return 'AppleEvents/TCC denial: grant or repair Automation permission for the responsible launcher to control com.openai.sky.CUAService, then restart tccd and the Computer Use service.';
+  }
+  return null;
+}
+
+function appServerToolCheck(name, command, args, opts = {}) {
+  const run = commandCheck(name, command, args, opts);
+  if (!run.result.ok) {
+    const hint = classifyComputerUseProblem(`${run.result.error || ''}\n${run.result.stdout}\n${run.result.stderr}`);
+    return { ...run, check: { ...run.check, summary: hint || run.check.summary } };
+  }
+  try {
+    const json = parseJsonOutput(name, run.result.stdout);
+    const toolText = textBlocks(json.result);
+    const summaryText = toolText || JSON.stringify(json.result || {}).slice(0, 500);
+    if (json.result?.isError) {
+      const hint = classifyComputerUseProblem(summaryText);
+      return {
+        ...run,
+        json,
+        check: {
+          ...run.check,
+          status: 'fail',
+          summary: hint || `Computer Use tool returned isError=true: ${summaryText.slice(0, 500)}`,
+          details: opts.keepOutput ? run.check.details : { result: json.result },
+        },
+      };
+    }
+    return {
+      ...run,
+      json,
+      check: {
+        ...run.check,
+        status: 'pass',
+        summary: summaryText ? summaryText.split('\n')[0].slice(0, 500) : 'ok',
+      },
+    };
+  } catch (error) {
+    return { ...run, check: { ...run.check, status: 'fail', summary: error.message } };
+  }
+}
+
 function toolNamesFromStatus(statusJson) {
   return statusJson?.computerUse?.toolNames || statusJson?.status?.servers?.find((server) => server.name === 'computer-use')?.toolNames || [];
 }
@@ -135,6 +193,15 @@ async function main() {
   const codexVersion = commandCheck('Codex version', opts.codex, ['--version'], { warn: true });
   addCheck(checks, { ...codexVersion.check, summary: codexVersion.result.stdout.trim() || codexVersion.result.stderr.trim() || codexVersion.check.summary });
 
+  const frontmost = frontmostApp();
+  report.frontmostApp = frontmost;
+  addCheck(checks, {
+    status: frontmost?.bundleId && !['com.apple.loginwindow', 'com.apple.ScreenSaver.Engine'].includes(frontmost.bundleId) ? 'pass' : 'warn',
+    name: 'console frontmost app',
+    summary: frontmost?.bundleId ? `${frontmost.name || '<unknown>'} (${frontmost.bundleId})` : 'no frontmost app detected; console may be locked, asleep, or outside the active WindowServer session',
+    details: frontmost,
+  });
+
   for (const script of ['tools/probe-codex-computer-use-mcp.mjs', 'tools/codex-computer-use-appserver.mjs', 'tools/codex-computer-use-appserver-mcp.mjs', 'tools/validate-macuse.mjs', 'tools/macuse-utils.mjs', 'tools/macuse-config.mjs', 'tools/macuse-doctor.mjs', 'tools/macuse-demo.mjs']) {
     const syntax = commandCheck(`syntax ${script}`, process.execPath, ['--check', script]);
     addCheck(checks, syntax.check);
@@ -166,10 +233,19 @@ async function main() {
   if (rawDiscoverHasExpectedTools && report.computerUseTools.length === 0) report.computerUseTools = [...EXPECTED_TOOLS].sort();
   addCheck(checks, { ...discover.check, summary: rawDiscoverHasExpectedTools ? 'raw MCP advertised expected tools' : discover.check.summary });
 
-  const listApps = commandCheck('app-server list_apps', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'list-apps', '--quiet', '--codex', opts.codex, '--max-text-chars', '1000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 30_000 });
+  const listApps = appServerToolCheck('app-server list_apps', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'list-apps', '--quiet', '--codex', opts.codex, '--max-text-chars', '1000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 30_000 });
   addCheck(checks, listApps.check);
+  if (listApps.json && textBlocks(listApps.json.result).includes('frontmost=<none>')) {
+    addCheck(checks, {
+      status: 'warn',
+      name: 'Computer Use frontmost detection',
+      summary: 'list_apps reported frontmost=<none>; if get_app_state also fails with cgWindowNotFound, unlock/wake the console session and retry',
+      command: listApps.check.command,
+      durationMs: listApps.check.durationMs,
+    });
+  }
 
-  const getState = commandCheck(`app-server get_app_state ${opts.app}`, process.execPath, ['tools/codex-computer-use-appserver.mjs', 'get-state', '--app', opts.app, '--quiet', '--codex', opts.codex, '--max-text-chars', '1000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 30_000 });
+  const getState = appServerToolCheck(`app-server get_app_state ${opts.app}`, process.execPath, ['tools/codex-computer-use-appserver.mjs', 'get-state', '--app', opts.app, '--quiet', '--codex', opts.codex, '--max-text-chars', '1000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 30_000 });
   addCheck(checks, getState.check);
 
   const config = commandCheck('config generator', process.execPath, ['tools/macuse-config.mjs', 'cursor', '--pretty']);
