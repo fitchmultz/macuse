@@ -24,6 +24,18 @@ node tools/macuse-doctor.mjs --out .scratch/doctor
 node tools/macuse-doctor.mjs --out .scratch/doctor-full --full
 ```
 
+Preview optional local repair actions:
+
+```bash
+node tools/macuse-repair.mjs
+```
+
+Apply safe local repairs only after opting in:
+
+```bash
+node tools/macuse-repair.mjs --apply
+```
+
 Generate client config for the current checkout:
 
 ```bash
@@ -47,6 +59,8 @@ Or via npm scripts:
 
 ```bash
 npm run doctor
+npm run repair
+npm run repair:apply
 npm run demo
 npm run validate:focus
 npm run validate:mcp
@@ -71,6 +85,26 @@ The packaged pi extension keeps a persistent Codex app-server thread for the ses
 The persistent session avoids spawning the bridge for every pi tool call. On startup it uses app-server `mcpServerStatus/list` with `detail: "toolsAndAuthOnly"` to fail fast if the `computer-use` MCP server or its expected 10-tool inventory is missing; `/macuse-status` reports the cached inventory once running. Use `/macuse-stop` to stop the app-server process while leaving it available for lazy restart on the next tool call, and `/macuse-restart` to stop-and-lazily-restart after a suspected stale Computer Use state. The extension writes a macOS temp PID record under `/tmp/macuse-appserver`, starts a small watchdog, and reaps only matching macuse-owned orphaned `codex app-server` processes on startup; it does not try to own or kill Codex's global `SkyComputerUseService`. Use `codex_cu_list_apps({ runningOnly: true })` for a short currently-running app list.
 
 The package also ships `/skill:macuse`, a small Agent Skill that teaches agents the safe default macuse workflow, target-selection order, mutation guardrails, and evidence to report when using the `codex_cu_*` tools.
+
+## Optional repair / auto-heal
+
+`tools/macuse-repair.mjs` is dry-run by default. It reports what it would do and requires `--apply` before it mutates local state. The safe apply path wakes the display, stops `ScreenSaver.Engine` if present, and reaps stale `/tmp/macuse-appserver` PID records. Extra repairs are explicit opt-ins:
+
+```bash
+# Stop macuse-owned app-server processes from registry records; does not kill global SkyComputerUseService.
+node tools/macuse-repair.mjs --apply --restart-appserver
+
+# Restart the global Computer Use service/helper stack when upstream service state is stale.
+node tools/macuse-repair.mjs --apply --restart-service
+
+# Unlock a screensaver/locked console with a password supplied by env.
+node tools/macuse-repair.mjs --apply --unlock-with-env MACUSE_UNLOCK_PASSWORD
+
+# Repair this SSH/tmux TCC AppleEvents path, back up the user TCC DB, and restart tccd.
+node tools/macuse-repair.mjs --apply --repair-tcc --responsible auto --restart-tccd --sudo-password-env MACUSE_SUDO_PASSWORD
+```
+
+Do not commit password env files. Use a dedicated environment variable only for an explicitly approved local repair.
 
 ## Pi tool cookbook
 

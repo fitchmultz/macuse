@@ -8,12 +8,15 @@ This repository records local investigation and tooling for reusing OpenAI Codex
 - Codex app-server works as a compatibility bridge for Computer Use calls.
 - The packaged pi extension keeps a persistent Codex app-server thread, verifies the app-server `computer-use` MCP inventory with `mcpServerStatus/list` before serving tool calls, and exposes standalone read-only tools (`codex_cu_list_apps`, `codex_cu_get_app_state`) plus a sequence tool (`codex_cu_sequence`) with compact/minimal/full output, `targetScope: "main"` output filtering, sequence-level default `app`, per-step multi-app targeting, running-app filtering, focus before/after evidence, normalized text assertions, wait helpers that can match raw text-entry values, machine-readable parsed state/element/change details with semantic tags and target-stability diagnostics, partial failure results, stale-index guards, search-field role normalization, empty-`set_value` clear fallback, robust element targeting (`element_index`, `element`, `elementId`, `elementDescription`, role/name selectors, or `arguments.targets` fallback objects), and macOS app-server lifecycle hardening via `/macuse-stop`, PID records, startup stale reaping, and a watchdog for crash cleanup.
 - Harmless Calculator action/key and TextEdit scroll/type/set-value/select probes have passed. Focus validation confirms Calculator is not left frontmost. App approval defaults to `inherit`, matching Codex's Any App setting by auto-accepting app approvals in the bridge. Broader mutating GUI actions remain gated by `allowMutating` and a `safetyNote`.
+- `macuse-doctor` classifies common service failures including `cgWindowNotFound`, `frontmost=<none>`, timeouts, and AppleEvents/TCC denials. `macuse-repair` is dry-run by default and can opt into safe wake/screensaver/stale-registry repair, macuse-owned app-server restart, env-password unlock, and user-TCC AppleEvents repair.
 
 ## Tools
 
 ```bash
 node tools/macuse-demo.mjs --out .scratch/macuse-demo
 node tools/macuse-doctor.mjs --out .scratch/doctor
+node tools/macuse-repair.mjs
+node tools/macuse-repair.mjs --apply
 node tools/macuse-config.mjs cursor --pretty
 node tools/validate-macuse.mjs --help
 node tools/probe-codex-computer-use-mcp.mjs --help

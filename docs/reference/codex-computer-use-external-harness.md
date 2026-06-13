@@ -700,6 +700,32 @@ Connected to Codex appserver IPC socket at <private>
 An accepted `TCC RESULT` only proves the Apple Events gate passed; it did not
 make `list_apps` return in the observed iTerm-hosted probe.
 
+June 12, 2026 repair note: a pi session running under SSH/tmux hit a lower-level
+AppleEvents gate where service-backed calls hung while raw MCP discovery still
+worked. Logs showed `kTCCServiceAppleEvents` denials with the responsible
+identity `/usr/libexec/sshd-keygen-wrapper`; the correct TCC row direction is
+**responsible launcher -> `com.openai.sky.CUAService`**, not the inverse. After
+adding that user-TCC AppleEvents grant and restarting `tccd`, `list_apps`
+returned again. A later `cgWindowNotFound` was caused by the console being at
+loginwindow/screensaver; `list_apps` reported `frontmost=<none>`, and unlocking
+made `get_app_state` work again.
+
+Use the repair tool for this class of failure. It is dry-run by default:
+
+```bash
+node tools/macuse-repair.mjs
+node tools/macuse-repair.mjs --apply
+node tools/macuse-repair.mjs --apply --restart-appserver
+node tools/macuse-repair.mjs --apply --restart-service
+node tools/macuse-repair.mjs --apply --unlock-with-env MACUSE_UNLOCK_PASSWORD
+node tools/macuse-repair.mjs --apply --repair-tcc --responsible auto --restart-tccd --sudo-password-env MACUSE_SUDO_PASSWORD
+```
+
+`--repair-tcc` backs up the current user's TCC DB before writing and inserts
+only the responsible launcher / `com.openai.sky.CUAService.cli` AppleEvents rows
+that target `com.openai.sky.CUAService`. `--unlock-with-env` uses a temporary
+local Swift HID-event helper and does not install or download third-party code.
+
 The important regression signals are:
 
 1. Direct raw-MCP `discover` still initializes and lists the same expected tool
@@ -709,7 +735,10 @@ The important regression signals are:
    hanging.
 3. App-server `status` still discovers `computer-use` and the expected tool
    family.
-4. App-server `list-apps` still returns a normal read-only tool result.
+4. App-server filtered/running `list-apps --running-only --filter Calculator`
+   still returns a normal read-only tool result. If only broad unfiltered
+   `list_apps` reports `procNotFound`, treat that as degraded enumeration and
+   prefer filtered lists while investigating.
 5. App-server `get-state --app Calculator` still returns
    a normal read-only accessibility tree and, when requested, an image block.
 6. `node tools/validate-macuse.mjs mutating` still completes the guarded

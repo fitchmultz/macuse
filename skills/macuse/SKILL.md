@@ -54,6 +54,7 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
 - Use `expectVisibleText` for UI-visible assertions. Use `expectText` only for app content text/value checks; it intentionally ignores macuse/upstream metadata such as CUA version headers.
 - Do not clear text, select files, open files, submit forms, or press destructive controls unless that exact operation is low-risk and covered by the safety note or user approval.
 - If Computer Use times out or state looks stale, stop mutation and report the blocker. Try `/macuse-restart`, a larger `toolTimeoutMs`, or a read-only re-snapshot before considering another action.
+- For repeated `cgWindowNotFound`, `frontmost=<none>`, service timeouts, or suspected macOS TCC/Automation failures, run `node tools/macuse-doctor.mjs --out .scratch/doctor` when you are in this repo. Use `node tools/macuse-repair.mjs` for a dry-run repair preview. Apply repairs only with explicit user approval because `--apply`, `--restart-appserver`, `--restart-service`, `--unlock-with-env`, and `--repair-tcc` mutate local GUI/process/privacy state.
 
 ## Evidence to report
 
@@ -73,5 +74,7 @@ When changing or dogfooding this package, prefer:
 ```bash
 node tools/validate-macuse.mjs quick
 node tools/validate-macuse.mjs mcp
+node tools/macuse-doctor.mjs --out .scratch/doctor
+node tools/macuse-repair.mjs
 node tools/codex-computer-use-appserver.mjs list-apps --running-only --filter Calculator --quiet --pretty
 ```

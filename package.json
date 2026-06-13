@@ -28,6 +28,7 @@
   ],
   "bin": {
     "macuse-doctor": "tools/macuse-doctor.mjs",
+    "macuse-repair": "tools/macuse-repair.mjs",
     "macuse-demo": "tools/macuse-demo.mjs",
     "macuse-config": "tools/macuse-config.mjs"
   },
@@ -42,6 +43,8 @@
   "scripts": {
     "doctor": "node tools/macuse-doctor.mjs",
     "doctor:full": "node tools/macuse-doctor.mjs --full",
+    "repair": "node tools/macuse-repair.mjs",
+    "repair:apply": "node tools/macuse-repair.mjs --apply",
     "demo": "node tools/macuse-demo.mjs",
     "config:cursor": "node tools/macuse-config.mjs cursor --pretty",
     "validate": "node tools/validate-macuse.mjs quick",

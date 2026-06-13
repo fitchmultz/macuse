@@ -50,6 +50,7 @@ The app-server-backed path provides:
 | Screenshots available to agent | Implemented | `includeImage` and `saveImagePath` in bridge/pi flow; MCP wrapper returns image blocks from app-server |
 | Non-Codex MCP client support | Implemented | `tools/codex-computer-use-appserver-mcp.mjs` |
 | Durable refresh commands/docs | Implemented | `docs/reference/codex-computer-use-external-harness.md`, local install doc, and `docs/reference/demo-and-doctor.md` |
+| Optional local auto-heal | Implemented | `node tools/macuse-repair.mjs` dry-runs; `--apply` wakes/stops screensaver/reaps stale records; explicit flags cover macuse app-server restart, global Computer Use service restart, env-password unlock, and user-TCC AppleEvents repair |
 | One-command proof artifact | Implemented | `node tools/macuse-demo.mjs --out .scratch/macuse-demo` writes Markdown, HTML, screenshots, transcript, and MCP config |
 | Persistent pi app-server session | Implemented | `node tools/validate-macuse.mjs quick` verifies two pi extension calls reuse one app-server thread and default approval inheritance auto-accepts Finder |
 | Element target normalization | Implemented | pi extension and CLI bridge coerce numeric `element_index` to string; pi extension also accepts `element` aliases, resolves `elementId` from the latest tree, exact-matches `elementDescription`, refreshes before element-targeted steps, and returns fallback element-index hints when a target is stale or missing |
