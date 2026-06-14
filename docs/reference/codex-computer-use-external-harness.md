@@ -772,9 +772,10 @@ Finder, and Brave using only macuse/Codex Computer Use. Current status:
   recognizes non-HTTP browser URLs such as `brave://newtab/` and `about:blank`.
   Browser address/search fields remain tagged `navigation-field`; treat
   `set_value` as potentially navigating/submitting.
-- `expectVisibleText` now matches substrings across parsed visible text plus
-  exposed text-field/search/edit values. Multiline field values are split into
-  visible assertion lines when upstream exposes them.
+- `expectVisibleText` now matches substrings across parsed visible text, window
+  titles, visible control labels, and exposed text-field/search/edit values.
+  Multiline field values are split into visible assertion lines when upstream
+  exposes them.
 - `requireStateChange` now takes baselines for non-element actions, performs a
   short delayed readback for transient UI, and can recover when an upstream
   action reports an error but post-action state proves the UI changed.

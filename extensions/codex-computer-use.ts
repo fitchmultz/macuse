@@ -673,6 +673,22 @@ function visibleTextValues(content: ContentBlock[]): string[] {
 		.filter(Boolean);
 }
 
+function visibleAssertionValues(content: ContentBlock[]): string[] {
+	const text = contentText(content);
+	const values = new Set<string>(visibleTextValues(content));
+	const windowTitle = text.match(/^Window:\s*"([^"]+)"/m)?.[1]?.trim();
+	if (windowTitle) values.add(normalizeAssertionText(windowTitle));
+	for (const element of parseElementInfo(text)) {
+		if (["button", "pop up button", "switch", "checkbox", "radio button", "combo box", "link", "row", "search", "text field", "edit field", "text entry area", "secure text field", "scroll area", "container", "group", "split group"].includes(element.role)) {
+			for (const value of [element.name, element.description, element.value]) {
+				if (!value) continue;
+				for (const line of normalizeAssertionText(value).split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) values.add(line);
+			}
+		}
+	}
+	return [...values];
+}
+
 function machineElements(content: ContentBlock[], scope: TargetScope = "all"): MachineElement[] {
 	return prioritizedElements(parseElementInfo(contentText(content)), scope).map((element) => ({
 		index: element.index,
@@ -1830,7 +1846,7 @@ function validateWaitArguments(tool: string, args: Record<string, JsonValue>): v
 function waitConditionMet(tool: string, args: Record<string, JsonValue>, result: FilteredToolResult, cache: Map<string, ElementInfo[]>): string | null {
 	const app = typeof args.app === "string" ? args.app : "";
 	const summary = stateSummary(result.content);
-	const visible = visibleTextValues(result.content);
+	const visible = visibleAssertionValues(result.content);
 	const raw = normalizeAssertionText(assertionContentText(result.content));
 	const scopeHaystack = normalizeAssertionText([summary.title, summary.url, ...visible, raw].filter(Boolean).join("\n"));
 	if (typeof args.title === "string" && !scopeHaystack.includes(normalizeAssertionText(args.title))) return null;
@@ -1948,10 +1964,10 @@ function validateStepResult(step: SequencedResult): void {
 		if (text.includes(unexpected)) throw new ComputerUseError(`sequence step ${stepNumber} (index ${step.index}) ${step.tool} contained forbidden app content text: ${rawUnexpected}`, { unexpected: rawUnexpected, normalizedUnexpected: unexpected, textPreview: truncateString(text, 1000) });
 	}
 	if (step.expectVisibleText.length > 0) {
-		const visible = visibleTextValues(step.result.content);
+		const visible = visibleAssertionValues(step.result.content);
 		for (const rawExpected of step.expectVisibleText) {
 			const expected = normalizeAssertionText(rawExpected);
-			if (!visible.some((value) => value.includes(expected))) throw new ComputerUseError(`sequence step ${stepNumber} (index ${step.index}) ${step.tool} missing expected visible text: ${rawExpected}`, { expected: rawExpected, visibleText: visible, note: "expectVisibleText matches visible text substrings; use a more specific expected string when duplicates matter." });
+			if (!visible.some((value) => value.includes(expected))) throw new ComputerUseError(`sequence step ${stepNumber} (index ${step.index}) ${step.tool} missing expected visible text: ${rawExpected}`, { expected: rawExpected, visibleText: visible, note: "expectVisibleText matches visible text, window titles, and visible control labels as substrings; use a more specific expected string when duplicates matter." });
 		}
 	}
 }
@@ -1966,7 +1982,7 @@ function assertionSummary(step: SequencedResult): string | null {
 		lines.push(`expectText passed: ${JSON.stringify(rawExpected)}${snippet ? `; matched line: ${JSON.stringify(snippet)}` : ""}`);
 	}
 	for (const rawUnexpected of step.expectAbsentText) lines.push(`expectAbsentText passed: ${JSON.stringify(rawUnexpected)} absent`);
-	const visible = visibleTextValues(step.result.content);
+	const visible = visibleAssertionValues(step.result.content);
 	for (const rawExpected of step.expectVisibleText) lines.push(`expectVisibleText passed: ${JSON.stringify(rawExpected)}${visible.length > 0 ? `; visible text: ${JSON.stringify(visible.join(" | "))}` : ""}`);
 	return lines.length > 0 ? lines.join("\n") : null;
 }
