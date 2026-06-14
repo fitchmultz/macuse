@@ -435,6 +435,7 @@ function elementTags(line: string, role: string, name: string, description?: str
 	const tags = new Set<string>();
 	if (/\bsettable\b|\beditable\b/.test(haystack)) tags.add("settable-field");
 	if (role === "search" || /\bsearch\b/.test(haystack)) tags.add("search-field");
+	if (/\b(address|location|url|omnibox|address and search bar)\b/.test(haystack)) tags.add("navigation-field");
 	if (/\b(cancel|clear)\b/.test(haystack)) tags.add("clear-control");
 	if (/\b(delete|erase|remove|trash|force quit|quit process|stop process|kill|sign out|log out|password|privacy|security|payment|purchase|send|submit)\b/.test(haystack)) tags.add("risk-sensitive-control");
 	return [...tags];
@@ -634,6 +635,17 @@ function assertionContentText(content: ContentBlock[] | undefined): string {
 	return [...values].join("\n");
 }
 
+function contentIncludesMultilineValue(content: ContentBlock[] | undefined, expectedValue: string): { matched: boolean; partial: boolean; matchedLines: string[]; missingLines: string[] } {
+	const normalizedContent = normalizeAssertionText(contentText(content));
+	const normalizedExpected = normalizeAssertionText(expectedValue);
+	if (normalizedContent.includes(normalizedExpected)) return { matched: true, partial: false, matchedLines: [expectedValue], missingLines: [] };
+	const lines = normalizedExpected.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+	if (lines.length <= 1) return { matched: false, partial: false, matchedLines: [], missingLines: lines };
+	const matchedLines = lines.filter((line) => normalizedContent.includes(line));
+	const missingLines = lines.filter((line) => !normalizedContent.includes(line));
+	return { matched: missingLines.length === 0, partial: matchedLines.length > 0, matchedLines, missingLines };
+}
+
 function visibleTextValues(content: ContentBlock[]): string[] {
 	return parseElementInfo(contentText(content))
 		.filter((element) => /\btext\b/i.test(element.line))
@@ -708,6 +720,20 @@ function compareState(before: StateSummary | null, after: StateSummary | null): 
 	};
 }
 
+function normalizePressKeyValue(value: string): string {
+	const aliases = new Map<string, string>([
+		["esc", "Escape"],
+		["escape", "Escape"],
+		["return", "Return"],
+		["enter", "Return"],
+		["tab", "Tab"],
+		["space", "space"],
+		["period", "period"],
+		[".", "period"],
+	]);
+	return value.split("+").map((part) => aliases.get(part.trim().toLowerCase()) ?? part.trim()).join("+");
+}
+
 function normalizeToolArguments(args: Record<string, JsonValue>): Record<string, JsonValue> {
 	const normalized: Record<string, JsonValue> = { ...args };
 	if (normalized.element_index === undefined && normalized.element !== undefined) {
@@ -715,6 +741,7 @@ function normalizeToolArguments(args: Record<string, JsonValue>): Record<string,
 		delete normalized.element;
 	}
 	if (normalized.element_index !== undefined && normalized.element_index !== null) normalized.element_index = String(normalized.element_index);
+	if (typeof normalized.key === "string") normalized.key = normalizePressKeyValue(normalized.key);
 	return normalized;
 }
 
@@ -1893,7 +1920,7 @@ function validateStepResult(step: SequencedResult): void {
 		const visible = visibleTextValues(step.result.content);
 		for (const rawExpected of step.expectVisibleText) {
 			const expected = normalizeAssertionText(rawExpected);
-			if (!visible.includes(expected)) throw new ComputerUseError(`sequence step ${stepNumber} (index ${step.index}) ${step.tool} missing expected visible text: ${rawExpected}`, { expected: rawExpected, visibleText: visible });
+			if (!visible.some((value) => value.includes(expected))) throw new ComputerUseError(`sequence step ${stepNumber} (index ${step.index}) ${step.tool} missing expected visible text: ${rawExpected}`, { expected: rawExpected, visibleText: visible, note: "expectVisibleText matches visible text substrings; use a more specific expected string when duplicates matter." });
 		}
 	}
 }
@@ -2265,6 +2292,15 @@ export default function (pi: ExtensionAPI) {
 							stateCache.set(stepArgs.app, beforeState);
 							implicitRefreshes += 1;
 						}
+						if (!beforeState && step.requireStateChange && step.tool !== "get_app_state" && step.tool !== "list_apps" && typeof stepArgs.app === "string") {
+							const refresh = await client.callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
+							const refreshed = filterToolResult(refresh.result, { maxTextChars });
+							updateElementCache(elementCache, stepArgs.app, refreshed.content);
+							updateElementCache(sessionElementCache, stepArgs.app, refreshed.content);
+							beforeState = stateSummary(refreshed.content, targetScope);
+							stateCache.set(stepArgs.app, beforeState);
+							implicitRefreshes += 1;
+						}
 						stepArgs = resolveElementTargetFallbacks(stepArgs, elementCache);
 						stepArgs = resolveElementId(stepArgs, elementCache);
 						stepArgs = resolveElementDescription(stepArgs, elementCache);
@@ -2302,8 +2338,13 @@ export default function (pi: ExtensionAPI) {
 							updateElementCache(elementCache, stepArgs.app, verified.content);
 							updateElementCache(sessionElementCache, stepArgs.app, verified.content);
 							postActionReadbackDone = true;
-							if (normalizeAssertionText(assertionContentText(verified.content)).includes(normalizeAssertionText(stepArgs.value))) {
+							const normalizedStateText = normalizeAssertionText(assertionContentText(verified.content));
+							const multilineMatch = contentIncludesMultilineValue(verified.content, stepArgs.value);
+							if (normalizedStateText.includes(normalizeAssertionText(stepArgs.value)) || multilineMatch.matched) {
 								appendText(verified, `set_value verified in post-action app state: ${JSON.stringify(stepArgs.value)}`);
+								filtered = verified;
+							} else if (multilineMatch.partial) {
+								appendText(verified, `Warning: set_value multiline verification was partial. Matched ${multilineMatch.matchedLines.length} expected line(s), but post-action state output did not expose ${multilineMatch.missingLines.length} line(s). This often means upstream accessibility/minimal output truncated a multiline text value; verify with follow-up expectVisibleText/expectText lines before relying on the edit. Missing lines: ${JSON.stringify(multilineMatch.missingLines.slice(0, 5))}`);
 								filtered = verified;
 							} else {
 								filtered.isError = true;

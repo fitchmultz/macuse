@@ -608,7 +608,8 @@ include machine-readable parsed element metadata with target hints, `visibleText
 available. Mutating sequence steps perform a post-action state readback and
 report `actionDispatchedButNoStateChange` when an AX action reports success but
 no observable title, URL, visible-text, or target change appears; per-step
-`requireStateChange: true` makes that condition fail closed.
+`requireStateChange: true` makes that condition fail closed and captures a
+pre-action baseline for non-element actions such as `press_key`.
 `includeImage` is model/host dependent; use `saveImagePath` when screenshot
 artifacts must be reliable. In sequences, `saveImagePath` defaults to the first
 step for compatibility; use `screenshotStep: "final"` to save the final visual
@@ -792,9 +793,12 @@ Still needed before broad mutating GUI operation:
    transient popover contents. A future extension/API shape could add
    `targetScope:"all-windows"` or `includePopovers:true` if upstream exposes
    those windows reliably.
-6. Continued refresh checks after Codex app updates, because app-server protocol
+6. Browser address/search fields are tagged `navigation-field` where detectable.
+   Treat `set_value` on those controls as potentially navigating/submitting,
+   not merely staging text.
+7. Continued refresh checks after Codex app updates, because app-server protocol
    and feature flags may change.
-7. Further investigation of whether direct raw MCP can ever be made to work
+8. Further investigation of whether direct raw MCP can ever be made to work
    without app-server, or whether app-server should be treated as the required
    compatibility layer.
 

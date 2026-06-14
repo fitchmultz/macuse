@@ -351,6 +351,24 @@ factory({
   }, signal, () => {});
   if (scopedWait.details.computerUse.failed) throw new Error('pi extension scoped waitForText failed');
   if (!String(scopedWait.details.computerUse.steps[0].targetResolution || '').includes('with title')) throw new Error('pi extension scoped waitForText did not report title scoping');
+  const keyAliasAndSubstring = await tools.get('codex_cu_sequence').execute('key-alias-substring', {
+    app: 'Calculator',
+    steps: [
+      { tool: 'perform_secondary_action', arguments: { targets: [{ elementId: 'AllClear' }, { elementDescription: 'Clear' }, { elementDescription: 'All Clear' }], action: 'Press' } },
+      { tool: 'press_key', arguments: { key: '1' }, requireStateChange: true },
+      { tool: 'press_key', arguments: { key: '1' }, requireStateChange: true },
+      { tool: 'get_app_state', arguments: {}, expectVisibleText: '1' },
+      { tool: 'press_key', arguments: { key: 'escape' } },
+      { tool: 'get_app_state', arguments: {}, expectVisibleText: '0' },
+    ],
+    allowMutating: true,
+    safetyNote: 'Validate Calculator-only key aliases, non-element requireStateChange baselines, visible substring assertions, and restore to zero.',
+    detail: 'minimal',
+    maxTextChars: 4000,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  if (keyAliasAndSubstring.details.computerUse.failed) throw new Error('pi extension key alias / visible substring sequence failed');
+  if (keyAliasAndSubstring.details.computerUse.steps[4].arguments.key !== 'Escape') throw new Error('pi extension did not normalize lower-case escape key alias');
   const noChangeRequired = await tools.get('codex_cu_sequence').execute('require-state-change', {
     app: 'Calculator',
     steps: [

@@ -52,8 +52,8 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
 
 - Keep the user's frontmost app and mouse focus intact when possible. Treat focus changes as evidence to report.
 - Treat `risk-sensitive-control` tags as a stop-and-review signal, even when the requested action seems small.
-- Use `expectVisibleText` for UI-visible assertions. Use `expectText` only for app content text/value checks; it intentionally ignores macuse/upstream metadata such as CUA version headers.
-- Do not clear text, select files, open files, submit forms, or press destructive controls unless that exact operation is low-risk and covered by the safety note or user approval.
+- Use `expectVisibleText` for UI-visible assertions; it matches substrings within parsed visible text nodes. Use `expectText` only for app content text/value checks; it intentionally ignores macuse/upstream metadata such as CUA version headers.
+- Do not clear text, select files, open files, submit forms, or press destructive controls unless that exact operation is low-risk and covered by the safety note or user approval. Treat browser address/search fields tagged `navigation-field` as submitting/navigation controls: `set_value` may navigate or send a search, not merely stage text.
 - If Computer Use times out or state looks stale, stop mutation and report the blocker. Try `/macuse-restart`, a larger `toolTimeoutMs`, or a read-only re-snapshot before considering another action.
 - Treat `actionDispatchedButNoStateChange` as a failed intended open/navigation unless the action was expected to be a no-op. Retry from a fresh state read; use pointer fallback only with `allowPointerClick` and an unambiguous target/window.
 - Scope waits when possible. `waitForText` accepts `visibleOnly: true` plus optional `title` or `url` guards to avoid matching stale/recent-list text.

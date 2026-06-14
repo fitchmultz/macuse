@@ -192,8 +192,11 @@ persistent `codex_cu_sequence` wrapper requires or enforces:
   post-action state readback and report `actionDispatchedButNoStateChange` when
   upstream reports success but no observable title, URL, visible-text, or target
   change appears; per-step `requireStateChange: true` turns that into a failure
-- search-field role normalization and conservative empty-`set_value` clear
-  fallback when a single non-risky clear/cancel control is available
+  and captures a pre-action baseline for non-element actions such as `press_key`
+- search-field role normalization, `navigation-field` tagging for browser
+  address/search controls where `set_value` may navigate/submit, and
+  conservative empty-`set_value` clear fallback when a single non-risky
+  clear/cancel control is available
 - extension-level refusal of mutating calls unless `allowMutating: true` is passed
 
 Lifecycle safety: the pi extension owns only its spawned `codex app-server` process and descendants. It stops them on normal `session_shutdown`, exposes `/macuse-stop` for manual cleanup, records macOS PID/start-time fingerprints under `/tmp/macuse-appserver`, starts a watchdog for hard-crash cleanup, and reaps only matching macuse-owned orphaned app-server processes at startup. It does not kill Codex's global `SkyComputerUseService` helper.
