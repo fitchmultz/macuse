@@ -1870,7 +1870,11 @@ function normalizeSequenceSteps(value: unknown): SequenceStep[] {
 function validateStepResult(step: SequencedResult): void {
 	const stepNumber = step.index + 1;
 	if (step.result.isError && !step.allowError) {
-		throw new ComputerUseError(`sequence step ${stepNumber} (index ${step.index}) ${step.tool} returned tool error`, step.result);
+		const resultText = toolResultText(step.result);
+		const reason = resultText.includes("actionDispatchedButNoStateChange")
+			? "did not produce an observable state change required by requireStateChange"
+			: "returned tool error";
+		throw new ComputerUseError(`sequence step ${stepNumber} (index ${step.index}) ${step.tool} ${reason}`, step.result);
 	}
 	const text = normalizeAssertionText(assertionContentText(step.result.content));
 	const fullText = normalizeAssertionText(toolResultText(step.result));
