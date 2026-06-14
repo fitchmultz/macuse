@@ -768,19 +768,22 @@ Finder, and Brave using only macuse/Codex Computer Use. Current status:
 - Calculator arithmetic, stable target fallback, `requireStateChange`, and final
   screenshot capture work well.
 - Browser `waitForText` with `visibleOnly`, `title`, and `url` scoping now uses a
-  broader state corpus and worked for Brave new-tab/address-bar text. Browser
-  address/search fields remain tagged `navigation-field`; treat `set_value` as
-  potentially navigating/submitting.
+  broader state corpus and worked for Brave new-tab/address-bar text. `waitForURL`
+  recognizes non-HTTP browser URLs such as `brave://newtab/` and `about:blank`.
+  Browser address/search fields remain tagged `navigation-field`; treat
+  `set_value` as potentially navigating/submitting.
 - `expectVisibleText` now matches substrings across parsed visible text plus
   exposed text-field/search/edit values. Multiline field values are split into
   visible assertion lines when upstream exposes them.
 - `requireStateChange` now takes baselines for non-element actions, performs a
   short delayed readback for transient UI, and can recover when an upstream
   action reports an error but post-action state proves the UI changed.
-- TextEdit multiline editing remains partly upstream-dependent: some TextEdit
-  states expose only the first line or accept only the first line via `set_value`.
-  Prefer verifying individual visible lines; if a text area has no `Press`
-  action, use `set_value`, carefully focused `type_text`, or stop.
+- TextEdit multiline editing remains partly upstream-dependent: macuse now groups
+  multiline settable/value continuations into parsed visible assertions when
+  upstream exposes the raw value, but some TextEdit states may still accept only
+  the first line via `set_value` or expose only a summary. Prefer verifying
+  individual visible lines; if a text area has no `Press` action, use
+  `set_value`, carefully focused `type_text`, or stop.
 - Calendar transient editors/popovers are inconsistent: full detail may expose
   quick-event cells that minimal/compact omit, but transient contents may still
   be hidden or delayed. Escaping/closing a transient editor can be a no-op in

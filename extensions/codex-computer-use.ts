@@ -401,14 +401,14 @@ function roleMatches(actual: string, expected: string): boolean {
 }
 
 function settableFieldValue(body: string): string | undefined {
-	const valueMatch = body.match(/(?:^|,\s*)Value:\s*(.+)$/i);
+	const valueMatch = body.match(/(?:^|,\s*)Value:\s*([\s\S]+)$/i);
 	if (valueMatch?.[1]) return valueMatch[1].trim();
-	const settableMatch = body.match(/\((?:settable|editable),\s*string\)\s+(.+)$/i);
+	const settableMatch = body.match(/\((?:settable|editable),\s*string\)\s+([\s\S]+)$/i);
 	return settableMatch?.[1]?.trim();
 }
 
 function stableFieldName(value: string): string {
-	return value.replace(/(\((?:settable|editable),\s*string\))\s+.+$/i, "$1").trim();
+	return value.replace(/(\((?:settable|editable),\s*string\))\s+[\s\S]+$/i, "$1").trim();
 }
 
 function stripElementAttributes(value: string): string {
@@ -450,10 +450,25 @@ function elementGroup(line: string, role: string): ElementInfo["group"] {
 	return "other";
 }
 
+function elementBlocks(text: string): string[] {
+	const blocks: string[] = [];
+	let current: string[] = [];
+	for (const rawLine of text.split("\n")) {
+		if (/^\s*\d+\s+/.test(rawLine)) {
+			if (current.length > 0) blocks.push(current.join("\n"));
+			current = [rawLine];
+		} else if (current.length > 0 && /\b(?:Value:|\((?:settable|editable),\s*string\))/.test(current[0] ?? "") && rawLine.trim() && !/^\s*<\/?\w+/.test(rawLine) && !/^\s*(?:App=|Window:|Visible text:|Targets:|Target groups:|Focus summary:|Warning:|Target element|Valid secondary actions:|Hints:|waitFor\w+ matched|set_value |requireStateChange |Sequence )/.test(rawLine)) {
+			current.push(rawLine);
+		}
+	}
+	if (current.length > 0) blocks.push(current.join("\n"));
+	return blocks;
+}
+
 function parseElementInfo(text: string): ElementInfo[] {
 	const elements: ElementInfo[] = [];
-	for (const rawLine of text.split("\n")) {
-		const match = rawLine.match(/^\s*(\d+)\s+(.+)$/);
+	for (const rawLine of elementBlocks(text)) {
+		const match = rawLine.match(/^\s*(\d+)\s+([\s\S]+)$/);
 		if (!match) continue;
 		const line = match[0].trim();
 		const body = stripInvisibleBidiMarks(match[2] ?? "");
@@ -680,7 +695,7 @@ function stateSummary(content: ContentBlock[], scope: TargetScope = "all"): Stat
 	const app = text.match(/^App=([^\n]+)/m)?.[1]?.trim() ?? null;
 	const windowLine = text.match(/^Window:\s*([^\n]+)/m)?.[1]?.trim() ?? null;
 	const title = windowLine?.match(/^"([^"]+)"/)?.[1] ?? null;
-	const url = text.match(/https?:\/\/[^\s"'<>]+/)?.[0] ?? null;
+	const url = text.match(/\b(?:https?|file|brave|chrome|about):\/\/[^\s"'<>]+|\babout:[^\s"'<>]+/)?.[0] ?? null;
 	return {
 		app,
 		window: windowLine,
