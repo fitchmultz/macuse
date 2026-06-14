@@ -760,6 +760,42 @@ The important regression signals are:
    JSON-RPC and macOS-log evidence to decide whether raw-MCP parity improved or
    still needs the app-server thread/session wrapper.
 
+## Dogfood findings status
+
+Recent multi-app trip-planning QA runs covered Calculator, TextEdit, Calendar,
+Finder, and Brave using only macuse/Codex Computer Use. Current status:
+
+- Calculator arithmetic, stable target fallback, `requireStateChange`, and final
+  screenshot capture work well.
+- Browser `waitForText` with `visibleOnly`, `title`, and `url` scoping now uses a
+  broader state corpus and worked for Brave new-tab/address-bar text. Browser
+  address/search fields remain tagged `navigation-field`; treat `set_value` as
+  potentially navigating/submitting.
+- `expectVisibleText` now matches substrings across parsed visible text plus
+  exposed text-field/search/edit values. Multiline field values are split into
+  visible assertion lines when upstream exposes them.
+- `requireStateChange` now takes baselines for non-element actions, performs a
+  short delayed readback for transient UI, and can recover when an upstream
+  action reports an error but post-action state proves the UI changed.
+- TextEdit multiline editing remains partly upstream-dependent: some TextEdit
+  states expose only the first line or accept only the first line via `set_value`.
+  Prefer verifying individual visible lines; if a text area has no `Press`
+  action, use `set_value`, carefully focused `type_text`, or stop.
+- Calendar transient editors/popovers are inconsistent: full detail may expose
+  quick-event cells that minimal/compact omit, but transient contents may still
+  be hidden or delayed. Escaping/closing a transient editor can be a no-op in
+  state terms; verify final absence of draft/event text.
+- Finder search/sidebar remains a weak surface: `cmd+f` can change UI while the
+  upstream action reports `remoteConnection`, search text entry may not be
+  targetable without pointer fallback, rows can have duplicate names, and many
+  file rows appear as settable/navigation fields that should not be mutated.
+- `Raise`/frontmost restoration is not reliable across apps and offscreen
+  windows. Treat focus summaries as evidence, not a guarantee; report failure to
+  restore focus rather than hiding it.
+- Upstream state collection can still be slow or time out for heavy Calendar,
+  Finder, and browser windows. Detail/targetScope reduce output after upstream
+  returns; they cannot make a hung snapshot safe.
+
 ## Implications for pi and Cursor agents
 
 Reusable now for broad pi operation:

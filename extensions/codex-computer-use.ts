@@ -1020,7 +1020,17 @@ function enrichActionError(result: FilteredToolResult, args: Record<string, Json
 	const element = (cache.get(args.app) ?? []).find((item) => item.index === args.element_index);
 	if (!element) return;
 	const actions = element.secondaryActions.length > 0 ? element.secondaryActions.join(", ") : "none listed";
-	appendText(result, `Target element ${element.index}: ${element.line}\nValid secondary actions: ${actions}`);
+	const hints: string[] = [];
+	if (element.tags.includes("settable-field") || /\b(text|field|search|edit|scroll area)\b/i.test(element.role)) {
+		hints.push("For text/edit/search targets, prefer set_value, type_text after verified focus, or select_text; perform_secondary_action Press is often unsupported.");
+	}
+	if (element.tags.includes("navigation-field")) {
+		hints.push("This target looks like a navigation/address field; set_value may navigate or submit a search. Stop unless navigation is explicitly allowed.");
+	}
+	if (element.role === "row" && actions === "none listed") {
+		hints.push("Rows with no secondary actions may require a different target, keyboard navigation, or an explicitly approved pointer fallback.");
+	}
+	appendText(result, `Target element ${element.index}: ${element.line}\nValid secondary actions: ${actions}${hints.length ? `\nHints: ${hints.join(" ")}` : ""}`);
 }
 
 function filteredAppListLines(content: ContentBlock[], opts: { runningOnly?: boolean; filter?: string }): string[] {
@@ -2333,6 +2343,27 @@ export default function (pi: ExtensionAPI) {
 						});
 						let postActionNoChange = false;
 						let postActionReadbackDone = false;
+						let actionErrorRecoveredByStateChange = false;
+						if (filtered.isError && step.requireStateChange && typeof stepArgs.app === "string") {
+							const verify = await client.callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
+							const verified = filterToolResult(verify.result, {
+								includeImage: Boolean(input.includeImage),
+								saveImagePath: saveImageForStep ? input.saveImagePath : undefined,
+								maxTextChars,
+							});
+							appendComputerUseDiagnostic(verified, "get_app_state", { app: stepArgs.app });
+							const verifiedState = stateSummary(verified.content, targetScope);
+							const errorReadbackChange = compareState(beforeState, verifiedState);
+							const changedDespiteError = Boolean(errorReadbackChange && (errorReadbackChange.visibleTextChanged || errorReadbackChange.titleChanged || errorReadbackChange.urlChanged || errorReadbackChange.targetsAdded.length > 0 || errorReadbackChange.targetsRemoved.length > 0));
+							if (changedDespiteError) {
+								actionErrorRecoveredByStateChange = true;
+								appendText(verified, `Warning: actionReportedErrorButStateChanged — ${step.tool} returned an upstream error, but requireStateChange was satisfied by post-action get_app_state readback. Treat the action as dispatched, then inspect final state before continuing. Original error output: ${truncateString(toolResultText(filtered), 800)}`);
+								updateElementCache(elementCache, stepArgs.app, verified.content);
+								updateElementCache(sessionElementCache, stepArgs.app, verified.content);
+								filtered = verified;
+								postActionReadbackDone = true;
+							}
+						}
 						if (step.tool === "set_value" && typeof stepArgs.value === "string" && stepArgs.value.length > 0 && typeof stepArgs.app === "string") {
 							const verify = await client.callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
 							const verified = filterToolResult(verify.result, {
@@ -2411,6 +2442,7 @@ export default function (pi: ExtensionAPI) {
 							...(rawIndexTarget && changed && (changed.urlChanged || changed.titleChanged || changed.visibleTextChanged) && !step.tool.startsWith("get_app_state") ? [`If the UI rerendered or navigated, call codex_cu_get_app_state({app:${JSON.stringify(stepArgs.app)}, detail:"minimal"}) before using raw element_index targets.`] : []),
 							...(diagnostics.length > 0 ? [`Resolve upstream Computer Use state for ${JSON.stringify(stepArgs.app)} before retrying mutating actions; use agent_browser for web/Chrome if Computer Use state keeps timing out.`] : []),
 							...(postActionNoChange ? [`AX action dispatched but no observable state change was seen. If a click/open was expected, retry with a fresh state read; use a pointer click fallback only with allowPointerClick and an unambiguous target/window.`] : []),
+							...(actionErrorRecoveredByStateChange ? [`Upstream reported an error, but post-action state changed. Inspect the final state carefully before issuing another mutating step.`] : []),
 						];
 						const row: SequencedResult = {
 							index,
