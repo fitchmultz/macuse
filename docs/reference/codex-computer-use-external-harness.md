@@ -787,14 +787,17 @@ Finder, and Brave using only macuse/Codex Computer Use. Current status:
   the first line via `set_value` or expose only a summary. Prefer verifying
   individual visible lines; if a text area has no `Press` action, use
   `set_value`, carefully focused `type_text`, or stop.
-- Calendar transient editors/popovers are inconsistent: full detail may expose
-  quick-event cells that minimal/compact omit, but transient contents may still
-  be hidden or delayed. Escaping/closing a transient editor can be a no-op in
-  state terms; verify final absence of draft/event text.
+- Calendar transient editors/popovers are inconsistent: `transient-editor` tags
+  now make quick-event/popover targets rank higher in minimal/compact summaries,
+  but transient contents may still be hidden or delayed. Escaping/closing a
+  transient editor can be a no-op in state terms; verify final absence of
+  draft/event text.
 - Finder search/sidebar remains a weak surface: `cmd+f` can change UI while the
   upstream action reports `remoteConnection`, search text entry may not be
   targetable without pointer fallback, rows can have duplicate names, and many
   file rows appear as settable/navigation fields that should not be mutated.
+  Summaries now include a concise risk-sensitive-control note when controls such
+  as Save/Delete/Add/Remove are visible.
 - `Raise`/frontmost restoration is not reliable across apps and offscreen
   windows. Treat focus summaries as evidence, not a guarantee; report failure to
   restore focus rather than hiding it.

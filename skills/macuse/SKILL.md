@@ -51,7 +51,7 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
 ## Safety rules
 
 - Keep the user's frontmost app and mouse focus intact when possible. Treat focus changes as evidence to report.
-- Treat `risk-sensitive-control` tags as a stop-and-review signal, even when the requested action seems small.
+- Treat `risk-sensitive-control` tags and the “Risk-sensitive controls visible” note as stop-and-review signals, even when the requested action seems small. Prefer summaries that surface `transient-editor` tags when working with popovers/editors.
 - Use `expectVisibleText` for UI-visible assertions; it matches substrings within parsed visible text nodes, window titles, visible control labels, and exposed field/search/edit values, including multiline continuations when upstream exposes them. Use `expectText` only for app content text/value checks; it intentionally ignores macuse/upstream metadata such as CUA version headers.
 - Do not clear text, select files, open files, submit forms, or press destructive controls unless that exact operation is low-risk and covered by the safety note or user approval. Treat browser address/search fields tagged `navigation-field` as submitting/navigation controls: `set_value` or `type_text` may change URL/title state or send a search, not merely stage text.
 - If Computer Use times out or state looks stale, stop mutation and report the blocker. Try `/macuse-restart`, a larger `toolTimeoutMs`, or a read-only re-snapshot before considering another action.

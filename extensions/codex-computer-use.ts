@@ -436,6 +436,7 @@ function elementTags(line: string, role: string, name: string, description?: str
 	if (/\bsettable\b|\beditable\b/.test(haystack)) tags.add("settable-field");
 	if (role === "search" || /\bsearch\b/.test(haystack)) tags.add("search-field");
 	if (/\b(address|location|url|omnibox|address and search bar)\b/.test(haystack)) tags.add("navigation-field");
+	if (/\b(quickevent|quick event|popover|transient|draft event|new event|event editor)\b/.test(haystack)) tags.add("transient-editor");
 	if (/\b(cancel|clear)\b/.test(haystack)) tags.add("clear-control");
 	if (/\b(delete|erase|remove|trash|force quit|quit process|stop process|kill|sign out|log out|password|privacy|security|payment|purchase|send|submit)\b/.test(haystack)) tags.add("risk-sensitive-control");
 	return [...tags];
@@ -520,6 +521,7 @@ function rankElement(element: ElementInfo): number {
 	if (element.group === "content") score -= 100;
 	if (element.group === "chrome") score += 80;
 	if (element.group === "window") score += 120;
+	if (element.tags.includes("transient-editor")) score -= 90;
 	if (element.tags.includes("search-field")) score -= 60;
 	if (element.tags.includes("settable-field")) score -= 45;
 	if (element.tags.includes("risk-sensitive-control")) score += 60;
@@ -533,6 +535,12 @@ function prioritizedElements(elements: ElementInfo[], scope: TargetScope = "all"
 	return elements
 		.filter((element) => scope === "all" || element.group === "content")
 		.sort((a, b) => rankElement(a) - rankElement(b));
+}
+
+function riskControlNote(text: string): string | null {
+	const risky = parseElementInfo(text).filter((element) => element.tags.includes("risk-sensitive-control"));
+	if (risky.length === 0) return null;
+	return `Risk-sensitive controls visible: ${risky.slice(0, 6).map((element) => `${element.index}:${shortElementLabel(element)}`).join(", ")}${risky.length > 6 ? `, …${risky.length - 6} more` : ""}. Stop before pressing these unless explicitly approved.`;
 }
 
 function elementStabilityNote(text: string): string | null {
@@ -564,6 +572,7 @@ function compactText(text: string, scope: TargetScope = "all"): string {
 	const header = lines.filter((line) => /^(Computer Use state|<app_state>|App=|Window:)/.test(line.trim())).slice(0, 4);
 	const interactive = prioritizedElements(parseElementInfo(text).filter(isInteractiveElement), scope);
 	const note = elementStabilityNote(text);
+	const riskNote = riskControlNote(text);
 	const groups = ["content", "chrome", "window", "other"] as const;
 	const body: string[] = [];
 	for (const group of groups) {
@@ -573,7 +582,7 @@ function compactText(text: string, scope: TargetScope = "all"): string {
 		body.push(...groupElements.slice(0, group === "content" ? 40 : 12).map(elementLineWithTargetHint));
 		if (groupElements.length > (group === "content" ? 40 : 12)) body.push(`…${groupElements.length - (group === "content" ? 40 : 12)} more ${group} targets omitted`);
 	}
-	return [...header, ...body, ...(note ? [note] : [])].join("\n") || truncateString(stripInvisibleBidiMarks(text), DEFAULT_MAX_TEXT_CHARS);
+	return [...header, ...body, ...(riskNote ? [riskNote] : []), ...(note ? [note] : [])].join("\n") || truncateString(stripInvisibleBidiMarks(text), DEFAULT_MAX_TEXT_CHARS);
 }
 
 function minimalText(text: string, scope: TargetScope = "all"): string {
@@ -595,10 +604,12 @@ function minimalText(text: string, scope: TargetScope = "all"): string {
 		.map((item) => `${item.group}:${item.count}`)
 		.join(", ");
 	const note = elementStabilityNote(text);
+	const riskNote = riskControlNote(text);
 	const sections = [...header];
 	if (visibleText.length > 0) sections.push("Visible text:", ...visibleText);
 	if (targets.length > 0) sections.push("Targets:", ...targets);
 	if (omittedByGroup) sections.push(`Target groups: ${omittedByGroup}`);
+	if (riskNote) sections.push(riskNote);
 	if (note) sections.push(note);
 	return sections.join("\n") || truncateString(stripInvisibleBidiMarks(text), DEFAULT_MAX_TEXT_CHARS);
 }
