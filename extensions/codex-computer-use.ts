@@ -717,6 +717,11 @@ function machineElements(content: ContentBlock[], scope: TargetScope = "all"): M
 	}));
 }
 
+function hasStateSummaryContent(content: ContentBlock[]): boolean {
+	const text = contentText(content);
+	return /^App=/m.test(text) || /^Window:\s*/m.test(text) || /<app_state>/.test(text);
+}
+
 function stateSummary(content: ContentBlock[], scope: TargetScope = "all"): StateSummary {
 	const text = contentText(content);
 	const app = text.match(/^App=([^\n]+)/m)?.[1]?.trim() ?? null;
@@ -2480,24 +2485,30 @@ export default function (pi: ExtensionAPI) {
 							filtered = verified;
 						}
 						const diagnostics = [appendComputerUseDiagnostic(filtered, step.tool, stepArgs)].filter((item): item is string => Boolean(item));
-						const afterState = stateSummary(filtered.content, targetScope);
-						updateElementCache(elementCache, stepArgs.app, filtered.content);
-						updateElementCache(sessionElementCache, stepArgs.app, filtered.content);
-						if (typeof stepArgs.app === "string") stateCache.set(stepArgs.app, afterState);
+						const hasStateContent = hasStateSummaryContent(filtered.content);
+						const afterState = hasStateContent ? stateSummary(filtered.content, targetScope) : null;
+						if (hasStateContent) {
+							updateElementCache(elementCache, stepArgs.app, filtered.content);
+							updateElementCache(sessionElementCache, stepArgs.app, filtered.content);
+							if (typeof stepArgs.app === "string" && afterState) stateCache.set(stepArgs.app, afterState);
+						}
 						if (detail === "full") appendElementStabilityNote(filtered);
 						appendImageWarning(filtered, { includeImage: Boolean(input.includeImage), saveImagePath: saveImageForStep ? input.saveImagePath : undefined });
 						enrichActionError(filtered, stepArgs, elementCache);
 						const changed = compareState(beforeState, afterState);
 						const rawIndexTarget = originalStepArgs.element_index !== undefined || originalStepArgs.element !== undefined;
-						const browserInputChangedNavigationState = browserLikeAppName(stepArgs.app) && ["set_value", "type_text"].includes(step.tool) && Boolean(changed && (changed.urlChanged || changed.titleChanged));
+						const browserTextInput = browserLikeAppName(stepArgs.app) && ["set_value", "type_text"].includes(step.tool);
+						const browserInputChangedNavigationState = browserTextInput && Boolean(changed && (changed.urlChanged || changed.titleChanged));
 						if (browserInputChangedNavigationState) {
 							appendText(filtered, `Warning: browserInputChangedNavigationState — ${step.tool} in a browser changed URL/title state. Treat address/search fields as navigation controls even without pressing Return; verify no unintended external request or tab navigation occurred before continuing.`);
 						}
 						const nextActions = [
 							...(rawIndexTarget && changed && (changed.urlChanged || changed.titleChanged || changed.visibleTextChanged) && !step.tool.startsWith("get_app_state") ? [`If the UI rerendered or navigated, call codex_cu_get_app_state({app:${JSON.stringify(stepArgs.app)}, detail:"minimal"}) before using raw element_index targets.`] : []),
+							...(!hasStateContent && filtered.isError ? [`No app-state readback was available from this failed step, so changed-state summaries are intentionally suppressed to avoid false deltas. Re-run codex_cu_get_app_state before deciding whether the UI actually changed.`] : []),
 							...(diagnostics.length > 0 ? [`Resolve upstream Computer Use state for ${JSON.stringify(stepArgs.app)} before retrying mutating actions; use agent_browser for web/Chrome if Computer Use state keeps timing out.`] : []),
 							...(postActionNoChange ? [`AX action dispatched but no observable state change was seen. If a click/open was expected, retry with a fresh state read; use a pointer click fallback only with allowPointerClick and an unambiguous target/window.`] : []),
 							...(actionErrorRecoveredByStateChange ? [`Upstream reported an error, but post-action state changed. Inspect the final state carefully before issuing another mutating step.`] : []),
+							...(browserTextInput && step.tool === "type_text" ? [`type_text sends keys to the browser's current focus, which may be page content rather than the address bar. Prefer set_value on a verified address/search target only when navigation is allowed, or verify focused UI before typing.`] : []),
 							...(browserInputChangedNavigationState ? [`Browser text input changed URL/title state. Audit final browser state and close/restore any scratch tab before continuing.`] : []),
 						];
 						const row: SequencedResult = {
@@ -2513,8 +2524,8 @@ export default function (pi: ExtensionAPI) {
 							allowError: step.allowError,
 							targetResolution,
 							targetWarnings,
-							elements: step.tool === "get_app_state" ? machineElements(filtered.content, targetScope) : [],
-							visibleText: afterState.visibleText,
+							elements: step.tool === "get_app_state" && hasStateContent ? machineElements(filtered.content, targetScope) : [],
+							visibleText: afterState?.visibleText ?? [],
 							changed,
 							nextActions,
 							acceptedElicitations: call.acceptedElicitations,

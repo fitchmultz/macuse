@@ -772,8 +772,9 @@ Finder, and Brave using only macuse/Codex Computer Use. Current status:
   avoid stale/page-text matches. `waitForURL` recognizes non-HTTP browser URLs
   such as `brave://newtab/` and `about:blank`. Browser address/search fields
   remain tagged `navigation-field`; treat `set_value` and `type_text` as
-  potentially changing URL/title state or navigating/submitting. macuse warns
-  when browser text input changes URL/title state.
+  potentially changing URL/title state or navigating/submitting. `type_text`
+  goes to current keyboard focus, which may be page content rather than the
+  omnibox. macuse warns when browser text input changes URL/title state.
 - `expectVisibleText` now matches substrings across parsed visible text, window
   titles, visible control labels, and exposed text-field/search/edit values.
   Multiline field values are split into visible assertion lines when upstream
@@ -796,8 +797,11 @@ Finder, and Brave using only macuse/Codex Computer Use. Current status:
   upstream action reports `remoteConnection`, search text entry may not be
   targetable without pointer fallback, rows can have duplicate names, and many
   file rows appear as settable/navigation fields that should not be mutated.
-  Summaries now include a concise risk-sensitive-control note when controls such
-  as Save/Delete/Add/Remove are visible.
+  When a failed step has no app-state readback, macuse suppresses changed-state
+  summaries to avoid false deltas from error text; re-read state before deciding
+  whether Finder actually changed. Summaries now include a concise
+  risk-sensitive-control note when controls such as Save/Delete/Add/Remove are
+  visible.
 - `Raise`/frontmost restoration is not reliable across apps and offscreen
   windows. Treat focus summaries as evidence, not a guarantee; report failure to
   restore focus rather than hiding it.
