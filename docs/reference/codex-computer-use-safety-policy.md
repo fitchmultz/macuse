@@ -177,7 +177,9 @@ persistent `codex_cu_sequence` wrapper requires or enforces:
 - sequence wait helper pseudo-tools (`waitForText` for parsed visible text or
   raw text-entry values, `waitForElement`, `waitUntilElementEnabled`,
   `waitUntilElementDisabled`, plus best-effort `waitForURL` / `waitForTitle`)
-  that poll `get_app_state` instead of requiring manual sleeps
+  that poll `get_app_state` instead of requiring manual sleeps. Wait helpers
+  separate predicate `timeoutMs` from per-poll `toolTimeoutMs`; `waitForText`
+  supports `visibleOnly`, `title`, and `url` scoping to reduce false positives
 - focus summaries on read and sequence outputs (`before`, `after`,
   `frontmostChanged`, and target-app frontmost checks), plus pointer mouse
   restoration evidence when pointer tools are used
@@ -186,7 +188,10 @@ persistent `codex_cu_sequence` wrapper requires or enforces:
   descriptions, role/name, value, semantic tags (`settable-field`,
   `search-field`, `clear-control`, `risk-sensitive-control`), disabled state,
   changed-state summaries, warnings, and next-action hints where Computer Use
-  exposes enough accessibility evidence
+  exposes enough accessibility evidence. Mutating sequence steps perform a
+  post-action state readback and report `actionDispatchedButNoStateChange` when
+  upstream reports success but no observable title, URL, visible-text, or target
+  change appears; per-step `requireStateChange: true` turns that into a failure
 - search-field role normalization and conservative empty-`set_value` clear
   fallback when a single non-risky clear/cancel control is available
 - extension-level refusal of mutating calls unless `allowMutating: true` is passed

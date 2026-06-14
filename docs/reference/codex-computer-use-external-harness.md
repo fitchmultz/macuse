@@ -596,15 +596,23 @@ failure evidence; `compact` remains the default and `full` keeps raw trees.
 Sequence wait helper pseudo-tools (`waitForText` for parsed visible text or raw
 text-entry values, `waitForElement`, `waitUntilElementEnabled`,
 `waitUntilElementDisabled`, and best-effort `waitForURL` / `waitForTitle`) poll
-`get_app_state` and reduce manual sleep / resnapshot loops. `get_app_state` and
+`get_app_state` and reduce manual sleep / resnapshot loops. They separate
+predicate `timeoutMs` from per-poll `toolTimeoutMs`, avoid issuing final
+sub-1000ms transport calls, and `waitForText` can be scoped with `visibleOnly`,
+`title`, and `url`. `get_app_state` and
 sequence output include focus summaries (`before`, `after`, `frontmostChanged`,
 and target-app frontmost checks) so background-control runs can prove whether the
 target app stole focus. `get_app_state` and sequence `get_app_state` step details
 include machine-readable parsed element metadata with target hints, `visibleText`,
 `targets`, semantic `tags`, `changed`, `warnings`, and `nextActions` where
-available.
+available. Mutating sequence steps perform a post-action state readback and
+report `actionDispatchedButNoStateChange` when an AX action reports success but
+no observable title, URL, visible-text, or target change appears; per-step
+`requireStateChange: true` makes that condition fail closed.
 `includeImage` is model/host dependent; use `saveImagePath` when screenshot
-artifacts must be reliable. When upstream Computer Use returns timeout errors
+artifacts must be reliable. In sequences, `saveImagePath` defaults to the first
+step for compatibility; use `screenshotStep: "final"` to save the final visual
+state. When upstream Computer Use returns timeout errors
 such as `-10005 timeoutReached`, macuse now annotates the result with a clear
 blocker: filtering modes only reduce output after upstream responds and cannot
 make a hung browser accessibility snapshot safe. For Chrome/web tasks, use
@@ -779,9 +787,14 @@ Still needed before broad mutating GUI operation:
    terminal, when the MCP client sends Apple Events to `Codex Computer Use.app`.
    App-server made read-only calls work from iTerm, but other hosts may still
    need explicit permission.
-5. Continued refresh checks after Codex app updates, because app-server protocol
+5. Popover/menu capture remains an upstream limitation to dogfood: after some
+   model-picker/menu button actions, the next app state may not include the
+   transient popover contents. A future extension/API shape could add
+   `targetScope:"all-windows"` or `includePopovers:true` if upstream exposes
+   those windows reliably.
+6. Continued refresh checks after Codex app updates, because app-server protocol
    and feature flags may change.
-6. Further investigation of whether direct raw MCP can ever be made to work
+7. Further investigation of whether direct raw MCP can ever be made to work
    without app-server, or whether app-server should be treated as the required
    compatibility layer.
 

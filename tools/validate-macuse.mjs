@@ -339,6 +339,53 @@ factory({
   if (!negativeWait.details.computerUse.failed) throw new Error('pi extension negative waitForText did not fail');
   if (!negativeWait.content[0].text.includes('waitForText timed out')) throw new Error('pi extension negative waitForText did not report timeout');
   if (negativeElapsed > 3000) throw new Error('pi extension negative waitForText exceeded timeout budget: ' + negativeElapsed);
+  if (negativeWait.content[0].text.includes('mcpServer/tool/call timed out after')) throw new Error('pi extension negative wait leaked a tiny transport timeout instead of predicate timeout');
+  const scopedWait = await tools.get('codex_cu_sequence').execute('scoped-wait', {
+    app: 'Calculator',
+    steps: [
+      { tool: 'waitForText', arguments: { text: '0', title: 'Calculator', visibleOnly: true, timeoutMs: 5000, toolTimeoutMs: 90000 } },
+    ],
+    detail: 'minimal',
+    maxTextChars: 2000,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  if (scopedWait.details.computerUse.failed) throw new Error('pi extension scoped waitForText failed');
+  if (!String(scopedWait.details.computerUse.steps[0].targetResolution || '').includes('with title')) throw new Error('pi extension scoped waitForText did not report title scoping');
+  const noChangeRequired = await tools.get('codex_cu_sequence').execute('require-state-change', {
+    app: 'Calculator',
+    steps: [
+      { tool: 'perform_secondary_action', arguments: { targets: [{ elementId: 'AllClear' }, { elementDescription: 'Clear' }, { elementDescription: 'All Clear' }], action: 'Press' } },
+      { tool: 'perform_secondary_action', arguments: { targets: [{ elementId: 'AllClear' }, { elementDescription: 'Clear' }, { elementDescription: 'All Clear' }], action: 'Press' }, requireStateChange: true },
+    ],
+    allowMutating: true,
+    safetyNote: 'Validate Calculator-only requireStateChange turns a no-op All Clear action into an explicit sequence failure.',
+    detail: 'minimal',
+    maxTextChars: 3000,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  if (!noChangeRequired.details.computerUse.failed) throw new Error('pi extension requireStateChange did not fail a no-op action');
+  if (!noChangeRequired.content[0].text.includes('actionDispatchedButNoStateChange')) throw new Error('pi extension requireStateChange failure did not include no-state-change warning');
+  const finalShot = await tools.get('codex_cu_sequence').execute('final-shot', {
+    app: 'Calculator',
+    steps: [
+      { tool: 'perform_secondary_action', arguments: { targets: [{ elementId: 'AllClear' }, { elementDescription: 'Clear' }, { elementDescription: 'All Clear' }], action: 'Press' } },
+      { tool: 'perform_secondary_action', arguments: { elementId: 'One', action: 'Press' } },
+      { tool: 'get_app_state', arguments: {}, expectVisibleText: '1' },
+      { tool: 'perform_secondary_action', arguments: { targets: [{ elementId: 'AllClear' }, { elementDescription: 'Clear' }, { elementDescription: 'All Clear' }], action: 'Press' } },
+      { tool: 'get_app_state', arguments: {}, expectVisibleText: '0' },
+    ],
+    allowMutating: true,
+    safetyNote: 'Validate Calculator-only final screenshot save and restore to zero.',
+    detail: 'minimal',
+    saveImagePath: '.scratch/validate-final-shot.jpg',
+    screenshotStep: 'final',
+    maxTextChars: 4000,
+    toolTimeoutMs: 90000,
+  }, signal, () => {});
+  if (finalShot.details.computerUse.failed) throw new Error('pi extension final screenshot sequence failed');
+  if (finalShot.details.computerUse.screenshotStep !== 'final') throw new Error('pi extension did not record screenshotStep final');
+  const finalShotStep = finalShot.details.computerUse.steps[4];
+  if (!finalShotStep.savedImageArtifact || !String(finalShotStep.savedImagePath || '').endsWith('validate-final-shot.jpg')) throw new Error('pi extension did not save screenshot on final step');
   const staleWait = await tools.get('codex_cu_sequence').execute('stale-wait', {
     app: 'Calculator',
     steps: [

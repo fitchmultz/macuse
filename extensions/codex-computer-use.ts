@@ -86,6 +86,7 @@ type SequenceStep = {
 	expectAbsentText: string[];
 	expectVisibleText: string[];
 	allowError: boolean;
+	requireStateChange: boolean;
 };
 
 type ListAppsParams = {
@@ -118,6 +119,7 @@ type SequenceParams = {
 	safetyNote?: string;
 	includeImage?: boolean;
 	saveImagePath?: string;
+	screenshotStep?: "first" | "final";
 	detail?: DetailMode;
 	targetScope?: TargetScope;
 	maxTextChars?: number;
@@ -526,8 +528,19 @@ function elementStabilityNote(text: string): string | null {
 	for (const element of interactive) roleNameCounts.set(`${element.role}\u0000${element.name}`, (roleNameCounts.get(`${element.role}\u0000${element.name}`) ?? 0) + 1);
 	const uniqueRoleName = interactive.filter((element) => !element.id && !element.description && (roleNameCounts.get(`${element.role}\u0000${element.name}`) ?? 0) === 1).length;
 	const rawIndexOnly = interactive.length - withIds - withDescriptions - uniqueRoleName;
-	if (rawIndexOnly === 0 && withIds === interactive.length) return null;
-	return `Target stability: ${interactive.length} interactive elements; elementId=${withIds}; elementDescription=${withDescriptions}; unique role/name=${uniqueRoleName}; raw index only=${rawIndexOnly}. Prefer elementId, then elementDescription, then unique role/name or press_key/type_text; use element_index with expectedRole/expectedName guards after mutations.`;
+	const idCounts = new Map<string, ElementInfo[]>();
+	const roleNameElements = new Map<string, ElementInfo[]>();
+	for (const element of interactive) {
+		if (element.id) idCounts.set(element.id, [...(idCounts.get(element.id) ?? []), element]);
+		if (element.role && element.name) roleNameElements.set(`${element.role}\u0000${element.name}`, [...(roleNameElements.get(`${element.role}\u0000${element.name}`) ?? []), element]);
+	}
+	const duplicateIds = [...idCounts.entries()].filter(([, elements]) => elements.length > 1).slice(0, 3).map(([id, elements]) => `${JSON.stringify(id)} at indexes ${elements.map((element) => element.index).join("/")}`);
+	const duplicateRoleNames = [...roleNameElements.entries()].filter(([, elements]) => elements.length > 1 && !elements.some((element) => element.id || element.description)).slice(0, 3).map(([key, elements]) => {
+		const [role, name] = key.split("\u0000");
+		return `${role}/${JSON.stringify(name)} at indexes ${elements.map((element) => element.index).join("/")}`;
+	});
+	if (rawIndexOnly === 0 && withIds === interactive.length && duplicateIds.length === 0) return null;
+	return `Target stability: ${interactive.length} interactive elements; elementId=${withIds}; elementDescription=${withDescriptions}; unique role/name=${uniqueRoleName}; raw index only=${rawIndexOnly}${duplicateIds.length ? `; duplicate elementId: ${duplicateIds.join(", ")}` : ""}${duplicateRoleNames.length ? `; duplicate role/name: ${duplicateRoleNames.join(", ")}` : ""}. Prefer elementId, then elementDescription, then unique role/name or press_key/type_text; use element_index with expectedRole/expectedName guards after mutations. When IDs/names are duplicated, use the shown indexes with stale-target guards after a fresh state read.`;
 }
 
 function compactText(text: string, scope: TargetScope = "all"): string {
@@ -1086,7 +1099,10 @@ function computerUseDiagnostic(result: FilteredToolResult, tool: string, args: R
 
 function appendComputerUseDiagnostic(result: FilteredToolResult, tool: string, args: Record<string, JsonValue>): string | null {
 	const diagnostic = computerUseDiagnostic(result, tool, args);
-	if (diagnostic) appendText(result, diagnostic);
+	if (diagnostic) {
+		appendText(result, diagnostic);
+		if (/no active state session|refused/i.test(diagnostic)) result.isError = true;
+	}
 	return diagnostic;
 }
 
@@ -1756,22 +1772,24 @@ function validateWaitArguments(tool: string, args: Record<string, JsonValue>): v
 
 function waitConditionMet(tool: string, args: Record<string, JsonValue>, result: FilteredToolResult, cache: Map<string, ElementInfo[]>): string | null {
 	const app = typeof args.app === "string" ? args.app : "";
+	const summary = stateSummary(result.content);
+	if (typeof args.title === "string" && !(summary.title && summary.title.includes(args.title))) return null;
+	if (typeof args.url === "string" && !(summary.url && summary.url.includes(args.url))) return null;
 	if (tool === "waitForText") {
 		if (typeof args.text !== "string") throw new Error("waitForText requires arguments.text.");
 		const expected = normalizeAssertionText(args.text);
 		const visible = visibleTextValues(result.content);
 		const raw = normalizeAssertionText(assertionContentText(result.content));
-		if (visible.some((value) => value.includes(expected))) return `waitForText matched visible text ${JSON.stringify(args.text)}`;
-		return raw.includes(expected) ? `waitForText matched raw app content text/value ${JSON.stringify(args.text)}` : null;
+		if (visible.some((value) => value.includes(expected))) return `waitForText matched visible text ${JSON.stringify(args.text)}${typeof args.title === "string" ? ` with title ${JSON.stringify(args.title)}` : ""}${typeof args.url === "string" ? ` with URL ${JSON.stringify(args.url)}` : ""}`;
+		if (args.visibleOnly === true) return null;
+		return raw.includes(expected) ? `waitForText matched raw app content text/value ${JSON.stringify(args.text)}${typeof args.title === "string" ? ` with title ${JSON.stringify(args.title)}` : ""}${typeof args.url === "string" ? ` with URL ${JSON.stringify(args.url)}` : ""}` : null;
 	}
 	if (tool === "waitForURL") {
 		if (typeof args.url !== "string") throw new Error("waitForURL requires arguments.url.");
-		const summary = stateSummary(result.content);
 		return summary.url && summary.url.includes(args.url) ? `waitForURL matched ${JSON.stringify(args.url)} at ${summary.url}` : null;
 	}
 	if (tool === "waitForTitle") {
 		if (typeof args.title !== "string") throw new Error("waitForTitle requires arguments.title.");
-		const summary = stateSummary(result.content);
 		return summary.title && summary.title.includes(args.title) ? `waitForTitle matched ${JSON.stringify(args.title)} at ${summary.title}` : null;
 	}
 	let resolved = resolveElementTargetFallbacks(args, cache);
@@ -1789,14 +1807,17 @@ function waitConditionMet(tool: string, args: Record<string, JsonValue>, result:
 async function runWaitStep(step: SequenceStep, args: Record<string, JsonValue>, opts: { approval: ApprovalMode; timeoutMs: number; maxTextChars: number; signal?: AbortSignal; cache: Map<string, ElementInfo[]>; beforeState: StateSummary | null; scope: TargetScope }): Promise<{ result: FilteredToolResult; durationMs: number; targetResolution?: string; elements: MachineElement[]; visibleText: string[]; changed: ChangeSummary | null; nextActions: string[] }> {
 	validateWaitArguments(step.tool, args);
 	const started = Date.now();
-	const deadline = started + asInt(args.timeoutMs, opts.timeoutMs);
+	const waitTimeoutMs = asInt(args.timeoutMs, opts.timeoutMs);
+	const perPollToolTimeoutMs = asInt(args.toolTimeoutMs, opts.timeoutMs);
+	const deadline = started + waitTimeoutMs;
 	const intervalMs = Math.max(100, Math.min(asInt(args.intervalMs, 750), 10_000));
 	let last: FilteredToolResult | null = null;
 	let lastMessage = "condition did not match";
 	for (;;) {
 		const remainingMs = deadline - Date.now();
-		if (remainingMs <= 0) break;
-		const call = await client.callTool("get_app_state", { app: args.app }, { approval: opts.approval, timeoutMs: Math.min(opts.timeoutMs, remainingMs), signal: opts.signal });
+		if (remainingMs < 1_000) break;
+		const callTimeoutMs = Math.max(1_000, Math.min(perPollToolTimeoutMs, remainingMs));
+		const call = await client.callTool("get_app_state", { app: args.app }, { approval: opts.approval, timeoutMs: callTimeoutMs, signal: opts.signal });
 		const result = filterToolResult(call.result, { maxTextChars: opts.maxTextChars });
 		appendComputerUseDiagnostic(result, "get_app_state", { app: args.app });
 		updateElementCache(opts.cache, args.app, result.content);
@@ -1817,7 +1838,7 @@ async function runWaitStep(step: SequenceStep, args: Record<string, JsonValue>, 
 		if (sleepMs <= 0) break;
 		await new Promise((resolve) => setTimeout(resolve, sleepMs));
 	}
-	const message = `${step.tool} timed out after ${asInt(args.timeoutMs, opts.timeoutMs)}ms: ${lastMessage}. Next action: re-run codex_cu_get_app_state with detail:"minimal" for ${args.app}.`;
+	const message = `${step.tool} timed out after ${waitTimeoutMs}ms: ${lastMessage}. Next action: re-run codex_cu_get_app_state with detail:"minimal" for ${args.app}. Transport get_app_state calls used up to ${perPollToolTimeoutMs}ms each, with the final sub-1000ms remainder handled by the wait predicate instead of issuing a tiny transport call.`;
 	if (last) appendText(last, message);
 	else last = failureResult(message, opts.maxTextChars);
 	last.isError = true;
@@ -1841,6 +1862,7 @@ function normalizeSequenceSteps(value: unknown): SequenceStep[] {
 			expectAbsentText: normalizeStringList(step.expectAbsentText, `sequence step ${index} expectAbsentText`),
 			expectVisibleText: normalizeStringList(step.expectVisibleText, `sequence step ${index} expectVisibleText`),
 			allowError: step.allowError === true,
+			requireStateChange: step.requireStateChange === true,
 		};
 	});
 }
@@ -2133,14 +2155,15 @@ export default function (pi: ExtensionAPI) {
 		],
 		parameters: Type.Object({
 			app: Type.Optional(Type.String({ description: "Optional default app name/bundle/path applied to steps whose arguments omit app." })),
-			steps: Type.Array(Type.Any({ description: "Ordered Computer Use tool calls. Each step must be an object with tool, optional arguments, optional label, expectText, expectAbsentText, expectVisibleText, and allowError. Element-targeted tools accept element_index as string or number, element as an alias, elementId/element_id, elementDescription/element_description, role/name selectors, or arguments.targets fallback objects; raw index targets may pass expectedRole/expectedName/expectedDescription/expectedId/expectedValue for stale-target guards. Wait helpers accept timeoutMs and intervalMs. set_value can put value inside arguments or as top-level step.value. select_text selects by text string, not start/end offsets." }), { minItems: 1, description: "Ordered Computer Use tool calls to run in one persistent app-server thread." }),
+			steps: Type.Array(Type.Any({ description: "Ordered Computer Use tool calls. Each step must be an object with tool, optional arguments, optional label, expectText, expectAbsentText, expectVisibleText, allowError, and optional requireStateChange. Element-targeted tools accept element_index as string or number, element as an alias, elementId/element_id, elementDescription/element_description, role/name selectors, or arguments.targets fallback objects; raw index targets may pass expectedRole/expectedName/expectedDescription/expectedId/expectedValue for stale-target guards. Wait helpers accept timeoutMs, intervalMs, toolTimeoutMs, visibleOnly, and optional title/url scoping. set_value can put value inside arguments or as top-level step.value. select_text selects by text string, not start/end offsets." }), { minItems: 1, description: "Ordered Computer Use tool calls to run in one persistent app-server thread." }),
 			approval: approvalParam,
 			allowMutating: Type.Optional(Type.Boolean({ description: "Required when any step is not list_apps or get_app_state." })),
 			allowPointerClick: Type.Optional(Type.Boolean({ description: "Required to use the pointer-based click tool. Prefer perform_secondary_action action=Press when possible." })),
 			allowPointerDrag: Type.Optional(Type.Boolean({ description: "Required to use the pointer-based drag tool. The extension restores the mouse position afterward." })),
 			safetyNote: Type.Optional(Type.String({ description: "Required for mutating steps. State target app, intended effect, and stop boundary." })),
 			includeImage: Type.Optional(Type.Boolean({ description: "Attach screenshot image blocks returned by sequence steps when the current model/host supports image blocks. Use saveImagePath for reliable screenshot artifacts. Default false." })),
-			saveImagePath: Type.Optional(Type.String({ description: "Optional filesystem path where the first returned screenshot should be saved." })),
+			saveImagePath: Type.Optional(Type.String({ description: "Optional filesystem path where a sequence screenshot should be saved. Use screenshotStep to choose first or final state. Default first for backward compatibility." })),
+			screenshotStep: Type.Optional(StringEnum(["first", "final"] as const, { description: "Which sequence step may save saveImagePath. Default first; use final to capture final visual state." })),
 			detail: Type.Optional(StringEnum(["minimal", "compact", "full"] as const, { description: "Output detail. Default compact for sequences. minimal suppresses successful non-state action bodies; full returns full accessibility trees for every step." })),
 			targetScope: Type.Optional(StringEnum(["all", "main"] as const, { description: "Output target scope for parsed targets. main suppresses likely app/browser chrome and window controls where possible." })),
 			maxTextChars: maxTextParam,
@@ -2173,6 +2196,7 @@ export default function (pi: ExtensionAPI) {
 			const maxTextChars = asInt(input.maxTextChars, DEFAULT_MAX_TEXT_CHARS);
 			const detail = normalizeDetail(input.detail, "compact");
 			const targetScope: TargetScope = input.targetScope === "main" ? "main" : "all";
+			const screenshotStep = input.screenshotStep === "final" ? "final" : "first";
 			const mouseBefore = hasPointerClick || hasPointerDrag ? getMousePosition() : null;
 			let mouseRestored = false;
 			const frontmostBefore = await captureFocusSnapshot(approval, toolTimeoutMs, maxTextChars, signal);
@@ -2187,7 +2211,7 @@ export default function (pi: ExtensionAPI) {
 					let stepArgs = originalStepArgs;
 					let targetResolution: string | undefined;
 					try {
-						const beforeState = typeof stepArgs.app === "string" ? stateCache.get(stepArgs.app) ?? null : null;
+						let beforeState = typeof stepArgs.app === "string" ? stateCache.get(stepArgs.app) ?? null : null;
 						if (isWaitTool(step.tool)) {
 							const waited = await runWaitStep(step, stepArgs, { approval, timeoutMs: toolTimeoutMs, maxTextChars, signal, cache: elementCache, beforeState, scope: targetScope });
 							const row: SequencedResult = {
@@ -2233,7 +2257,8 @@ export default function (pi: ExtensionAPI) {
 							const refreshed = filterToolResult(refresh.result, { maxTextChars });
 							updateElementCache(elementCache, stepArgs.app, refreshed.content);
 							updateElementCache(sessionElementCache, stepArgs.app, refreshed.content);
-							stateCache.set(stepArgs.app, stateSummary(refreshed.content, targetScope));
+							beforeState = stateSummary(refreshed.content, targetScope);
+							stateCache.set(stepArgs.app, beforeState);
 							implicitRefreshes += 1;
 						}
 						stepArgs = resolveElementTargetFallbacks(stepArgs, elementCache);
@@ -2253,17 +2278,26 @@ export default function (pi: ExtensionAPI) {
 								targetResolution = `${targetResolution ?? "resolved target"}; empty set_value fallback used clear-control button element_index ${clearTarget.index} (${elementLineWithTargetHint(clearTarget)})`;
 							}
 						}
+						const saveImageForStep = screenshotStep === "first" ? index === 0 : index === steps.length - 1;
 						const call = await client.callTool(callTool, callArgs, { approval, timeoutMs: toolTimeoutMs, signal });
 						let filtered = filterToolResult(call.result, {
 							includeImage: Boolean(input.includeImage),
-							saveImagePath: index === 0 ? input.saveImagePath : undefined,
+							saveImagePath: saveImageForStep ? input.saveImagePath : undefined,
 							maxTextChars,
 						});
+						let postActionNoChange = false;
+						let postActionReadbackDone = false;
 						if (step.tool === "set_value" && typeof stepArgs.value === "string" && stepArgs.value.length > 0 && typeof stepArgs.app === "string") {
 							const verify = await client.callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
-							const verified = filterToolResult(verify.result, { maxTextChars });
+							const verified = filterToolResult(verify.result, {
+								includeImage: Boolean(input.includeImage),
+								saveImagePath: saveImageForStep ? input.saveImagePath : undefined,
+								maxTextChars,
+							});
+							appendComputerUseDiagnostic(verified, "get_app_state", { app: stepArgs.app });
 							updateElementCache(elementCache, stepArgs.app, verified.content);
 							updateElementCache(sessionElementCache, stepArgs.app, verified.content);
+							postActionReadbackDone = true;
 							if (normalizeAssertionText(assertionContentText(verified.content)).includes(normalizeAssertionText(stepArgs.value))) {
 								appendText(verified, `set_value verified in post-action app state: ${JSON.stringify(stepArgs.value)}`);
 								filtered = verified;
@@ -2272,19 +2306,40 @@ export default function (pi: ExtensionAPI) {
 								appendText(filtered, `set_value did not appear in post-action app state; upstream may have reported a false positive for target ${targetResolution ?? "<unknown>"}. Expected value: ${JSON.stringify(stepArgs.value)}. Try a focused keyboard fallback only when the target document/window is unambiguous.`);
 							}
 						}
+						const isStateTool = step.tool === "get_app_state" || step.tool === "list_apps";
+						if (!postActionReadbackDone && !filtered.isError && !isStateTool && typeof stepArgs.app === "string") {
+							const verify = await client.callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
+							const verified = filterToolResult(verify.result, {
+								includeImage: Boolean(input.includeImage),
+								saveImagePath: saveImageForStep ? input.saveImagePath : undefined,
+								maxTextChars,
+							});
+							appendComputerUseDiagnostic(verified, "get_app_state", { app: stepArgs.app });
+							const verifiedState = stateSummary(verified.content, targetScope);
+							const readbackChange = compareState(beforeState, verifiedState);
+							postActionNoChange = !readbackChange || (!readbackChange.visibleTextChanged && !readbackChange.titleChanged && !readbackChange.urlChanged && readbackChange.targetsAdded.length === 0 && readbackChange.targetsRemoved.length === 0);
+							if (postActionNoChange) {
+								appendText(verified, `Warning: actionDispatchedButNoStateChange — ${step.tool} returned success, but a post-action get_app_state readback did not show observable title, URL, visible-text, or target changes. If the target should have opened/navigated, treat this as a failed UI action; retry after a fresh state read or escalate to guarded pointer click using allowPointerClick when the target/window is unambiguous.`);
+							}
+							if (step.requireStateChange && postActionNoChange) verified.isError = true;
+							updateElementCache(elementCache, stepArgs.app, verified.content);
+							updateElementCache(sessionElementCache, stepArgs.app, verified.content);
+							filtered = verified;
+						}
 						const diagnostics = [appendComputerUseDiagnostic(filtered, step.tool, stepArgs)].filter((item): item is string => Boolean(item));
 						const afterState = stateSummary(filtered.content, targetScope);
 						updateElementCache(elementCache, stepArgs.app, filtered.content);
 						updateElementCache(sessionElementCache, stepArgs.app, filtered.content);
 						if (typeof stepArgs.app === "string") stateCache.set(stepArgs.app, afterState);
 						if (detail === "full") appendElementStabilityNote(filtered);
-						appendImageWarning(filtered, { includeImage: Boolean(input.includeImage), saveImagePath: index === 0 ? input.saveImagePath : undefined });
+						appendImageWarning(filtered, { includeImage: Boolean(input.includeImage), saveImagePath: saveImageForStep ? input.saveImagePath : undefined });
 						enrichActionError(filtered, stepArgs, elementCache);
 						const changed = compareState(beforeState, afterState);
 						const rawIndexTarget = originalStepArgs.element_index !== undefined || originalStepArgs.element !== undefined;
 						const nextActions = [
 							...(rawIndexTarget && changed && (changed.urlChanged || changed.titleChanged || changed.visibleTextChanged) && !step.tool.startsWith("get_app_state") ? [`If the UI rerendered or navigated, call codex_cu_get_app_state({app:${JSON.stringify(stepArgs.app)}, detail:"minimal"}) before using raw element_index targets.`] : []),
 							...(diagnostics.length > 0 ? [`Resolve upstream Computer Use state for ${JSON.stringify(stepArgs.app)} before retrying mutating actions; use agent_browser for web/Chrome if Computer Use state keeps timing out.`] : []),
+							...(postActionNoChange ? [`AX action dispatched but no observable state change was seen. If a click/open was expected, retry with a fresh state read; use a pointer click fallback only with allowPointerClick and an unambiguous target/window.`] : []),
 						];
 						const row: SequencedResult = {
 							index,
@@ -2310,7 +2365,7 @@ export default function (pi: ExtensionAPI) {
 							validateStepResult(row);
 						} catch (error) {
 							row.result.isError = true;
-							row.result.content = [{ type: "text", text: `Sequence stopped: ${errorMessage(error)}` }];
+							row.result.content = [{ type: "text", text: `Sequence stopped: ${errorMessage(error)}` }, ...row.result.content];
 							failed = { index, stepNumber: index + 1, tool: step.tool, label: step.label, message: errorMessage(error) };
 						}
 						if (detail === "compact" && !row.result.isError) row.result.content = compactContent(row.result.content, targetScope);
@@ -2366,6 +2421,7 @@ export default function (pi: ExtensionAPI) {
 					defaultApp: defaultApp ?? null,
 					implicitRefreshes,
 					imageSupportNote: input.includeImage ? "Image rendering is model/host dependent; saveImagePath is the reliable screenshot artifact path." : null,
+					screenshotStep,
 					focus,
 					pointerToolsUsed: hasPointerClick || hasPointerDrag,
 					steps: results.map((step) => ({

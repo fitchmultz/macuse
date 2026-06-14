@@ -43,6 +43,7 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
    - a narrow `safetyNote`
    - before/after `get_app_state`
    - assertions such as `expectText`, `expectAbsentText`, or `expectVisibleText`
+   - `requireStateChange: true` on steps where a no-op should fail closed
    - cleanup/restore steps when practical.
 7. Read the run summary first. Check apps touched, actions, target method, safety tags, final visible text, focus, and anomaly hints before inspecting verbose step details.
 8. If a sequence fails, use `failedStepIndex`, `completedStepCount`, and `resumeFromStepIndex`; do not blindly replay prior mutating steps.
@@ -54,6 +55,8 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
 - Use `expectVisibleText` for UI-visible assertions. Use `expectText` only for app content text/value checks; it intentionally ignores macuse/upstream metadata such as CUA version headers.
 - Do not clear text, select files, open files, submit forms, or press destructive controls unless that exact operation is low-risk and covered by the safety note or user approval.
 - If Computer Use times out or state looks stale, stop mutation and report the blocker. Try `/macuse-restart`, a larger `toolTimeoutMs`, or a read-only re-snapshot before considering another action.
+- Treat `actionDispatchedButNoStateChange` as a failed intended open/navigation unless the action was expected to be a no-op. Retry from a fresh state read; use pointer fallback only with `allowPointerClick` and an unambiguous target/window.
+- Scope waits when possible. `waitForText` accepts `visibleOnly: true` plus optional `title` or `url` guards to avoid matching stale/recent-list text.
 - For repeated `cgWindowNotFound`, `frontmost=<none>`, service timeouts, or suspected macOS TCC/Automation failures, run `node tools/macuse-doctor.mjs --out .scratch/doctor` when you are in this repo. Use `node tools/macuse-repair.mjs` for a dry-run repair preview. Apply repairs only with explicit user approval because `--apply`, `--restart-appserver`, `--restart-service`, `--unlock-with-env`, and `--repair-tcc` mutate local GUI/process/privacy state.
 
 ## Evidence to report
@@ -64,7 +67,7 @@ Include only the facts needed for audit:
 - resolved target method and safety tags
 - assertions and final visible state
 - focus before/after
-- saved screenshot artifact path if used
+- saved screenshot artifact path if used; for sequences use `screenshotStep: "final"` when the final visual state matters
 - failures, anomaly hints, and whether cleanup restored the app state
 
 ## Local validation commands
