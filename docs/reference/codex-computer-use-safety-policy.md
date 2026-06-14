@@ -192,7 +192,9 @@ persistent `codex_cu_sequence` wrapper requires or enforces:
   post-action state readback and report `actionDispatchedButNoStateChange` when
   upstream reports success but no observable title, URL, visible-text, or target
   change appears; per-step `requireStateChange: true` turns that into a failure
-  and captures a pre-action baseline for non-element actions such as `press_key`
+  and captures a pre-action baseline for non-element actions such as `press_key`;
+  if the first readback shows no change, a short delayed readback is attempted
+  before failing to better catch transient popovers/editors
 - search-field role normalization, `navigation-field` tagging for browser
   address/search controls where `set_value` may navigate/submit, and
   conservative empty-`set_value` clear fallback when a single non-risky

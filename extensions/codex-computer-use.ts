@@ -647,9 +647,14 @@ function contentIncludesMultilineValue(content: ContentBlock[] | undefined, expe
 }
 
 function visibleTextValues(content: ContentBlock[]): string[] {
-	return parseElementInfo(contentText(content))
-		.filter((element) => /\btext\b/i.test(element.line))
-		.map((element) => normalizeAssertionText(element.line.replace(/^\s*\d+\s+text\s+/, "").trim()))
+	const values: string[] = [];
+	for (const element of parseElementInfo(contentText(content))) {
+		if (/\btext\b/i.test(element.line)) values.push(element.line.replace(/^\s*\d+\s+text\s+/, "").trim());
+		if (element.value && /\b(text|field|search|edit|scroll area)\b/i.test(element.role)) values.push(element.value);
+	}
+	return values
+		.flatMap((value) => normalizeAssertionText(value).split(/\r?\n/))
+		.map((value) => value.trim())
 		.filter(Boolean);
 }
 
@@ -1800,13 +1805,14 @@ function validateWaitArguments(tool: string, args: Record<string, JsonValue>): v
 function waitConditionMet(tool: string, args: Record<string, JsonValue>, result: FilteredToolResult, cache: Map<string, ElementInfo[]>): string | null {
 	const app = typeof args.app === "string" ? args.app : "";
 	const summary = stateSummary(result.content);
-	if (typeof args.title === "string" && !(summary.title && summary.title.includes(args.title))) return null;
-	if (typeof args.url === "string" && !(summary.url && summary.url.includes(args.url))) return null;
+	const visible = visibleTextValues(result.content);
+	const raw = normalizeAssertionText(assertionContentText(result.content));
+	const scopeHaystack = normalizeAssertionText([summary.title, summary.url, ...visible, raw].filter(Boolean).join("\n"));
+	if (typeof args.title === "string" && !scopeHaystack.includes(normalizeAssertionText(args.title))) return null;
+	if (typeof args.url === "string" && !scopeHaystack.includes(normalizeAssertionText(args.url))) return null;
 	if (tool === "waitForText") {
 		if (typeof args.text !== "string") throw new Error("waitForText requires arguments.text.");
 		const expected = normalizeAssertionText(args.text);
-		const visible = visibleTextValues(result.content);
-		const raw = normalizeAssertionText(assertionContentText(result.content));
 		if (visible.some((value) => value.includes(expected))) return `waitForText matched visible text ${JSON.stringify(args.text)}${typeof args.title === "string" ? ` with title ${JSON.stringify(args.title)}` : ""}${typeof args.url === "string" ? ` with URL ${JSON.stringify(args.url)}` : ""}`;
 		if (args.visibleOnly === true) return null;
 		return raw.includes(expected) ? `waitForText matched raw app content text/value ${JSON.stringify(args.text)}${typeof args.title === "string" ? ` with title ${JSON.stringify(args.title)}` : ""}${typeof args.url === "string" ? ` with URL ${JSON.stringify(args.url)}` : ""}` : null;
@@ -2354,15 +2360,35 @@ export default function (pi: ExtensionAPI) {
 						const isStateTool = step.tool === "get_app_state" || step.tool === "list_apps";
 						if (!postActionReadbackDone && !filtered.isError && !isStateTool && typeof stepArgs.app === "string") {
 							const verify = await client.callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
-							const verified = filterToolResult(verify.result, {
+							let verified = filterToolResult(verify.result, {
 								includeImage: Boolean(input.includeImage),
 								saveImagePath: saveImageForStep ? input.saveImagePath : undefined,
 								maxTextChars,
 							});
 							appendComputerUseDiagnostic(verified, "get_app_state", { app: stepArgs.app });
-							const verifiedState = stateSummary(verified.content, targetScope);
-							const readbackChange = compareState(beforeState, verifiedState);
+							let verifiedState = stateSummary(verified.content, targetScope);
+							let readbackChange = compareState(beforeState, verifiedState);
 							postActionNoChange = !readbackChange || (!readbackChange.visibleTextChanged && !readbackChange.titleChanged && !readbackChange.urlChanged && readbackChange.targetsAdded.length === 0 && readbackChange.targetsRemoved.length === 0);
+							if (postActionNoChange && step.requireStateChange) {
+								await new Promise((resolve) => setTimeout(resolve, 600));
+								const delayedVerify = await client.callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
+								const delayed = filterToolResult(delayedVerify.result, {
+									includeImage: Boolean(input.includeImage),
+									saveImagePath: saveImageForStep ? input.saveImagePath : undefined,
+									maxTextChars,
+								});
+								appendComputerUseDiagnostic(delayed, "get_app_state", { app: stepArgs.app });
+								const delayedState = stateSummary(delayed.content, targetScope);
+								const delayedChange = compareState(beforeState, delayedState);
+								const delayedNoChange = !delayedChange || (!delayedChange.visibleTextChanged && !delayedChange.titleChanged && !delayedChange.urlChanged && delayedChange.targetsAdded.length === 0 && delayedChange.targetsRemoved.length === 0);
+								if (!delayedNoChange) {
+									appendText(delayed, "requireStateChange verified after delayed post-action readback; transient UI was not visible on the first readback.");
+									verified = delayed;
+									verifiedState = delayedState;
+									readbackChange = delayedChange;
+									postActionNoChange = false;
+								}
+							}
 							if (postActionNoChange) {
 								appendText(verified, `Warning: actionDispatchedButNoStateChange — ${step.tool} returned success, but a post-action get_app_state readback did not show observable title, URL, visible-text, or target changes. If the target should have opened/navigated, treat this as a failed UI action; retry after a fresh state read or escalate to guarded pointer click using allowPointerClick when the target/window is unambiguous.`);
 							}

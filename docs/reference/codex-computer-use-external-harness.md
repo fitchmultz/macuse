@@ -609,7 +609,9 @@ available. Mutating sequence steps perform a post-action state readback and
 report `actionDispatchedButNoStateChange` when an AX action reports success but
 no observable title, URL, visible-text, or target change appears; per-step
 `requireStateChange: true` makes that condition fail closed and captures a
-pre-action baseline for non-element actions such as `press_key`.
+pre-action baseline for non-element actions such as `press_key`; if the first
+readback shows no change, a short delayed readback is attempted before failing
+to better catch transient popovers/editors.
 `includeImage` is model/host dependent; use `saveImagePath` when screenshot
 artifacts must be reliable. In sequences, `saveImagePath` defaults to the first
 step for compatibility; use `screenshotStep: "final"` to save the final visual
