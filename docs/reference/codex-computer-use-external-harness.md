@@ -768,10 +768,12 @@ Finder, and Brave using only macuse/Codex Computer Use. Current status:
 - Calculator arithmetic, stable target fallback, `requireStateChange`, and final
   screenshot capture work well.
 - Browser `waitForText` with `visibleOnly`, `title`, and `url` scoping now uses a
-  broader state corpus and worked for Brave new-tab/address-bar text. `waitForURL`
-  recognizes non-HTTP browser URLs such as `brave://newtab/` and `about:blank`.
-  Browser address/search fields remain tagged `navigation-field`; treat
-  `set_value` as potentially navigating/submitting.
+  broader visible corpus while keeping `title` as a strict window-title guard to
+  avoid stale/page-text matches. `waitForURL` recognizes non-HTTP browser URLs
+  such as `brave://newtab/` and `about:blank`. Browser address/search fields
+  remain tagged `navigation-field`; treat `set_value` and `type_text` as
+  potentially changing URL/title state or navigating/submitting. macuse warns
+  when browser text input changes URL/title state.
 - `expectVisibleText` now matches substrings across parsed visible text, window
   titles, visible control labels, and exposed text-field/search/edit values.
   Multiline field values are split into visible assertion lines when upstream

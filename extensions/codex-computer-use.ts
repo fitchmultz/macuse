@@ -1053,7 +1053,10 @@ function enrichActionError(result: FilteredToolResult, args: Record<string, Json
 	const actions = element.secondaryActions.length > 0 ? element.secondaryActions.join(", ") : "none listed";
 	const hints: string[] = [];
 	if (element.tags.includes("settable-field") || /\b(text|field|search|edit|scroll area)\b/i.test(element.role)) {
-		hints.push("For text/edit/search targets, prefer set_value, type_text after verified focus, or select_text; perform_secondary_action Press is often unsupported.");
+		hints.push("For text/edit/search targets, prefer set_value only when the target is actually settable, type_text after verified focus, or select_text; perform_secondary_action Press is often unsupported.");
+	}
+	if (args.value !== undefined && !element.tags.includes("settable-field")) {
+		hints.push("This target exposes text/search UI but is not marked settable by Accessibility; set_value is expected to fail. Use keyboard focus flow or stop before pointer fallback unless explicitly approved.");
 	}
 	if (element.tags.includes("navigation-field")) {
 		hints.push("This target looks like a navigation/address field; set_value may navigate or submit a search. Stop unless navigation is explicitly allowed.");
@@ -1848,9 +1851,11 @@ function waitConditionMet(tool: string, args: Record<string, JsonValue>, result:
 	const summary = stateSummary(result.content);
 	const visible = visibleAssertionValues(result.content);
 	const raw = normalizeAssertionText(assertionContentText(result.content));
-	const scopeHaystack = normalizeAssertionText([summary.title, summary.url, ...visible, raw].filter(Boolean).join("\n"));
-	if (typeof args.title === "string" && !scopeHaystack.includes(normalizeAssertionText(args.title))) return null;
-	if (typeof args.url === "string" && !scopeHaystack.includes(normalizeAssertionText(args.url))) return null;
+	const normalizedTitle = typeof args.title === "string" ? normalizeAssertionText(args.title) : "";
+	const normalizedUrl = typeof args.url === "string" ? normalizeAssertionText(args.url) : "";
+	if (normalizedTitle && !(summary.title && normalizeAssertionText(summary.title).includes(normalizedTitle))) return null;
+	const urlScopeHaystack = normalizeAssertionText([summary.url, raw].filter(Boolean).join("\n"));
+	if (normalizedUrl && !urlScopeHaystack.includes(normalizedUrl)) return null;
 	if (tool === "waitForText") {
 		if (typeof args.text !== "string") throw new Error("waitForText requires arguments.text.");
 		const expected = normalizeAssertionText(args.text);
@@ -1985,6 +1990,10 @@ function assertionSummary(step: SequencedResult): string | null {
 	const visible = visibleAssertionValues(step.result.content);
 	for (const rawExpected of step.expectVisibleText) lines.push(`expectVisibleText passed: ${JSON.stringify(rawExpected)}${visible.length > 0 ? `; visible text: ${JSON.stringify(visible.join(" | "))}` : ""}`);
 	return lines.length > 0 ? lines.join("\n") : null;
+}
+
+function browserLikeAppName(value: JsonValue | undefined): boolean {
+	return typeof value === "string" && /\b(?:brave|chrome|chromium|safari|firefox|browser)\b/i.test(value);
 }
 
 function sequenceTargetMethod(step: SequencedResult): string {
@@ -2469,11 +2478,16 @@ export default function (pi: ExtensionAPI) {
 						enrichActionError(filtered, stepArgs, elementCache);
 						const changed = compareState(beforeState, afterState);
 						const rawIndexTarget = originalStepArgs.element_index !== undefined || originalStepArgs.element !== undefined;
+						const browserInputChangedNavigationState = browserLikeAppName(stepArgs.app) && ["set_value", "type_text"].includes(step.tool) && Boolean(changed && (changed.urlChanged || changed.titleChanged));
+						if (browserInputChangedNavigationState) {
+							appendText(filtered, `Warning: browserInputChangedNavigationState — ${step.tool} in a browser changed URL/title state. Treat address/search fields as navigation controls even without pressing Return; verify no unintended external request or tab navigation occurred before continuing.`);
+						}
 						const nextActions = [
 							...(rawIndexTarget && changed && (changed.urlChanged || changed.titleChanged || changed.visibleTextChanged) && !step.tool.startsWith("get_app_state") ? [`If the UI rerendered or navigated, call codex_cu_get_app_state({app:${JSON.stringify(stepArgs.app)}, detail:"minimal"}) before using raw element_index targets.`] : []),
 							...(diagnostics.length > 0 ? [`Resolve upstream Computer Use state for ${JSON.stringify(stepArgs.app)} before retrying mutating actions; use agent_browser for web/Chrome if Computer Use state keeps timing out.`] : []),
 							...(postActionNoChange ? [`AX action dispatched but no observable state change was seen. If a click/open was expected, retry with a fresh state read; use a pointer click fallback only with allowPointerClick and an unambiguous target/window.`] : []),
 							...(actionErrorRecoveredByStateChange ? [`Upstream reported an error, but post-action state changed. Inspect the final state carefully before issuing another mutating step.`] : []),
+							...(browserInputChangedNavigationState ? [`Browser text input changed URL/title state. Audit final browser state and close/restore any scratch tab before continuing.`] : []),
 						];
 						const row: SequencedResult = {
 							index,
