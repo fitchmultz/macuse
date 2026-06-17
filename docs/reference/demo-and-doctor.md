@@ -102,29 +102,21 @@ node tools/macuse-demo.mjs --out .scratch/macuse-demo
 Outputs:
 
 - `report.md` — proof report
-- `index.html` — visual dashboard with before/during/after screenshots
+- `index.html` — visual dashboard
 - `transcript.json` — exact commands and structured results
 - `manifest.json` — compact artifact manifest
-- `before.jpg` — Calculator before mutation
-- `during.jpg` — Calculator after accessibility action sets display to `1`
-- `after.jpg` — Calculator restored to `0`
 - `cursor-mcp.json` — ready-to-copy MCP config for the current checkout
 - `doctor/doctor.md` and `doctor/doctor.json` unless `--skip-doctor` is passed
-- `mcp-validation.txt` unless `--skip-mcp` is passed
 
 The demo proves:
 
 1. Codex app-server exposes all expected Computer Use tools.
 2. External Computer Use can capture app screenshots/state.
-3. Calculator is reset before assertions so existing app state does not poison
-   the demo.
-4. Accessibility actions and keyboard input mutate Calculator without pointer
-   clicks.
-5. The display changes to `1`, changes to `2`, and is restored to `0`.
-6. The frontmost app is not stolen by Calculator.
-7. The guarded sequences restore mouse position.
-8. The standard MCP wrapper validates, including app-approval elicitation and
-   pointer guard behavior.
+3. Activity Monitor search is filtered and cleared after the search field name changes.
+4. CPU/Memory tab actions work through accessibility actions without pointer clicks.
+5. The sequence restores CPU/search state.
+6. The original frontmost app is restored.
+7. The standard MCP wrapper validates, including app-approval elicitation and pointer guard behavior.
 
 ## Config generator
 

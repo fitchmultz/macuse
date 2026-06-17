@@ -1,6 +1,6 @@
 [
   {
-    "query": "Use macuse to inspect Calculator without stealing focus.",
+    "query": "Use macuse to inspect Activity Monitor without stealing focus.",
     "should_trigger": true,
     "reason": "Directly asks to use macuse for local macOS app inspection."
   },
@@ -10,7 +10,7 @@
     "reason": "Requests macuse/Computer Use dogfood against native macOS apps."
   },
   {
-    "query": "Use codex_cu_sequence to press Calculator buttons and verify the result.",
+    "query": "Use codex_cu_sequence to filter Activity Monitor search and restore it.",
     "should_trigger": true,
     "reason": "Names a macuse tool and asks for safe local app control."
   },

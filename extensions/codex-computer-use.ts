@@ -367,6 +367,14 @@ function restoreMousePosition(position: MousePosition | null): boolean {
 	return result.status === 0;
 }
 
+function restoreFrontmostApp(app: AppMetadata | null): boolean {
+	if (!app) return false;
+	const args = app.bundleId ? ["-b", app.bundleId] : app.path ? [app.path] : [];
+	if (args.length === 0) return false;
+	const result = spawnSync("/usr/bin/open", args, { encoding: "utf8", timeout: 10_000 });
+	return result.status === 0;
+}
+
 function hasMutatingSteps(steps: Array<{ tool: string }>): boolean {
 	return steps.some((step) => !READ_ONLY_TOOLS.has(step.tool));
 }
@@ -750,8 +758,9 @@ function diffLists(before: string[], after: string[], limit = 8): { added: strin
 function compareState(before: StateSummary | null, after: StateSummary | null): ChangeSummary | null {
 	if (!before || !after) return null;
 	const visible = diffLists(before.visibleText, after.visibleText);
-	const beforeTargets = before.targets.map((target) => `${target.role}:${target.name}:${target.disabled ? "disabled" : "enabled"}`);
-	const afterTargets = after.targets.map((target) => `${target.role}:${target.name}:${target.disabled ? "disabled" : "enabled"}`);
+	const targetState = (target: MachineElement) => `${target.role}:${target.name}:${target.value ?? ""}:${target.disabled ? "disabled" : "enabled"}`;
+	const beforeTargets = before.targets.map(targetState);
+	const afterTargets = after.targets.map(targetState);
 	const targets = diffLists(beforeTargets, afterTargets, 6);
 	const titleChanged = before.title !== after.title;
 	const urlChanged = before.url !== after.url;
@@ -770,6 +779,26 @@ function compareState(before: StateSummary | null, after: StateSummary | null): 
 		urlChanged,
 		summary,
 	};
+}
+
+function observedStateChange(change: ChangeSummary | null): boolean {
+	return Boolean(change && (change.visibleTextChanged || change.titleChanged || change.urlChanged || change.targetsAdded.length > 0 || change.targetsRemoved.length > 0));
+}
+
+function targetStateChanged(before: StateSummary | null, after: StateSummary | null, args: Record<string, JsonValue>): boolean {
+	if (!before || !after) return false;
+	const beforeTarget = before.targets.find((target) => target.index === args.element_index);
+	if (!beforeTarget) return false;
+	const afterCandidates = after.targets.filter((target) => {
+		if (beforeTarget.id && target.id === beforeTarget.id) return true;
+		if (beforeTarget.description && target.description === beforeTarget.description) return true;
+		if (target.role === beforeTarget.role && target.name === beforeTarget.name) return true;
+		if (beforeTarget.role === "search" && target.role === "search") return true;
+		return false;
+	});
+	if (afterCandidates.length !== 1) return false;
+	const afterTarget = afterCandidates[0];
+	return beforeTarget.value !== afterTarget.value || beforeTarget.disabled !== afterTarget.disabled || beforeTarget.name !== afterTarget.name;
 }
 
 function normalizePressKeyValue(value: string): string {
@@ -929,6 +958,9 @@ function resolveElementRoleName(args: Record<string, JsonValue>, cache: Map<stri
 				return normalizedName.startsWith(expected) || expected.startsWith(normalizedName);
 			});
 		});
+		if (matches.length === 0 && normalizeRole(String(rawRole ?? "")) === "search" && expected === "search") {
+			matches = roleFiltered.filter((element) => element.role === "search" || element.tags.includes("search-field"));
+		}
 	}
 	if (matches.length !== 1) {
 		const reason = matches.length === 0 ? "No" : `Ambiguous ${matches.length}`;
@@ -1128,7 +1160,7 @@ function filterAppListContent(content: ContentBlock[], opts: { runningOnly?: boo
 
 async function captureFocusSnapshot(approval: ApprovalMode, timeoutMs: number, maxTextChars: number, signal?: AbortSignal): Promise<AppMetadata[] | null> {
 	try {
-		const call = await client.callTool("list_apps", {}, { approval, timeoutMs, signal });
+		const call = await getClient().callTool("list_apps", {}, { approval, timeoutMs, signal });
 		const result = filterToolResult(call.result, { maxTextChars });
 		return parseAppListContent(result.content, { runningOnly: true }).filter((app) => app.frontmost);
 	} catch {
@@ -1912,7 +1944,7 @@ async function runWaitStep(step: SequenceStep, args: Record<string, JsonValue>, 
 		const remainingMs = deadline - Date.now();
 		if (remainingMs < 1_000) break;
 		const callTimeoutMs = Math.max(1_000, Math.min(perPollToolTimeoutMs, remainingMs));
-		const call = await client.callTool("get_app_state", { app: args.app }, { approval: opts.approval, timeoutMs: callTimeoutMs, signal: opts.signal });
+		const call = await getClient().callTool("get_app_state", { app: args.app }, { approval: opts.approval, timeoutMs: callTimeoutMs, signal: opts.signal });
 		const result = filterToolResult(call.result, { maxTextChars: opts.maxTextChars });
 		appendComputerUseDiagnostic(result, "get_app_state", { app: args.app });
 		updateElementCache(opts.cache, args.app, result.content);
@@ -2092,18 +2124,28 @@ const maxTextParam = Type.Optional(Type.Number({ minimum: 1_000, maximum: 200_00
 const approvalParam = Type.Optional(StringEnum(["inherit", "accept-all", "accept-once", "deny"] as const, { description: "How to answer Computer Use app-approval prompts. Default inherit, which auto-accepts app approvals to match Codex's Any App setting." }));
 const detailParam = Type.Optional(StringEnum(["minimal", "compact", "full"] as const, { description: "Output detail. minimal returns app/window, visible text, and concise target hints; compact trims accessibility trees to interactive element lines; full returns the raw Computer Use text." }));
 
-const client = new AppServerClient();
+let client: AppServerClient | null = null;
 const sessionElementCache = new Map<string, ElementInfo[]>();
+
+function getClient(): AppServerClient {
+	if (!client) client = new AppServerClient();
+	return client;
+}
 
 export default function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", async () => {
 		sessionElementCache.clear();
-		await client.stop();
+		if (client) await client.stop();
+		client = null;
 	});
 
 	pi.registerCommand("macuse-status", {
-		description: "Show Codex Computer Use persistent app-server status",
+		description: "Show Codex Computer Use persistent app-server status without starting it",
 		handler: async (_args, ctx) => {
+			if (!client) {
+				ctx.ui.notify("macuse stopped; app-server has not been started in this pi session. It starts lazily on the first codex_cu_* tool call.", "warning");
+				return;
+			}
 			const status = client.status();
 			const reaped = status.staleReapSummary.filter((item) => item.action === "reaped-orphan").length;
 			const computerUse = status.computerUse ? ` computer-use=${status.computerUse.present ? `${status.computerUse.toolCount} tools` : "missing"}${status.computerUse.missingTools.length ? ` missing=${status.computerUse.missingTools.join(",")}` : ""}` : "";
@@ -2115,7 +2157,8 @@ export default function (pi: ExtensionAPI) {
 		description: "Stop the persistent Codex Computer Use app-server session; it restarts lazily on the next macuse tool call",
 		handler: async (_args, ctx) => {
 			sessionElementCache.clear();
-			await client.stop();
+			if (client) await client.stop();
+			client = null;
 			ctx.ui.notify("macuse Computer Use app-server stopped; it will restart lazily on the next tool call.", "info");
 		},
 	});
@@ -2124,7 +2167,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Restart the persistent Codex Computer Use app-server session",
 		handler: async (_args, ctx) => {
 			sessionElementCache.clear();
-			await client.restart();
+			await getClient().restart();
 			ctx.ui.notify("macuse Computer Use app-server stopped; it will restart on the next tool call.", "info");
 		},
 	});
@@ -2149,7 +2192,7 @@ export default function (pi: ExtensionAPI) {
 			onUpdate?.({ content: [{ type: "text", text: "Calling persistent Codex Computer Use list_apps..." }] });
 			const toolTimeoutMs = asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
 			const maxTextChars = asInt(input.maxTextChars, DEFAULT_MAX_TEXT_CHARS);
-			const call = await client.callTool("list_apps", {}, { approval: "inherit", timeoutMs: toolTimeoutMs, signal });
+			const call = await getClient().callTool("list_apps", {}, { approval: "inherit", timeoutMs: toolTimeoutMs, signal });
 			const result = filterToolResult(call.result, { maxTextChars });
 			const appMetadata = parseAppListContent(result.content, { runningOnly: Boolean(input.runningOnly), filter: input.filter });
 			const outputContent = filterAppListContent(result.content, { runningOnly: Boolean(input.runningOnly), filter: input.filter, maxTextChars });
@@ -2157,7 +2200,7 @@ export default function (pi: ExtensionAPI) {
 				content: outputContent,
 				details: bridgeDetails({
 					tool: "list_apps",
-					threadId: client.status().threadId,
+					threadId: getClient().status().threadId,
 					isError: result.isError,
 					omittedImages: result.omittedImages,
 					runningOnly: Boolean(input.runningOnly),
@@ -2167,7 +2210,7 @@ export default function (pi: ExtensionAPI) {
 					acceptedElicitations: call.acceptedElicitations,
 					elicitationCount: call.elicitationCount,
 					durationMs: call.durationMs,
-				}, client.status().stderrTail),
+				}, getClient().status().stderrTail),
 			};
 		},
 	});
@@ -2183,7 +2226,7 @@ export default function (pi: ExtensionAPI) {
 			"Use codex_cu_sequence for mutating Computer Use actions, with before/after get_app_state evidence, allowMutating=true, and a concrete safetyNote.",
 		],
 		parameters: Type.Object({
-			app: Type.String({ description: "App name, full app path, or unambiguous bundle identifier, e.g. Calculator or com.apple.calculator." }),
+			app: Type.String({ description: "App name, full app path, or unambiguous bundle identifier, e.g. Activity Monitor or com.apple.ActivityMonitor." }),
 			approval: approvalParam,
 			includeImage: Type.Optional(Type.Boolean({ description: "Attach the screenshot image returned by Computer Use when the current model/host supports image blocks. Use saveImagePath for reliable screenshot artifacts. Default false to keep turns light." })),
 			saveImagePath: Type.Optional(Type.String({ description: "Optional filesystem path where the screenshot should be saved." })),
@@ -2202,7 +2245,7 @@ export default function (pi: ExtensionAPI) {
 			const detail = normalizeDetail(input.detail, "full");
 			const targetScope: TargetScope = input.targetScope === "main" ? "main" : "all";
 			const frontmostBefore = await captureFocusSnapshot(approval, toolTimeoutMs, maxTextChars, signal);
-			const call = await client.callTool("get_app_state", { app }, { approval, timeoutMs: toolTimeoutMs, signal });
+			const call = await getClient().callTool("get_app_state", { app }, { approval, timeoutMs: toolTimeoutMs, signal });
 			const frontmostAfter = await captureFocusSnapshot(approval, toolTimeoutMs, maxTextChars, signal);
 			const result = filterToolResult(call.result, {
 				includeImage: Boolean(input.includeImage),
@@ -2221,7 +2264,7 @@ export default function (pi: ExtensionAPI) {
 				details: bridgeDetails({
 					tool: "get_app_state",
 					app,
-					threadId: client.status().threadId,
+					threadId: getClient().status().threadId,
 					isError: result.isError,
 					omittedImages: result.omittedImages,
 					savedImagePath: result.savedImagePath,
@@ -2236,7 +2279,7 @@ export default function (pi: ExtensionAPI) {
 					acceptedElicitations: call.acceptedElicitations,
 					elicitationCount: call.elicitationCount,
 					durationMs: call.durationMs,
-				}, client.status().stderrTail),
+				}, getClient().status().stderrTail),
 			};
 		},
 	});
@@ -2244,7 +2287,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "codex_cu_sequence",
 		label: "Codex CU Sequence",
-		description: "Run Codex Computer Use calls in one persistent app-server thread. Valid tools: list_apps, get_app_state, perform_secondary_action, press_key, type_text, set_value, select_text, scroll, click, drag, waitForText, waitForURL, waitForTitle, waitForElement, waitUntilElementEnabled, waitUntilElementDisabled. Element targets use element_index as a string; numbers are coerced, element is accepted as an alias, elementId resolves IDs like One or AllClear, elementDescription exact-matches descriptions like Add, and role/name selectors match parsed accessibility targets. Example step: {tool:'perform_secondary_action', arguments:{app:'Calculator', role:'button', name:'Add', action:'Press'}}.",
+		description: "Run Codex Computer Use calls in one persistent app-server thread. Valid tools: list_apps, get_app_state, perform_secondary_action, press_key, type_text, set_value, select_text, scroll, click, drag, waitForText, waitForURL, waitForTitle, waitForElement, waitUntilElementEnabled, waitUntilElementDisabled. Element targets use element_index as a string; numbers are coerced, element is accepted as an alias, elementId resolves IDs, elementDescription exact-matches descriptions such as CPU or Memory, and role/name selectors match parsed accessibility targets. Example step: {tool:'perform_secondary_action', arguments:{app:'Activity Monitor', elementDescription:'Memory', action:'Press'}}.",
 		promptSnippet: "Run a sequence of local macOS Computer Use actions.",
 		promptGuidelines: [
 			"Use codex_cu_sequence only after codex_cu_get_app_state has identified the target app/window or when the first sequence step is get_app_state.",
@@ -2254,7 +2297,7 @@ export default function (pi: ExtensionAPI) {
 			"press_key uses xdotool-style key names. Examples: '5', 'Return', 'Escape', 'Tab', 'space', 'plus', 'minus', 'equal', 'ctrl+c'. For text entry, prefer type_text unless a real key event is required.",
 			"select_text requires a text string to match; start/end offset selection is not supported by the upstream Computer Use tool.",
 			"For element targeting, prefer stable elementId values from get_app_state when present, then elementDescription exact matches, then element_index. Numeric indices can shift after mutations; the extension refreshes before element-targeted sequence steps, but description/ID targeting is still safer.",
-			"For dynamic controls, codex_cu_sequence steps may use arguments.targets with fallback target objects, such as [{elementId:'AllClear'},{elementDescription:'Clear'}]; the extension resolves the first currently valid target before calling Computer Use.",
+			"For dynamic controls, codex_cu_sequence steps may use arguments.targets with fallback target objects; the extension resolves the first currently valid target before calling Computer Use.",
 		],
 		parameters: Type.Object({
 			app: Type.Optional(Type.String({ description: "Optional default app name/bundle/path applied to steps whose arguments omit app." })),
@@ -2300,7 +2343,7 @@ export default function (pi: ExtensionAPI) {
 			const detail = normalizeDetail(input.detail, "compact");
 			const targetScope: TargetScope = input.targetScope === "main" ? "main" : "all";
 			const screenshotStep = input.screenshotStep === "final" ? "final" : "first";
-			const mouseBefore = hasPointerClick || hasPointerDrag ? getMousePosition() : null;
+			const mouseBefore = mutating ? getMousePosition() : null;
 			let mouseRestored = false;
 			const frontmostBefore = await captureFocusSnapshot(approval, toolTimeoutMs, maxTextChars, signal);
 			const results: SequencedResult[] = [];
@@ -2313,8 +2356,8 @@ export default function (pi: ExtensionAPI) {
 					const originalStepArgs = normalizeToolArguments(step.arguments);
 					let stepArgs = originalStepArgs;
 					let targetResolution: string | undefined;
+					let beforeState = typeof stepArgs.app === "string" ? stateCache.get(stepArgs.app) ?? null : null;
 					try {
-						let beforeState = typeof stepArgs.app === "string" ? stateCache.get(stepArgs.app) ?? null : null;
 						if (isWaitTool(step.tool)) {
 							const waited = await runWaitStep(step, stepArgs, { approval, timeoutMs: toolTimeoutMs, maxTextChars, signal, cache: elementCache, beforeState, scope: targetScope });
 							const row: SequencedResult = {
@@ -2356,7 +2399,7 @@ export default function (pi: ExtensionAPI) {
 							Array.isArray(stepArgs.targets)
 						);
 						if (targetsElement && typeof stepArgs.app === "string") {
-							const refresh = await client.callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
+							const refresh = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
 							const refreshed = filterToolResult(refresh.result, { maxTextChars });
 							updateElementCache(elementCache, stepArgs.app, refreshed.content);
 							updateElementCache(sessionElementCache, stepArgs.app, refreshed.content);
@@ -2365,7 +2408,7 @@ export default function (pi: ExtensionAPI) {
 							implicitRefreshes += 1;
 						}
 						if (!beforeState && step.requireStateChange && step.tool !== "get_app_state" && step.tool !== "list_apps" && typeof stepArgs.app === "string") {
-							const refresh = await client.callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
+							const refresh = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
 							const refreshed = filterToolResult(refresh.result, { maxTextChars });
 							updateElementCache(elementCache, stepArgs.app, refreshed.content);
 							updateElementCache(sessionElementCache, stepArgs.app, refreshed.content);
@@ -2382,7 +2425,17 @@ export default function (pi: ExtensionAPI) {
 						let callTool = step.tool;
 						let callArgs = stripSelectorOnlyKeys(stepArgs);
 						if (step.tool === "set_value" && stepArgs.value === "" && typeof stepArgs.app === "string") {
-							const clearCandidates = (elementCache.get(stepArgs.app) ?? []).filter((element) => element.role === "button" && element.tags.includes("clear-control") && !element.tags.includes("risk-sensitive-control"));
+							const setValueTarget = (elementCache.get(stepArgs.app) ?? []).find((element) => element.index === stepArgs.element_index);
+							const targetCanUseClearControl = Boolean(setValueTarget && (setValueTarget.role === "search" || setValueTarget.tags.includes("search-field")));
+							const targetIndex = Number(setValueTarget?.index);
+							const clearCandidates = targetCanUseClearControl && Number.isFinite(targetIndex) ? (elementCache.get(stepArgs.app) ?? []).filter((element) => {
+								const clearIndex = Number(element.index);
+								return element.role === "button" &&
+									element.tags.includes("clear-control") &&
+									!element.tags.includes("risk-sensitive-control") &&
+									Number.isFinite(clearIndex) &&
+									Math.abs(clearIndex - targetIndex) <= 3;
+							}) : [];
 							if (clearCandidates.length === 1) {
 								const clearTarget = clearCandidates[0];
 								callTool = "perform_secondary_action";
@@ -2391,7 +2444,7 @@ export default function (pi: ExtensionAPI) {
 							}
 						}
 						const saveImageForStep = screenshotStep === "first" ? index === 0 : index === steps.length - 1;
-						const call = await client.callTool(callTool, callArgs, { approval, timeoutMs: toolTimeoutMs, signal });
+						const call = await getClient().callTool(callTool, callArgs, { approval, timeoutMs: toolTimeoutMs, signal });
 						let filtered = filterToolResult(call.result, {
 							includeImage: Boolean(input.includeImage),
 							saveImagePath: saveImageForStep ? input.saveImagePath : undefined,
@@ -2401,7 +2454,7 @@ export default function (pi: ExtensionAPI) {
 						let postActionReadbackDone = false;
 						let actionErrorRecoveredByStateChange = false;
 						if (filtered.isError && step.requireStateChange && typeof stepArgs.app === "string") {
-							const verify = await client.callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
+							const verify = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
 							const verified = filterToolResult(verify.result, {
 								includeImage: Boolean(input.includeImage),
 								saveImagePath: saveImageForStep ? input.saveImagePath : undefined,
@@ -2410,7 +2463,7 @@ export default function (pi: ExtensionAPI) {
 							appendComputerUseDiagnostic(verified, "get_app_state", { app: stepArgs.app });
 							const verifiedState = stateSummary(verified.content, targetScope);
 							const errorReadbackChange = compareState(beforeState, verifiedState);
-							const changedDespiteError = Boolean(errorReadbackChange && (errorReadbackChange.visibleTextChanged || errorReadbackChange.titleChanged || errorReadbackChange.urlChanged || errorReadbackChange.targetsAdded.length > 0 || errorReadbackChange.targetsRemoved.length > 0));
+							const changedDespiteError = targetStateChanged(beforeState, verifiedState, stepArgs);
 							if (changedDespiteError) {
 								actionErrorRecoveredByStateChange = true;
 								appendText(verified, `Warning: actionReportedErrorButStateChanged — ${step.tool} returned an upstream error, but requireStateChange was satisfied by post-action get_app_state readback. Treat the action as dispatched, then inspect final state before continuing. Original error output: ${truncateString(toolResultText(filtered), 800)}`);
@@ -2421,7 +2474,7 @@ export default function (pi: ExtensionAPI) {
 							}
 						}
 						if (step.tool === "set_value" && typeof stepArgs.value === "string" && stepArgs.value.length > 0 && typeof stepArgs.app === "string") {
-							const verify = await client.callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
+							const verify = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
 							const verified = filterToolResult(verify.result, {
 								includeImage: Boolean(input.includeImage),
 								saveImagePath: saveImageForStep ? input.saveImagePath : undefined,
@@ -2446,7 +2499,7 @@ export default function (pi: ExtensionAPI) {
 						}
 						const isStateTool = step.tool === "get_app_state" || step.tool === "list_apps";
 						if (!postActionReadbackDone && !filtered.isError && !isStateTool && typeof stepArgs.app === "string") {
-							const verify = await client.callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
+							const verify = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
 							let verified = filterToolResult(verify.result, {
 								includeImage: Boolean(input.includeImage),
 								saveImagePath: saveImageForStep ? input.saveImagePath : undefined,
@@ -2455,10 +2508,10 @@ export default function (pi: ExtensionAPI) {
 							appendComputerUseDiagnostic(verified, "get_app_state", { app: stepArgs.app });
 							let verifiedState = stateSummary(verified.content, targetScope);
 							let readbackChange = compareState(beforeState, verifiedState);
-							postActionNoChange = !readbackChange || (!readbackChange.visibleTextChanged && !readbackChange.titleChanged && !readbackChange.urlChanged && readbackChange.targetsAdded.length === 0 && readbackChange.targetsRemoved.length === 0);
+							postActionNoChange = !observedStateChange(readbackChange);
 							if (postActionNoChange && step.requireStateChange) {
 								await new Promise((resolve) => setTimeout(resolve, 600));
-								const delayedVerify = await client.callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
+								const delayedVerify = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
 								const delayed = filterToolResult(delayedVerify.result, {
 									includeImage: Boolean(input.includeImage),
 									saveImagePath: saveImageForStep ? input.saveImagePath : undefined,
@@ -2467,7 +2520,7 @@ export default function (pi: ExtensionAPI) {
 								appendComputerUseDiagnostic(delayed, "get_app_state", { app: stepArgs.app });
 								const delayedState = stateSummary(delayed.content, targetScope);
 								const delayedChange = compareState(beforeState, delayedState);
-								const delayedNoChange = !delayedChange || (!delayedChange.visibleTextChanged && !delayedChange.titleChanged && !delayedChange.urlChanged && delayedChange.targetsAdded.length === 0 && delayedChange.targetsRemoved.length === 0);
+								const delayedNoChange = !observedStateChange(delayedChange);
 								if (!delayedNoChange) {
 									appendText(delayed, "requireStateChange verified after delayed post-action readback; transient UI was not visible on the first readback.");
 									verified = delayed;
@@ -2543,6 +2596,49 @@ export default function (pi: ExtensionAPI) {
 						if (failed) break;
 					} catch (error) {
 						const message = errorMessage(error);
+						if (targetResolution && step.requireStateChange && !READ_ONLY_TOOLS.has(step.tool) && typeof stepArgs.app === "string") {
+							try {
+								const verify = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
+								const verified = filterToolResult(verify.result, { maxTextChars });
+								appendComputerUseDiagnostic(verified, "get_app_state", { app: stepArgs.app });
+								const afterState = stateSummary(verified.content, targetScope);
+								const changed = compareState(beforeState, afterState);
+								const changedTarget = targetStateChanged(beforeState, afterState, stepArgs);
+								updateElementCache(elementCache, stepArgs.app, verified.content);
+								updateElementCache(sessionElementCache, stepArgs.app, verified.content);
+								if (changedTarget) {
+									verified.isError = false;
+									appendText(verified, `Warning: actionReportedErrorButStateChanged — ${step.tool} returned an upstream transport/tool error, but requireStateChange was satisfied by post-error get_app_state readback. Original error output: ${truncateString(message, 800)}`);
+									const row: SequencedResult = {
+										index,
+										label: step.label,
+										tool: step.tool,
+										arguments: stepArgs,
+										durationMs: verify.durationMs,
+										result: verified,
+										expectText: step.expectText,
+										expectAbsentText: step.expectAbsentText,
+										expectVisibleText: step.expectVisibleText,
+										allowError: step.allowError,
+										targetResolution,
+										targetWarnings: [],
+										elements: machineElements(verified.content, targetScope),
+										visibleText: afterState.visibleText,
+										changed,
+										nextActions: ["Upstream reported an error, but post-error app state changed. Inspect final state before issuing another mutating step."],
+										acceptedElicitations: verify.acceptedElicitations,
+										elicitationCount: verify.elicitationCount,
+									};
+									validateStepResult(row);
+									if (detail === "compact") row.result.content = compactContent(row.result.content, targetScope);
+									results.push(row);
+									if (typeof stepArgs.app === "string") stateCache.set(stepArgs.app, afterState);
+									continue;
+								}
+							} catch {
+								// Fall through to the original failure; readback recovery is best-effort.
+							}
+						}
 						const allowed = step.allowError;
 						if (!allowed) failed = { index, stepNumber: index + 1, tool: step.tool, label: step.label, message };
 						results.push({
@@ -2572,14 +2668,24 @@ export default function (pi: ExtensionAPI) {
 				if (mouseBefore) mouseRestored = restoreMousePosition(mouseBefore);
 			}
 			const mouseAfter = mouseBefore ? getMousePosition() : null;
-			const frontmostAfter = await captureFocusSnapshot(approval, toolTimeoutMs, maxTextChars, signal);
+			let frontmostAfter = await captureFocusSnapshot(approval, toolTimeoutMs, maxTextChars, signal);
+			const focusBeforeRestore = focusSnapshot(frontmostBefore, frontmostAfter);
+			const originalFrontmost = frontmostBefore?.[0] ?? null;
+			let focusRestored = false;
+			if (focusBeforeRestore.changed && originalFrontmost) {
+				focusRestored = restoreFrontmostApp(originalFrontmost);
+				if (focusRestored) {
+					await new Promise((resolve) => setTimeout(resolve, 300));
+					frontmostAfter = await captureFocusSnapshot(approval, toolTimeoutMs, maxTextChars, signal);
+				}
+			}
 			const focus = focusSnapshot(frontmostBefore, frontmostAfter);
 			const mousePreservation = mouseBefore ? { before: mouseBefore, after: mouseAfter, restored: mouseRestored } : undefined;
 			return {
 				content: sequenceContent(results, Boolean(input.includeImage), failed, steps.length, detail, maxTextChars, focus, defaultApp, mousePreservation),
 				details: bridgeDetails({
 					tool: "sequence",
-					threadId: client.status().threadId,
+					threadId: getClient().status().threadId,
 					detail,
 					targetScope,
 					failed,
@@ -2593,6 +2699,7 @@ export default function (pi: ExtensionAPI) {
 					imageSupportNote: input.includeImage ? "Image rendering is model/host dependent; saveImagePath is the reliable screenshot artifact path." : null,
 					screenshotStep,
 					focus,
+					focusRestoration: { attempted: Boolean(focusBeforeRestore.changed && originalFrontmost), restored: focusRestored, beforeRestore: focusBeforeRestore },
 					pointerToolsUsed: hasPointerClick || hasPointerDrag,
 					steps: results.map((step) => ({
 						index: step.index,
@@ -2613,7 +2720,7 @@ export default function (pi: ExtensionAPI) {
 						elements: step.elements,
 					})),
 					mousePreservation: mousePreservation ?? null,
-				}, client.status().stderrTail),
+				}, getClient().status().stderrTail),
 			};
 		},
 	});

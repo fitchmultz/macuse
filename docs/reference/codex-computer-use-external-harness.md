@@ -4,7 +4,7 @@ Source: Local Codex Computer Use app/plugin files and direct MCP probes against 
 Author: [OpenAI](https://openai.com/) for the installed app/plugin; local investigation notes captured in this repository
 Posted: Not applicable; local installed app and plugin cache
 Scraped: May 22, 2026
-Refreshed: May 22, 2026 09:35 MDT; spot-checked again June 8, 2026 after Codex updates
+Refreshed: May 22, 2026 09:35 MDT; spot-checked again June 8, 2026 after Codex updates; active validation now uses Activity Monitor instead of Calculator
 Observed metadata at May 22 refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin `1.0.799`; MCP server name `Computer Use`; MCP server version `d10a51766bb4d162ef1eed308e86a0f8f3816fb860896cb92c18e6de998142af`
 Current June 8 spot-check: Codex host app `26.602.40724` build `3593`; Codex CLI `0.137.0-alpha.4`; Computer Use plugin cache `1.0.809`; Computer Use app state reports CUA App Version `809`; the app-server-mediated pi path still works.
 
@@ -33,10 +33,10 @@ What is proven:
   then creating an ephemeral `thread/start`, makes the app-server-mediated
   `mcpServer/tool/call` path work.
 - Through app-server, read-only `computer-use/list_apps` completed successfully.
-- Through app-server, read-only `computer-use/get_app_state` for Calculator
+- Through app-server, read-only `computer-use/get_app_state` for Activity Monitor
   completed successfully and returned both accessibility-tree text and a JPEG
   screenshot block.
-- A guarded app-server sequence successfully clicked Calculator digit `1`, verified display `1`, pressed key `2`, verified display `2`, then restored the display to `0`.
+- A guarded app-server sequence successfully filters and clears Activity Monitor search, switches Memory, then restores CPU/search/focus state.
 - A controlled TextEdit scroll probe against `/tmp/macuse-scroll-test.txt` returned successful `scroll down` and `scroll up` steps for scroll area element `1`; screenshot hashes changed across the sequence.
 - Controlled TextEdit probes against disposable `/tmp/macuse-type-test.txt` and `/tmp/macuse-set-value-test.txt` succeeded for `type_text` and `set_value`, with saved file contents matching the expected probe strings.
 - A controlled TextEdit selection probe against `/tmp/macuse-select-test.txt` succeeded for `select_text` with prefix/suffix disambiguation; file contents were unchanged.
@@ -49,7 +49,7 @@ What is **not** proven yet:
 
 - Direct raw MCP `list_apps` / accepted `get_app_state` completing without the
   Codex app-server thread/session wrapper.
-- Drag workflows and high-stakes click/scroll/type/set-value/select workflows beyond the controlled Calculator/TextEdit smoke tests.
+- Drag workflows and high-stakes click/scroll/type/set-value/select workflows beyond the controlled Activity Monitor/TextEdit smoke tests.
 - Whether the local safety policy fully covers Codex's native Computer Use task
   safeguards.
 - Whether app-server's `thread/start` + `mcpServer/tool/call` is a stable public

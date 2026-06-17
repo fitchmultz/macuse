@@ -4,7 +4,7 @@ Source: Local filesystem paths under `/Users/yourname/.codex/computer-use`, `/Us
 Author: [OpenAI](https://openai.com/)
 Posted: Not applicable; local installed app and plugin cache
 Scraped: May 22, 2026
-Refreshed: May 22, 2026 09:35 MDT after the Codex host app update, external-harness TCC probes, app-server bridge validation, and guarded Calculator click/key validation. Spot-checked again June 8, 2026 after subsequent Codex updates.
+Refreshed: May 22, 2026 09:35 MDT after the Codex host app update, external-harness TCC probes, app-server bridge validation, and guarded Calculator click/key validation. Spot-checked again June 8, 2026 after subsequent Codex updates. Current validation uses Activity Monitor instead of Calculator.
 Observed install metadata at May 22 refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin still `1.0.799`; app bundle `com.openai.sky.CUAService`; notarized Developer ID app from OpenAI
 Current June 8 spot-check: Codex host app `26.602.40724` build `3593`; Codex CLI `0.137.0-alpha.4`; Computer Use plugin cache `1.0.809`; Computer Use app state reports CUA App Version `809`.
 
@@ -165,7 +165,7 @@ Copies also exist inside the bundled `SkyComputerUseClient.app` and
 
 ## Use from non-Codex harnesses
 
-Current status: read-only operation plus guarded Calculator click/key and
+Current status: read-only operation plus guarded Activity Monitor search/tab and
 controlled TextEdit scroll/type/set-value/select smoke tests are proven through
 the Codex app-server bridge; direct raw MCP remains useful
 for discovery and denial-path probes but still hangs for accepted service-backed
@@ -239,7 +239,7 @@ status by default; pass `--full` to inspect every app-server MCP server:
 ```bash
 node tools/codex-computer-use-appserver.mjs status --quiet --pretty
 node tools/codex-computer-use-appserver.mjs list-apps --quiet --pretty
-node tools/codex-computer-use-appserver.mjs get-state --app Calculator --quiet --pretty
+node tools/codex-computer-use-appserver.mjs get-state --app "Activity Monitor" --quiet --pretty
 node tools/validate-macuse.mjs mutating
 ```
 
@@ -271,12 +271,12 @@ Practical limits:
   This bridge intentionally does not add a second per-app confirmation layer when
   Codex's Any App setting is enabled; it defaults to `approval: "inherit"` and
   still keeps hard stop boundaries for high-risk actions.
-- Direct accepted raw-MCP service-backed probes (`get_app_state` for Calculator
+- Direct accepted raw-MCP service-backed probes (`get_app_state` for a target app
   and `list_apps`) timed out from external hosts. App-server-mediated read-only
   probes succeeded, which means the missing direct-MCP contract is likely around
   Codex thread/session/lifecycle wrapping rather than the low-level Computer Use
   service alone.
-- A guarded app-server-mediated Calculator click/key sequence and controlled
+- A guarded app-server-mediated Activity Monitor search/tab sequence and controlled
   TextEdit scroll/type/set-value/select sequences are validated. The sequence path is
   exposed through `codex_cu_sequence`. Broader mutating workflows should stay
   guarded by the local safety policy and before/after `get_app_state` evidence.

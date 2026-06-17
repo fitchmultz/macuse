@@ -36,7 +36,7 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
    - unique `role`/`name`
    - `arguments.targets` fallback objects
    - raw `element_index` only with `expectedRole`/`expectedName` guards.
-4. For dynamic controls such as Calculator clear/all-clear buttons, prefer `arguments.targets` fallback objects that include both the stable ID and visible description, for example `[{ "elementId": "AllClear" }, { "elementDescription": "Clear" }, { "elementDescription": "All Clear" }]`.
+4. For dynamic controls, prefer `arguments.targets` fallback objects that include both stable IDs and visible descriptions when available.
 5. Prefer non-pointer actions: `perform_secondary_action`, `set_value`, `press_key`, `type_text`, `select_text`, and wait helpers. Use pointer `click`/`drag` only when necessary and only with the explicit pointer allow flag.
 6. For mutations, use `codex_cu_sequence` with:
    - `allowMutating: true`
@@ -81,5 +81,5 @@ node tools/validate-macuse.mjs quick
 node tools/validate-macuse.mjs mcp
 node tools/macuse-doctor.mjs --out .scratch/doctor
 node tools/macuse-repair.mjs
-node tools/codex-computer-use-appserver.mjs list-apps --running-only --filter Calculator --quiet --pretty
+node tools/codex-computer-use-appserver.mjs list-apps --running-only --filter "Activity Monitor" --quiet --pretty
 ```

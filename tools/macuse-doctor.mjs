@@ -2,6 +2,7 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
+  COMPUTER_USE_TOOL_NAMES,
   DEFAULT_CODEX_BIN,
   DEFAULT_COMPUTER_USE_APP,
   DEFAULT_COMPUTER_USE_PLUGIN_DIR,
@@ -19,15 +20,14 @@ import {
 } from './macuse-utils.mjs';
 
 const VERSION = '0.1.0';
-const EXPECTED_TOOLS = ['click', 'drag', 'get_app_state', 'list_apps', 'perform_secondary_action', 'press_key', 'scroll', 'select_text', 'set_value', 'type_text'];
 
 function help() {
-  process.stdout.write(`macuse doctor ${VERSION}\n\nUsage:\n  node tools/macuse-doctor.mjs [options]\n\nOptions:\n  --out <dir>              Write doctor.json and doctor.md to a directory.\n  --json                   Print JSON to stdout instead of Markdown.\n  --full                   Also run focus and MCP wrapper mutation smokes.\n  --app <app>              Read-only get_app_state target. Default: Calculator.\n  --codex <path>           Codex app-server binary. Default: ${DEFAULT_CODEX_BIN}\n  --tool-timeout-ms <ms>   Tool timeout for live checks. Default: 90000.\n  -h, --help               Show this help.\n\nExamples:\n  node tools/macuse-doctor.mjs\n  node tools/macuse-doctor.mjs --out .scratch/doctor --full\n  node tools/macuse-doctor.mjs --json --full\n`);
+  process.stdout.write(`macuse doctor ${VERSION}\n\nUsage:\n  node tools/macuse-doctor.mjs [options]\n\nOptions:\n  --out <dir>              Write doctor.json and doctor.md to a directory.\n  --json                   Print JSON to stdout instead of Markdown.\n  --full                   Also run focus and MCP wrapper mutation smokes.\n  --app <app>              Read-only get_app_state target. Default: Activity Monitor.\n  --codex <path>           Codex app-server binary. Default: ${DEFAULT_CODEX_BIN}\n  --tool-timeout-ms <ms>   Tool timeout for live checks. Default: 90000.\n  -h, --help               Show this help.\n\nExamples:\n  node tools/macuse-doctor.mjs\n  node tools/macuse-doctor.mjs --out .scratch/doctor --full\n  node tools/macuse-doctor.mjs --json --full\n`);
 }
 
 function parse(argv) {
   if (argv.includes('-h') || argv.includes('--help')) return { help: true };
-  const opts = { out: null, json: false, full: false, app: 'Calculator', codex: process.env.CODEX_BIN || DEFAULT_CODEX_BIN, toolTimeoutMs: 90_000 };
+  const opts = { out: null, json: false, full: false, app: 'Activity Monitor', codex: process.env.CODEX_BIN || DEFAULT_CODEX_BIN, toolTimeoutMs: 90_000 };
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
     const next = () => {
@@ -80,66 +80,6 @@ function commandCheck(name, command, args, opts = {}) {
   };
 }
 
-function textBlocks(result) {
-  return (result?.content || [])
-    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text)
-    .join('\n');
-}
-
-function classifyComputerUseProblem(text) {
-  if (/cgWindowNotFound/i.test(text)) {
-    return 'cgWindowNotFound: the target app may have no visible window, or the console GUI may be locked/asleep/screensaver-frontmost. Unlock/wake the console session and retry get_app_state.';
-  }
-  if (/procNotFound|no eligible process with specified descriptor/i.test(text)) {
-    return 'list_apps hit procNotFound while walking macOS process descriptors. If filtered/running list_apps and get_app_state pass, this is a degraded app-list enumeration path; try macuse-repair --apply --restart-service and keep using filtered list_apps.';
-  }
-  if (/timed out|timeout/i.test(text)) {
-    return 'Computer Use call timed out: if raw MCP discovery works but list_apps/get_app_state hangs, inspect macOS TCC logs for kTCCServiceAppleEvents denial from the launcher/responsible process to com.openai.sky.CUAService.';
-  }
-  if (/kTCCServiceAppleEvents|automation\.apple-events|ACCESS DENIED/i.test(text)) {
-    return 'AppleEvents/TCC denial: grant or repair Automation permission for the responsible launcher to control com.openai.sky.CUAService, then restart tccd and the Computer Use service.';
-  }
-  return null;
-}
-
-function appServerToolCheck(name, command, args, opts = {}) {
-  const run = commandCheck(name, command, args, opts);
-  if (!run.result.ok) {
-    const hint = classifyComputerUseProblem(`${run.result.error || ''}\n${run.result.stdout}\n${run.result.stderr}`);
-    return { ...run, check: { ...run.check, summary: hint || run.check.summary } };
-  }
-  try {
-    const json = parseJsonOutput(name, run.result.stdout);
-    const toolText = textBlocks(json.result);
-    const summaryText = toolText || JSON.stringify(json.result || {}).slice(0, 500);
-    if (json.result?.isError) {
-      const hint = classifyComputerUseProblem(summaryText);
-      return {
-        ...run,
-        json,
-        check: {
-          ...run.check,
-          status: 'fail',
-          summary: hint || `Computer Use tool returned isError=true: ${summaryText.slice(0, 500)}`,
-          details: opts.keepOutput ? run.check.details : { result: json.result },
-        },
-      };
-    }
-    return {
-      ...run,
-      json,
-      check: {
-        ...run.check,
-        status: 'pass',
-        summary: summaryText ? summaryText.split('\n')[0].slice(0, 500) : 'ok',
-      },
-    };
-  } catch (error) {
-    return { ...run, check: { ...run.check, status: 'fail', summary: error.message } };
-  }
-}
-
 function toolNamesFromStatus(statusJson) {
   return statusJson?.computerUse?.toolNames || statusJson?.status?.servers?.find((server) => server.name === 'computer-use')?.toolNames || [];
 }
@@ -152,7 +92,7 @@ function renderMarkdown(report) {
   ]);
   const failed = report.checks.filter((check) => check.status === 'fail');
   const warned = report.checks.filter((check) => check.status === 'warn');
-  return `# macuse doctor report\n\nGenerated: ${report.generatedAt}\nMode: ${report.full ? 'full' : 'standard'}\nRepo: ${report.repoRoot}\n\n## Verdict\n\n${report.ok ? '✅ macuse is ready.' : '❌ macuse needs attention.'}\n\n- Failed checks: ${failed.length}\n- Warnings: ${warned.length}\n- Computer Use tools found: ${report.computerUseTools.length}\n\n## Checks\n\n${markdownTable(['Status', 'Check', 'Summary'], rows)}\n\n## Tool surface\n\n${report.computerUseTools.length ? report.computerUseTools.map((tool) => `- ${tool}`).join('\n') : 'No Computer Use tools were discovered.'}\n\n## Recommended next commands\n\n\`\`\`bash\nnode tools/validate-macuse.mjs quick\nnode tools/validate-macuse.mjs focus\nnode tools/validate-macuse.mjs mcp\nnode tools/macuse-demo.mjs --out .scratch/macuse-demo\n\`\`\`\n`;
+  return `# macuse doctor report\n\nGenerated: ${report.generatedAt}\nMode: ${report.full ? 'full' : 'standard'}\nRepo: ${report.repoRoot}\n\n## Verdict\n\n${report.ok ? '✅ macuse is ready.' : '❌ macuse needs attention.'}\n\n- Failed checks: ${failed.length}\n- Warnings: ${warned.length}\n- Computer Use tools found: ${report.computerUseTools.length}\n\n## Checks\n\n${markdownTable(['Status', 'Check', 'Summary'], rows)}\n\n## Tool surface\n\n${report.computerUseTools.length ? report.computerUseTools.map((tool) => `- ${tool}`).join('\n') : 'No Computer Use tools were discovered.'}\n\n## Recommended next commands\n\n\`\`\`bash\nnode tools/validate-macuse.mjs quick\nnode tools/validate-macuse.mjs mutating\nnode tools/validate-macuse.mjs focus\nnode tools/validate-macuse.mjs mcp\n\`\`\`\n`;
 }
 
 async function main() {
@@ -216,7 +156,7 @@ async function main() {
       const json = parseJsonOutput('app-server status', statusRun.result.stdout);
       const names = toolNamesFromStatus(json).sort();
       report.computerUseTools = names;
-      const missing = EXPECTED_TOOLS.filter((tool) => !names.includes(tool));
+      const missing = COMPUTER_USE_TOOL_NAMES.filter((tool) => !names.includes(tool));
       addCheck(checks, {
         status: missing.length ? 'fail' : 'pass',
         name: 'Computer Use app-server tool surface',
@@ -231,33 +171,26 @@ async function main() {
     addCheck(checks, statusRun.check);
   }
 
-  const discover = commandCheck('direct raw-MCP discover', process.execPath, ['tools/probe-codex-computer-use-mcp.mjs', 'discover'], { timeoutMs: 120_000 });
-  const rawDiscoverHasExpectedTools = discover.result.ok && EXPECTED_TOOLS.every((tool) => discover.result.stdout.includes(`- ${tool} `) || discover.result.stdout.includes(`- ${tool} -`));
-  if (rawDiscoverHasExpectedTools && report.computerUseTools.length === 0) report.computerUseTools = [...EXPECTED_TOOLS].sort();
-  addCheck(checks, { ...discover.check, summary: rawDiscoverHasExpectedTools ? 'raw MCP advertised expected tools' : discover.check.summary });
-
-  const listApps = appServerToolCheck(`app-server list_apps ${opts.app}`, process.execPath, ['tools/codex-computer-use-appserver.mjs', 'list-apps', '--running-only', '--filter', opts.app, '--quiet', '--codex', opts.codex, '--max-text-chars', '1000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 30_000 });
-  addCheck(checks, listApps.check);
-  if (listApps.json && textBlocks(listApps.json.result).includes('frontmost=<none>')) {
+  const validation = commandCheck('validation read-only smoke', process.execPath, ['tools/validate-macuse.mjs', 'read-only', '--json', '--app', opts.app, '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs * 5, keepOutput: true, env: { CODEX_BIN: opts.codex } });
+  if (validation.result.ok) {
+    const json = parseJsonOutput('validation read-only smoke', validation.result.stdout);
     addCheck(checks, {
-      status: 'warn',
-      name: 'Computer Use frontmost detection',
-      summary: 'list_apps reported frontmost=<none>; if get_app_state also fails with cgWindowNotFound, unlock/wake the console session and retry',
-      command: listApps.check.command,
-      durationMs: listApps.check.durationMs,
+      ...validation.check,
+      status: json.ok ? 'pass' : 'fail',
+      summary: json.ok ? `${json.counts?.pass ?? 0} validation checks passed` : (json.checks?.find((check) => check.status === 'fail')?.detail || 'validation failed'),
+      details: json,
     });
+  } else {
+    addCheck(checks, validation.check);
   }
-
-  const getState = appServerToolCheck(`app-server get_app_state ${opts.app}`, process.execPath, ['tools/codex-computer-use-appserver.mjs', 'get-state', '--app', opts.app, '--quiet', '--codex', opts.codex, '--max-text-chars', '1000', '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs + 30_000 });
-  addCheck(checks, getState.check);
 
   const config = commandCheck('config generator', process.execPath, ['tools/macuse-config.mjs', 'cursor', '--pretty']);
   addCheck(checks, { ...config.check, summary: config.result.ok && config.result.stdout.includes('macuse-codex-computer-use') ? 'generated Cursor MCP config' : config.check.summary });
 
   if (opts.full) {
-    const focus = commandCheck('focus validation', process.execPath, ['tools/validate-macuse.mjs', 'focus'], { timeoutMs: 420_000, keepOutput: true });
+    const focus = commandCheck('focus validation', process.execPath, ['tools/validate-macuse.mjs', 'focus'], { timeoutMs: 420_000, keepOutput: true, env: { CODEX_BIN: opts.codex } });
     addCheck(checks, focus.check);
-    const mcp = commandCheck('MCP wrapper validation', process.execPath, ['tools/validate-macuse.mjs', 'mcp'], { timeoutMs: 420_000, keepOutput: true });
+    const mcp = commandCheck('MCP wrapper validation', process.execPath, ['tools/validate-macuse.mjs', 'mcp'], { timeoutMs: 420_000, keepOutput: true, env: { CODEX_BIN: opts.codex } });
     addCheck(checks, mcp.check);
   }
 

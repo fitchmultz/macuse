@@ -26,9 +26,9 @@ The app-server-backed path provides:
 | Capability | Codex native Computer Use | pi extension | standard MCP wrapper | Local validation |
 | --- | --- | --- | --- | --- |
 | App listing | `list_apps` | `codex_cu_list_apps` | `list_apps` | `validate-macuse read-only`, `validate-macuse mcp` |
-| App state + screenshot | `get_app_state` | `codex_cu_get_app_state`, sequence step | `get_app_state` | Calculator get-state; image save/include probes |
-| Accessibility press/action | `perform_secondary_action` | `codex_cu_sequence` | `perform_secondary_action` | Calculator `Press` on digit/all-clear |
-| Keyboard | `press_key` | `codex_cu_sequence` | `press_key` | Calculator key `2`; TextEdit save/select-all |
+| App state + screenshot | `get_app_state` | `codex_cu_get_app_state`, sequence step | `get_app_state` | Activity Monitor get-state; image save/include probes |
+| Accessibility press/action | `perform_secondary_action` | `codex_cu_sequence` | `perform_secondary_action` | Activity Monitor CPU/Memory tab actions |
+| Keyboard | `press_key` | `codex_cu_sequence` | `press_key` | TextEdit save/select-all |
 | Literal typing | `type_text` | `codex_cu_sequence` | `type_text` | TextEdit `/tmp/macuse-type-test.txt` |
 | Set accessibility value | `set_value` | `codex_cu_sequence` | `set_value` | TextEdit `/tmp/macuse-set-value-test.txt` |
 | Text selection | `select_text` | `codex_cu_sequence` | `select_text` | TextEdit `/tmp/macuse-select-test.txt` |
@@ -42,7 +42,7 @@ The app-server-backed path provides:
 
 | UX property | Status | Evidence / behavior |
 | --- | --- | --- |
-| Does not leave target app frontmost | Passing for Calculator focus probe | `node tools/validate-macuse.mjs focus` |
+| Restores original frontmost app | Passing for Activity Monitor focus probe | `node tools/validate-macuse.mjs focus` |
 | Avoids actual mouse movement by default | Implemented | pi guidance prefers secondary actions/keys/set-value/scroll; pointer click/drag require explicit flags |
 | Restores mouse after pointer actions | Implemented | pi extension restores pointer click/drag sequences; CLI bridge has `--preserve-mouse`; MCP wrapper restores pointer click/drag |
 | Before/after state evidence | Implemented | sequence steps can include `get_app_state`; validation uses before/after checks |

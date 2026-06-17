@@ -74,6 +74,6 @@ This validates:
 - MCP initialize,
 - `tools/list` with all expected Computer Use tools,
 - MCP elicitation proxying on a Finder denial path,
-- `get_app_state` for Calculator,
+- `get_app_state` for Activity Monitor,
 - pointer guard for `click`, and
-- a focus-preserving `perform_secondary_action` Calculator mutation.
+- default-inherit app approval behavior.

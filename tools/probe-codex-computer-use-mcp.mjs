@@ -262,9 +262,9 @@ Examples:
   node tools/probe-codex-computer-use-mcp.mjs discover
   node tools/probe-codex-computer-use-mcp.mjs apps --tool-timeout-ms 90000
   node tools/probe-codex-computer-use-mcp.mjs deny --app Finder
-  node tools/probe-codex-computer-use-mcp.mjs state --app Calculator --approval interactive
-  node tools/probe-codex-computer-use-mcp.mjs state --app Calculator --approval accept-once --tool-timeout-ms 90000
-  node tools/probe-codex-computer-use-mcp.mjs state --app Calculator --approval accept-once --with-turn-metadata
+  node tools/probe-codex-computer-use-mcp.mjs state --app "Activity Monitor" --approval interactive
+  node tools/probe-codex-computer-use-mcp.mjs state --app "Activity Monitor" --approval accept-once --tool-timeout-ms 90000
+  node tools/probe-codex-computer-use-mcp.mjs state --app "Activity Monitor" --approval accept-once --with-turn-metadata
   node tools/probe-codex-computer-use-mcp.mjs logs --since 5m
 `);
 }

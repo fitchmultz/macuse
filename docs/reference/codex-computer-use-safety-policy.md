@@ -90,20 +90,15 @@ and hard stop boundaries still apply.
 
 ## Mutating regression probe
 
-The first mutating validation was approved and run on May 22, 2026. It is a
-harmless Calculator-only probe:
+The mutating validation now uses a non-destructive Activity Monitor probe:
 
-1. Run `get_app_state` for `Calculator`.
-2. Activate `All Clear` at element index `6` using `perform_secondary_action` with `action: "Press"`.
-3. Run `get_app_state` and verify display `0`.
-4. Activate digit `1` at element index `17` using `perform_secondary_action` with `action: "Press"`.
-5. Run `get_app_state` and verify display `1`.
-6. Activate `All Clear` at element index `6` using `perform_secondary_action` with `action: "Press"`.
-7. Run `get_app_state` and verify display `0`.
-8. Press key `2`.
-9. Run `get_app_state` and verify display `2`.
-10. Activate `All Clear` at element index `6` using `perform_secondary_action` with `action: "Press"`.
-11. Run `get_app_state` and verify display restored to `0`.
+1. Run `get_app_state` for `Activity Monitor`.
+2. Set the search field to `Codex`.
+3. Verify filtered Activity Monitor state exposes `Codex`.
+4. Clear the search field after its accessibility name drifts to the typed value.
+5. Switch to the `Memory` tab with `perform_secondary_action`.
+6. Switch back to the `CPU` tab with `perform_secondary_action`.
+7. Verify CPU/search state and frontmost focus are restored.
 
 Reusable commands:
 
@@ -114,12 +109,10 @@ node tools/validate-macuse.mjs mcp
 ```
 
 The focus validation records the frontmost app before/after the mutating probe
-and fails if Calculator is left frontmost when it was not frontmost at the start.
-If the exact before/after frontmost app differs but Calculator is not left
-frontmost, validation prints a warning instead of a misleading pass. Whole-run
-mouse coordinate drift is also a warning, not a hard failure, because the user
-may move the mouse during the run. Demo sequences that pass `--preserve-mouse`
-check their own before/restored coordinates separately.
+and fails if the harness cannot restore the original frontmost app. Whole-run
+mouse coordinate drift is reported separately because the user may move the
+mouse during the run. Demo sequences that pass `--preserve-mouse` check their
+own before/restored coordinates separately.
 
 Separate controlled TextEdit probes were also run:
 

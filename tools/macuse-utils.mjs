@@ -10,6 +10,7 @@ export const DEFAULT_CODEX_BIN = '/Applications/Codex.app/Contents/Resources/cod
 export const DEFAULT_COMPUTER_USE_PLUGIN_ROOT = '/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use';
 export const DEFAULT_COMPUTER_USE_PLUGIN_DIR = discoverComputerUsePluginDir();
 export const DEFAULT_COMPUTER_USE_APP = '/Users/yourname/.codex/computer-use/Codex Computer Use.app';
+export const COMPUTER_USE_TOOL_NAMES = ['click', 'drag', 'get_app_state', 'list_apps', 'perform_secondary_action', 'press_key', 'scroll', 'select_text', 'set_value', 'type_text'];
 
 function compareVersionLike(a, b) {
   const aa = a.split(/[^0-9]+/).filter(Boolean).map(Number);
@@ -159,30 +160,6 @@ export function toolText(result) {
 
 export function stepText(step) {
   return toolText(step?.result);
-}
-
-export function calculatorDisplayFromStep(step) {
-  const match = stepText(step).match(/(?:^|\n)\s*4 text\s+([^\n]+)/);
-  return match ? match[1].replace(/[\u200e\u200f]/g, '').trim() : '';
-}
-
-export function calculatorMutationSteps() {
-  return [
-    { label: 'Read Calculator before mutation', tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { label: 'Reset Calculator with Escape', tool: 'press_key', arguments: { app: 'Calculator', key: 'Escape' } },
-    { label: 'Reset Calculator with Escape again', tool: 'press_key', arguments: { app: 'Calculator', key: 'Escape' } },
-    { label: 'Verify reset display is 0', tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { label: 'Clear Calculator via stable AllClear ID', tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'AllClear', action: 'Press' } },
-    { label: 'Verify display is 0', tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { label: 'Press digit 1 via stable One ID', tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementId: 'One', action: 'Press' } },
-    { label: 'Verify display is 1', tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { label: 'Clear non-zero display by description', tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementDescription: 'Clear', action: 'Press' } },
-    { label: 'Verify display is back to 0', tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { label: 'Press key 2', tool: 'press_key', arguments: { app: 'Calculator', key: '2' } },
-    { label: 'Verify display is 2', tool: 'get_app_state', arguments: { app: 'Calculator' } },
-    { label: 'Restore Calculator to 0 by description', tool: 'perform_secondary_action', arguments: { app: 'Calculator', elementDescription: 'Clear', action: 'Press' } },
-    { label: 'Verify restored display is 0', tool: 'get_app_state', arguments: { app: 'Calculator' } },
-  ];
 }
 
 export function markdownEscape(value) {
