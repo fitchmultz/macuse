@@ -59,7 +59,8 @@
     "node": ">=22.19.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.79.8",
+    "@earendil-works/pi-coding-agent": "^0.79.10",
+    "jiti": "^2.7.0",
     "typebox": "^1.1.38"
   },
   "peerDependencies": {
