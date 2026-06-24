@@ -1,6 +1,6 @@
 ---
 name: macuse
-description: Use this skill when the user asks to use macuse/Codex Computer Use from pi to inspect, dogfood, QA, or safely control local macOS apps with codex_cu_list_apps, codex_cu_get_app_state, or codex_cu_sequence. Applies to native app automation, focus-preserving GUI checks, and macuse extension dogfood. Do not use for ordinary web-page automation where agent_browser is sufficient, generic pi extension development, raw MCP probing, or risky sends/deletes/purchases/account/security/privacy actions without explicit approval.
+description: "Use for macuse/Codex Computer Use in pi: inspect, QA, dogfood, or safely control local macOS native apps with codex_cu_* tools while preserving focus. Do not use for browser DOM automation, generic pi extension work, raw MCP probes, or sends/deletes/purchases/account/security/privacy changes without exact approval."
 compatibility: macOS with the macuse pi package/extension loaded and Codex Computer Use available.
 metadata:
   version: "0.1.0"
@@ -37,7 +37,7 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
    - `arguments.targets` fallback objects
    - raw `element_index` only with `expectedRole`/`expectedName` guards.
 4. For dynamic controls, prefer `arguments.targets` fallback objects that include both stable IDs and visible descriptions when available.
-5. Prefer non-pointer actions: `perform_secondary_action`, `set_value`, `press_key`, `type_text`, `select_text`, and wait helpers. Use pointer `click`/`drag` only when necessary and only with the explicit pointer allow flag.
+5. Prefer non-pointer actions: `perform_secondary_action`, `set_value`, `press_key`, `type_text`, `select_text`, and wait helpers. For text entry, prefer `set_value`; use `type_text` only after verified focus. `select_text` selects by text string, not offsets. Use pointer `click`/`drag` only when necessary and only with the explicit pointer allow flag.
 6. For mutations, use `codex_cu_sequence` with:
    - `allowMutating: true`
    - a narrow `safetyNote`
