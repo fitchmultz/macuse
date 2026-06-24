@@ -3,7 +3,7 @@ name: macuse
 description: "Use for macuse/Codex Computer Use in pi: inspect, QA, dogfood, or safely control local macOS native apps with codex_cu_* tools while preserving focus. Do not use for browser DOM automation, generic pi extension work, raw MCP probes, or sends/deletes/purchases/account/security/privacy changes without exact approval."
 compatibility: macOS with the macuse pi package/extension loaded and Codex Computer Use available.
 metadata:
-  version: "0.1.0"
+  version: "0.2.0"
   owner: "macuse"
 ---
 
@@ -29,7 +29,7 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
 ## Default workflow
 
 1. Start read-only: call `codex_cu_list_apps({ runningOnly: true })` or a filtered list when the target app name is uncertain.
-2. Inspect before acting: call `codex_cu_get_app_state` with `detail: "minimal"` and `targetScope: "main"`; use `detail: "compact"` only when you need more target context.
+2. Inspect before acting: call `codex_cu_get_app_state` with `detail: "minimal"` and `targetScope: "main"`; use `detail: "compact"` only when you need more target context. Focus capture on `get_app_state` is opt-in (`trackFocus: true`); it defaults off because it costs two extra `list_apps` round-trips and frontmost rarely changes during a read. Mutating sequences always capture focus and report restoration.
 3. Prefer stable targets in this order:
    - `elementId`
    - exact `elementDescription`

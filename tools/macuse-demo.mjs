@@ -3,6 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   REPO_ROOT,
+  VERSION,
   commandLine,
   ensureDir,
   markdownTable,
@@ -11,8 +12,6 @@ import {
   runCommand,
   writeJsonFile,
 } from './macuse-utils.mjs';
-
-const VERSION = '0.1.0';
 
 function help() {
   process.stdout.write(`macuse live demo ${VERSION}\n\nUsage:\n  node tools/macuse-demo.mjs [options]\n\nOptions:\n  --out <dir>              Artifact directory. Default: .scratch/macuse-demo-<timestamp>.\n  --skip-doctor            Skip the embedded standard doctor pass.\n  --skip-mcp               Skip the standard-MCP wrapper validation pass.\n  --tool-timeout-ms <ms>   Tool timeout for live checks. Default: 90000.\n  -h, --help               Show this help.\n\nWhat it proves:\n  - app-server-backed Computer Use works outside Codex\n  - the pi extension survives a real Activity Monitor app flow\n  - Activity Monitor search-name drift is handled\n  - CPU/Memory tab actions restore safely\n  - strict frontmost focus validation passes\n  - Cursor/standard-MCP wrapper is ready, unless --skip-mcp is passed\n\nExamples:\n  node tools/macuse-demo.mjs\n  node tools/macuse-demo.mjs --out .scratch/demo\n`);

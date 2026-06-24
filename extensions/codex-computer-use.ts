@@ -7,14 +7,38 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { StringEnum, Type } from "@earendil-works/pi-ai";
 import { createHash } from "node:crypto";
 import { spawn, spawnSync, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import path from "node:path";
 
-const VERSION = "0.2.0";
+const VERSION = resolveMacuseVersion();
 const DEFAULT_CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex";
+
+/**
+ * Resolve the canonical package version from package.json via import.meta.url.
+ * Single source of truth: package.json is the owner, and the version is written
+ * into every /tmp/macuse-appserver PID record so stale-record reaping stays
+ * consistent across upgrades.
+ */
+function resolveMacuseVersion(): string {
+	let dir = path.dirname(fileURLToPath(import.meta.url));
+	for (let i = 0; i < 8; i += 1) {
+		try {
+			const pkg = JSON.parse(readFileSync(path.join(dir, "package.json"), "utf8")) as { name?: unknown; version?: unknown };
+			if (pkg && pkg.name === "macuse" && typeof pkg.version === "string") return pkg.version;
+		} catch {
+			// Keep walking up the tree.
+		}
+		const parent = path.dirname(dir);
+		if (parent === dir) break;
+		dir = parent;
+	}
+	return "0.0.0-unknown";
+}
+
 const DEFAULT_TOOL_TIMEOUT_MS = 90_000;
 const DEFAULT_MAX_TEXT_CHARS = 20_000;
 const WAIT_TOOLS = new Set(["waitForText", "waitForURL", "waitForTitle", "waitForElement", "waitUntilElementEnabled", "waitUntilElementDisabled"]);
@@ -105,6 +129,7 @@ type GetAppStateParams = {
 	saveImagePath?: string;
 	detail?: DetailMode;
 	targetScope?: TargetScope;
+	trackFocus?: boolean;
 	maxTextChars?: number;
 	toolTimeoutMs?: number;
 };
@@ -224,15 +249,6 @@ class ComputerUseError extends Error {
 	}
 }
 
-function StringEnum<T extends readonly string[]>(values: T, options?: { description?: string; default?: T[number] }) {
-	return Type.Unsafe<T[number]>({
-		type: "string",
-		enum: values as unknown as string[],
-		...(options?.description ? { description: options.description } : {}),
-		...(options?.default ? { default: options.default } : {}),
-	});
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -338,7 +354,7 @@ function filterToolResult(result: ComputerUseToolResult, opts: { includeImage?: 
 			if (opts.includeImage) content.push(block);
 			else omittedImages += 1;
 		} else {
-			content.push(block);
+			content.push(block as ContentBlock);
 		}
 	}
 	return {
@@ -2124,6 +2140,27 @@ const maxTextParam = Type.Optional(Type.Number({ minimum: 1_000, maximum: 200_00
 const approvalParam = Type.Optional(StringEnum(["inherit", "accept-all", "accept-once", "deny"] as const, { description: "How to answer Computer Use app-approval prompts. Default inherit, which auto-accepts app approvals to match Codex's Any App setting." }));
 const detailParam = Type.Optional(StringEnum(["minimal", "compact", "full"] as const, { description: "Output detail. minimal returns app/window, visible text, and concise target hints; compact trims accessibility trees to interactive element lines; full returns the raw Computer Use text." }));
 
+/**
+ * Permissive object schema for one codex_cu_sequence step. It advertises the
+ * supported step fields to the model (vs. an opaque {}), but stays loose
+ * (additionalProperties: true, all fields optional) so the runtime validator
+ * normalizeSequenceSteps() remains the single hard gate on step shape.
+ */
+const sequenceStepParam = Type.Object(
+	{
+		tool: Type.Optional(Type.String({ description: "Computer Use tool name, e.g. get_app_state, perform_secondary_action, press_key, type_text, set_value, select_text, scroll, click, drag, or a wait helper (waitForText, waitForURL, waitForTitle, waitForElement, waitUntilElementEnabled, waitUntilElementDisabled)." })),
+		arguments: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Arguments object for the tool. Element targets accept element_index (string/number), element alias, elementId/element_id, elementDescription/element_description, role/name selectors, or arguments.targets fallback objects; raw index targets may pass expectedRole/expectedName/expectedDescription/expectedId/expectedValue stale guards. set_value accepts value; wait helpers accept timeoutMs, intervalMs, toolTimeoutMs, visibleOnly, title, url." })),
+		value: Type.Optional(Type.Unknown({ description: "Shorthand for set_value when arguments.value is omitted." })),
+		label: Type.Optional(Type.String({ description: "Optional human-readable label for this step." })),
+		expectText: Type.Optional(Type.Array(Type.String(), { description: "App content text/value substrings that must appear after this step (ignores macuse/upstream metadata)." })),
+		expectAbsentText: Type.Optional(Type.Array(Type.String(), { description: "App content text substrings that must NOT appear after this step." })),
+		expectVisibleText: Type.Optional(Type.Array(Type.String(), { description: "UI-visible substrings (visible text, window titles, visible control labels, exposed field values) that must appear after this step." })),
+		allowError: Type.Optional(Type.Boolean({ description: "If true, continue the sequence even when this step errors or fails a guard." })),
+		requireStateChange: Type.Optional(Type.Boolean({ description: "If true, fail this step closed when a post-action readback shows no observable title/URL/visible-text/target change." })),
+	},
+	{ additionalProperties: true, description: "One Computer Use tool call. Must include a non-empty tool string and an arguments object; see the tool description for targeting, waits, and set_value shorthand." },
+);
+
 let client: AppServerClient | null = null;
 const sessionElementCache = new Map<string, ElementInfo[]>();
 
@@ -2133,6 +2170,13 @@ function getClient(): AppServerClient {
 }
 
 export default function (pi: ExtensionAPI) {
+	// Reset per-session state on every session_start. Pi may reuse this module
+	// across same-process session switches (which fire session_start rather than
+	// session_shutdown), so cached element snapshots would otherwise go stale.
+	pi.on("session_start", () => {
+		sessionElementCache.clear();
+	});
+
 	pi.on("session_shutdown", async () => {
 		sessionElementCache.clear();
 		if (client) await client.stop();
@@ -2143,13 +2187,13 @@ export default function (pi: ExtensionAPI) {
 		description: "Show Codex Computer Use persistent app-server status without starting it",
 		handler: async (_args, ctx) => {
 			if (!client) {
-				ctx.ui.notify("macuse stopped; app-server has not been started in this pi session. It starts lazily on the first codex_cu_* tool call.", "warning");
+				if (ctx.hasUI) ctx.ui.notify("macuse stopped; app-server has not been started in this pi session. It starts lazily on the first codex_cu_* tool call.", "warning");
 				return;
 			}
 			const status = client.status();
 			const reaped = status.staleReapSummary.filter((item) => item.action === "reaped-orphan").length;
 			const computerUse = status.computerUse ? ` computer-use=${status.computerUse.present ? `${status.computerUse.toolCount} tools` : "missing"}${status.computerUse.missingTools.length ? ` missing=${status.computerUse.missingTools.join(",")}` : ""}` : "";
-			ctx.ui.notify(`macuse ${status.running ? "running" : "stopped"}${status.threadId ? ` thread=${status.threadId}` : ""}${status.processPid ? ` pid=${status.processPid}` : ""}${status.watchdogPid ? ` watchdog=${status.watchdogPid}` : ""}${computerUse}${reaped ? ` reaped=${reaped}` : ""}`, status.running ? "info" : "warning");
+			if (ctx.hasUI) ctx.ui.notify(`macuse ${status.running ? "running" : "stopped"}${status.threadId ? ` thread=${status.threadId}` : ""}${status.processPid ? ` pid=${status.processPid}` : ""}${status.watchdogPid ? ` watchdog=${status.watchdogPid}` : ""}${computerUse}${reaped ? ` reaped=${reaped}` : ""}`, status.running ? "info" : "warning");
 		},
 	});
 
@@ -2159,7 +2203,7 @@ export default function (pi: ExtensionAPI) {
 			sessionElementCache.clear();
 			if (client) await client.stop();
 			client = null;
-			ctx.ui.notify("macuse Computer Use app-server stopped; it will restart lazily on the next tool call.", "info");
+			if (ctx.hasUI) ctx.ui.notify("macuse Computer Use app-server stopped; it will restart lazily on the next tool call.", "info");
 		},
 	});
 
@@ -2168,7 +2212,7 @@ export default function (pi: ExtensionAPI) {
 		handler: async (_args, ctx) => {
 			sessionElementCache.clear();
 			await getClient().restart();
-			ctx.ui.notify("macuse Computer Use app-server stopped; it will restart on the next tool call.", "info");
+			if (ctx.hasUI) ctx.ui.notify("macuse Computer Use app-server stopped; it will restart on the next tool call.", "info");
 		},
 	});
 
@@ -2189,7 +2233,7 @@ export default function (pi: ExtensionAPI) {
 		}),
 		async execute(_toolCallId, params, signal, onUpdate) {
 			const input = params as ListAppsParams;
-			onUpdate?.({ content: [{ type: "text", text: "Calling persistent Codex Computer Use list_apps..." }] });
+			onUpdate?.({ content: [{ type: "text", text: "Calling persistent Codex Computer Use list_apps..." }], details: {} });
 			const toolTimeoutMs = asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
 			const maxTextChars = asInt(input.maxTextChars, DEFAULT_MAX_TEXT_CHARS);
 			const call = await getClient().callTool("list_apps", {}, { approval: "inherit", timeoutMs: toolTimeoutMs, signal });
@@ -2197,7 +2241,7 @@ export default function (pi: ExtensionAPI) {
 			const appMetadata = parseAppListContent(result.content, { runningOnly: Boolean(input.runningOnly), filter: input.filter });
 			const outputContent = filterAppListContent(result.content, { runningOnly: Boolean(input.runningOnly), filter: input.filter, maxTextChars });
 			return {
-				content: outputContent,
+				content: outputContent as (TextContentBlock | ImageContentBlock)[],
 				details: bridgeDetails({
 					tool: "list_apps",
 					threadId: getClient().status().threadId,
@@ -2232,6 +2276,7 @@ export default function (pi: ExtensionAPI) {
 			saveImagePath: Type.Optional(Type.String({ description: "Optional filesystem path where the screenshot should be saved." })),
 			detail: detailParam,
 			targetScope: Type.Optional(StringEnum(["all", "main"] as const, { description: "Output target scope. all includes app/window/chrome targets; main prioritizes likely app/page content controls." })),
+			trackFocus: Type.Optional(Type.Boolean({ description: "Capture frontmost-app focus before/after (two extra app-server list_apps round-trips). Default false; set true when focus evidence matters for this read. Mutating sequences always capture focus." })),
 			maxTextChars: maxTextParam,
 			toolTimeoutMs: timeoutParam,
 		}),
@@ -2239,14 +2284,18 @@ export default function (pi: ExtensionAPI) {
 			const input = params as GetAppStateParams;
 			const app = input.app;
 			const approval = input.approval || "inherit";
-			onUpdate?.({ content: [{ type: "text", text: `Calling persistent Computer Use get_app_state for ${app} with approval=${approval}...` }] });
+			onUpdate?.({ content: [{ type: "text", text: `Calling persistent Computer Use get_app_state for ${app} with approval=${approval}...` }], details: {} });
 			const toolTimeoutMs = asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
 			const maxTextChars = asInt(input.maxTextChars, DEFAULT_MAX_TEXT_CHARS);
 			const detail = normalizeDetail(input.detail, "full");
 			const targetScope: TargetScope = input.targetScope === "main" ? "main" : "all";
-			const frontmostBefore = await captureFocusSnapshot(approval, toolTimeoutMs, maxTextChars, signal);
+			// Focus capture costs two extra list_apps round-trips; skip it by default
+			// for this read-only tool and reserve it for mutating sequences where
+			// frontmost restoration actually matters.
+			const trackFocus = input.trackFocus === true;
+			const frontmostBefore = trackFocus ? await captureFocusSnapshot(approval, toolTimeoutMs, maxTextChars, signal) : null;
 			const call = await getClient().callTool("get_app_state", { app }, { approval, timeoutMs: toolTimeoutMs, signal });
-			const frontmostAfter = await captureFocusSnapshot(approval, toolTimeoutMs, maxTextChars, signal);
+			const frontmostAfter = trackFocus ? await captureFocusSnapshot(approval, toolTimeoutMs, maxTextChars, signal) : null;
 			const result = filterToolResult(call.result, {
 				includeImage: Boolean(input.includeImage),
 				saveImagePath: input.saveImagePath,
@@ -2258,12 +2307,12 @@ export default function (pi: ExtensionAPI) {
 			appendImageWarning(result, { includeImage: Boolean(input.includeImage), saveImagePath: input.saveImagePath });
 			const focus = focusSnapshot(frontmostBefore, frontmostAfter);
 			const transformedContent = detail === "minimal" ? minimalContent(result.content, targetScope) : detail === "compact" ? compactContent(result.content, targetScope) : result.content;
-			const outputContent = truncateTextContent([...transformedContent, { type: "text", text: focusSummaryText(focus, app) }], maxTextChars);
+			const focusLine = trackFocus ? { type: "text" as const, text: focusSummaryText(focus, app) } : null;
+			const outputContent = truncateTextContent(focusLine ? [...transformedContent, focusLine] : transformedContent, maxTextChars);
 			return {
-				content: outputContent,
+				content: outputContent as (TextContentBlock | ImageContentBlock)[],
 				details: bridgeDetails({
 					tool: "get_app_state",
-					app,
 					threadId: getClient().status().threadId,
 					isError: result.isError,
 					omittedImages: result.omittedImages,
@@ -2301,7 +2350,7 @@ export default function (pi: ExtensionAPI) {
 		],
 		parameters: Type.Object({
 			app: Type.Optional(Type.String({ description: "Optional default app name/bundle/path applied to steps whose arguments omit app." })),
-			steps: Type.Array(Type.Any({ description: "Ordered Computer Use tool calls. Each step must be an object with tool, optional arguments, optional label, expectText, expectAbsentText, expectVisibleText, allowError, and optional requireStateChange. Element-targeted tools accept element_index as string or number, element as an alias, elementId/element_id, elementDescription/element_description, role/name selectors, or arguments.targets fallback objects; raw index targets may pass expectedRole/expectedName/expectedDescription/expectedId/expectedValue for stale-target guards. Wait helpers accept timeoutMs, intervalMs, toolTimeoutMs, visibleOnly, and optional title/url scoping. set_value can put value inside arguments or as top-level step.value. select_text selects by text string, not start/end offsets." }), { minItems: 1, description: "Ordered Computer Use tool calls to run in one persistent app-server thread." }),
+			steps: Type.Array(sequenceStepParam, { minItems: 1, description: "Ordered Computer Use tool calls to run in one persistent app-server thread." }),
 			approval: approvalParam,
 			allowMutating: Type.Optional(Type.Boolean({ description: "Required when any step is not list_apps or get_app_state." })),
 			allowPointerClick: Type.Optional(Type.Boolean({ description: "Required to use the pointer-based click tool. Prefer perform_secondary_action action=Press when possible." })),
@@ -2337,7 +2386,7 @@ export default function (pi: ExtensionAPI) {
 				if (safetyNote.length < 20) throw new Error("codex_cu_sequence mutating steps require a safetyNote describing target, intended effect, and stop boundary.");
 			}
 			const approval = input.approval || "inherit";
-			onUpdate?.({ content: [{ type: "text", text: `Running persistent Codex Computer Use sequence (${steps.length} steps, mutating=${mutating})...` }] });
+			onUpdate?.({ content: [{ type: "text", text: `Running persistent Codex Computer Use sequence (${steps.length} steps, mutating=${mutating})...` }], details: {} });
 			const toolTimeoutMs = asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
 			const maxTextChars = asInt(input.maxTextChars, DEFAULT_MAX_TEXT_CHARS);
 			const detail = normalizeDetail(input.detail, "compact");
@@ -2681,10 +2730,9 @@ export default function (pi: ExtensionAPI) {
 			}
 			const focus = focusSnapshot(frontmostBefore, frontmostAfter);
 			const mousePreservation = mouseBefore ? { before: mouseBefore, after: mouseAfter, restored: mouseRestored } : undefined;
-			return {
-				content: sequenceContent(results, Boolean(input.includeImage), failed, steps.length, detail, maxTextChars, focus, defaultApp, mousePreservation),
-				details: bridgeDetails({
-					tool: "sequence",
+			const content = sequenceContent(results, Boolean(input.includeImage), failed, steps.length, detail, maxTextChars, focus, defaultApp, mousePreservation);
+			const details = bridgeDetails({
+				tool: "sequence",
 					threadId: getClient().status().threadId,
 					detail,
 					targetScope,
@@ -2720,8 +2768,21 @@ export default function (pi: ExtensionAPI) {
 						elements: step.elements,
 					})),
 					mousePreservation: mousePreservation ?? null,
-				}, getClient().status().stderrTail),
-			};
+				}, getClient().status().stderrTail);
+			// Resumable partial failure (>=1 step completed before a hard failure): keep
+			// the rich content/details so the agent can resume from failedStepIndex.
+			// Zero-progress hard failure (no step completed) or a wait-step timeout on
+			// step 0: surface as a tool error so pi marks the result failed, carrying
+			// the run summary as the error message and the structured details.
+			const completedStepCount = failed ? failed.index : results.length;
+			if (failed && completedStepCount === 0) {
+				// pi discards thrown error `details`, so the error message must be
+				// self-contained: include the run summary text so the model can
+				// diagnose the zero-progress failure from the message alone.
+				const summaryBlock = content.find(isTextBlock);
+				throw new ComputerUseError(`codex_cu_sequence failed at step 1 (index 0, ${failed.tool}): ${failed.message}.\n\n${truncateString(summaryBlock?.text ?? "", 4000)}`, details);
+			}
+			return { content: content as (TextContentBlock | ImageContentBlock)[], details };
 		},
 	});
 }

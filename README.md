@@ -182,14 +182,14 @@ The wrapper exposes the Computer Use tool family over MCP while routing executio
 
 ## Probe path
 
-Use the direct raw-MCP harness for discovery, app-approval denial-path checks, and raw-MCP parity investigation:
+Use the direct raw-MCP harness for discovery, best-effort app-approval denial diagnostics, and raw-MCP parity investigation:
 
 ```bash
 node tools/probe-codex-computer-use-mcp.mjs discover
 node tools/probe-codex-computer-use-mcp.mjs deny --app Finder
 ```
 
-Direct raw-MCP accepted `list_apps` / `get_app_state` still hangs in tested external hosts. Use the app-server bridge for positive read-only operation.
+Direct raw-MCP denial and accepted `list_apps` / `get_app_state` can fail or hang in tested external hosts. Use the app-server bridge for authoritative positive operation; validation reports raw-MCP denial failures as warnings.
 
 ## Docs
 

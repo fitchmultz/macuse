@@ -3,8 +3,8 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { accessSync, constants, readdirSync, statSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
+import { VERSION } from './macuse-utils.mjs';
 
-const VERSION = '0.1.0';
 const DEFAULT_CLIENT = '/Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient';
 const DEFAULT_CWD_ROOT = '/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use';
 const DEFAULT_PROTOCOL_VERSION = '2025-06-18';

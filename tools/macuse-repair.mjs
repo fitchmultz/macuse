@@ -6,13 +6,13 @@ import { dirname, join, resolve } from 'node:path';
 import {
   DEFAULT_COMPUTER_USE_APP,
   REPO_ROOT,
+  VERSION,
   commandLine,
   ensureDir,
   runCommand,
   writeJsonFile,
 } from './macuse-utils.mjs';
 
-const VERSION = '0.1.0';
 const REGISTRY_DIR = '/tmp/macuse-appserver';
 const USER_TCC_DB = `${process.env.HOME}/Library/Application Support/com.apple.TCC/TCC.db`;
 const SERVICE_PATH = `${DEFAULT_COMPUTER_USE_APP}/Contents/MacOS/SkyComputerUseService`;

@@ -1,11 +1,8 @@
 #!/usr/bin/env node
 import { writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { ensureDir } from './macuse-utils.mjs';
+import { ensureDir, REPO_ROOT, VERSION } from './macuse-utils.mjs';
 
-const VERSION = '0.1.0';
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const WRAPPER = resolve(REPO_ROOT, 'tools/codex-computer-use-appserver-mcp.mjs');
 
 function help() {

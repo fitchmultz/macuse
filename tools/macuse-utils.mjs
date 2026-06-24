@@ -6,6 +6,17 @@ import { fileURLToPath } from 'node:url';
 
 export const TOOLS_DIR = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(TOOLS_DIR, '..');
+
+/** Canonical package version. Single source of truth; read from package.json once. */
+export const VERSION = (() => {
+  try {
+    const pkg = JSON.parse(readFileSync(resolve(REPO_ROOT, 'package.json'), 'utf8'));
+    if (pkg && typeof pkg.version === 'string') return pkg.version;
+  } catch {
+    // Fall through; readFileSync failure is unrecoverable for a tool run from the repo.
+  }
+  throw new Error(`macuse: could not read version from ${resolve(REPO_ROOT, 'package.json')}`);
+})();
 export const DEFAULT_CODEX_BIN = '/Applications/Codex.app/Contents/Resources/codex';
 export const DEFAULT_COMPUTER_USE_PLUGIN_ROOT = '/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use';
 export const DEFAULT_COMPUTER_USE_PLUGIN_DIR = discoverComputerUsePluginDir();

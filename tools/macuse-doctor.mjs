@@ -7,6 +7,7 @@ import {
   DEFAULT_COMPUTER_USE_APP,
   DEFAULT_COMPUTER_USE_PLUGIN_DIR,
   REPO_ROOT,
+  VERSION,
   commandLine,
   ensureDir,
   fileExists,
@@ -18,8 +19,6 @@ import {
   runCommand,
   writeJsonFile,
 } from './macuse-utils.mjs';
-
-const VERSION = '0.1.0';
 
 function help() {
   process.stdout.write(`macuse doctor ${VERSION}\n\nUsage:\n  node tools/macuse-doctor.mjs [options]\n\nOptions:\n  --out <dir>              Write doctor.json and doctor.md to a directory.\n  --json                   Print JSON to stdout instead of Markdown.\n  --full                   Also run focus and MCP wrapper mutation smokes.\n  --app <app>              Read-only get_app_state target. Default: Activity Monitor.\n  --codex <path>           Codex app-server binary. Default: ${DEFAULT_CODEX_BIN}\n  --tool-timeout-ms <ms>   Tool timeout for live checks. Default: 90000.\n  -h, --help               Show this help.\n\nExamples:\n  node tools/macuse-doctor.mjs\n  node tools/macuse-doctor.mjs --out .scratch/doctor --full\n  node tools/macuse-doctor.mjs --json --full\n`);

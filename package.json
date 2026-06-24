@@ -1,6 +1,6 @@
 {
   "name": "macuse",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "External harness and pi extension for reusing OpenAI Codex Computer Use from non-Codex agents.",
   "type": "module",
@@ -52,22 +52,30 @@
     "validate:mutating": "node tools/validate-macuse.mjs mutating",
     "validate:focus": "node tools/validate-macuse.mjs focus",
     "validate:mcp": "node tools/validate-macuse.mjs mcp",
-    "pack:check": "npm pack --dry-run",
-    "prepublishOnly": "node tools/validate-macuse.mjs quick && npm pack --dry-run"
+    "typecheck": "tsc --noEmit",
+    "ci": "tsc --noEmit && node tools/validate-macuse.mjs quick",
+    "pack:check": "npm pack --dry-run"
   },
   "engines": {
     "node": ">=22.19.0"
   },
   "devDependencies": {
+    "@earendil-works/pi-ai": "^0.80.1",
     "@earendil-works/pi-coding-agent": "^0.80.1",
+    "@types/node": "^22.0.0",
     "jiti": "^2.7.0",
-    "typebox": "^1.1.38"
+    "typebox": "^1.1.38",
+    "typescript": "^5.6.0"
   },
   "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
     "typebox": "*"
   },
   "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
     "@earendil-works/pi-coding-agent": {
       "optional": true
     },

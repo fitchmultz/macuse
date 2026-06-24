@@ -2,8 +2,8 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import process from 'node:process';
+import { VERSION } from './macuse-utils.mjs';
 
-const VERSION = '0.1.0';
 const DEFAULT_CODEX_BIN = '/Applications/Codex.app/Contents/Resources/codex';
 const DEFAULT_CWD = process.cwd();
 const FEATURE_FLAGS = ['computer_use', 'plugins', 'tool_call_mcp_elicitation'];

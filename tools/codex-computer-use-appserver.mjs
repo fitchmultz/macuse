@@ -3,8 +3,23 @@ import { createHash } from 'node:crypto';
 import { spawn, spawnSync } from 'node:child_process';
 import { accessSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const VERSION = '0.1.0';
+const VERSION = (() => {
+  try {
+    let dir = dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 8; i += 1) {
+      try {
+        const pkg = JSON.parse(readFileSync(resolve(dir, 'package.json'), 'utf8'));
+        if (pkg && pkg.name === 'macuse' && typeof pkg.version === 'string') return pkg.version;
+      } catch { /* keep walking */ }
+      const parent = dirname(dir);
+      if (parent === dir) break;
+      dir = parent;
+    }
+  } catch { /* fall through */ }
+  return '0.0.0-unknown';
+})();
 const DEFAULT_CODEX_BIN = '/Applications/Codex.app/Contents/Resources/codex';
 const DEFAULT_TOOL_TIMEOUT_MS = 90000;
 const DEFAULT_STARTUP_TIMEOUT_MS = 15000;
