@@ -9,8 +9,9 @@ This repo investigates OpenAI Codex Computer Use reuse from non-Codex agents suc
 - Client config generator: `tools/macuse-config.mjs`
 - Working app-server bridge: `tools/codex-computer-use-appserver.mjs`
 - Standard MCP wrapper for Cursor/non-pi clients: `tools/codex-computer-use-appserver-mcp.mjs`
+- Shared app-server/MCP helper module: `tools/cu-helpers.mjs`
 - Direct raw-MCP probe harness: `tools/probe-codex-computer-use-mcp.mjs`
-- Installable pi extension source with persistent app-server session: `extensions/codex-computer-use.ts`
+- Installable pi extension source with persistent app-server session: `extensions/codex-computer-use.ts` plus modules in `extensions/codex-computer-use-modules/`
 - Main findings: `docs/reference/codex-computer-use-external-harness.md`
 - Local install facts: `docs/reference/codex-computer-use-local-install.md`
 - Safety policy: `docs/reference/codex-computer-use-safety-policy.md`

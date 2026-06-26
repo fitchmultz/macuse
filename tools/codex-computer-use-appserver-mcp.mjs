@@ -1,14 +1,21 @@
 #!/usr/bin/env node
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import process from 'node:process';
-import { VERSION } from './macuse-utils.mjs';
+import { DEFAULT_CODEX_BIN, VERSION } from './macuse-utils.mjs';
+import {
+  getMousePosition,
+  normalizeToolArguments,
+  resolveElementTarget,
+  restoreMousePosition,
+  targetsElement,
+  toolResultText,
+  updateElementCache,
+} from './cu-helpers.mjs';
 
-const DEFAULT_CODEX_BIN = '/Applications/Codex.app/Contents/Resources/codex';
 const DEFAULT_CWD = process.cwd();
 const FEATURE_FLAGS = ['computer_use', 'plugins', 'tool_call_mcp_elicitation'];
 const REQUEST_TIMEOUT_MS = Number(process.env.CODEX_CU_MCP_TIMEOUT_MS || 90_000);
-const READ_ONLY_TOOLS = new Set(['list_apps', 'get_app_state']);
 const POINTER_TOOLS = new Set(['click', 'drag']);
 const ELEMENT_INDEX_SCHEMA = { type: ['string', 'number'], description: 'Computer Use element index. The wrapper coerces numbers to strings before calling upstream.' };
 const ELEMENT_ALIAS_SCHEMA = { type: ['string', 'number'], description: 'Alias for element_index. Coerced to string before calling upstream.' };
@@ -108,109 +115,6 @@ function send(message) {
 
 function rpcError(id, code, message, data) {
   send({ jsonrpc: '2.0', id, error: { code, message, data } });
-}
-
-function getMousePosition() {
-  const script = 'import CoreGraphics; if let e = CGEvent(source: nil) { let p = e.location; print(Int(p.x), Int(p.y)) }';
-  const result = spawnSync('swift', ['-e', script], { encoding: 'utf8', timeout: 10000 });
-  if (result.status !== 0) return null;
-  const [x, y] = result.stdout.trim().split(/\s+/).map((part) => Number(part));
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  return { x, y };
-}
-
-function restoreMousePosition(position) {
-  if (!position) return false;
-  const script = `import CoreGraphics; CGWarpMouseCursorPosition(CGPoint(x: ${Math.trunc(position.x)}, y: ${Math.trunc(position.y)})); CGAssociateMouseAndMouseCursorPosition(1)`;
-  const result = spawnSync('swift', ['-e', script], { encoding: 'utf8', timeout: 10000 });
-  return result.status === 0;
-}
-
-function normalizeToolArguments(args) {
-  const normalized = { ...args };
-  if (normalized.element_index === undefined && normalized.element !== undefined) {
-    normalized.element_index = normalized.element;
-    delete normalized.element;
-  }
-  if (normalized.element_index !== undefined && normalized.element_index !== null) normalized.element_index = String(normalized.element_index);
-  return normalized;
-}
-
-function toolResultText(result) {
-  return (result?.content || [])
-    .filter((block) => block?.type === 'text' && typeof block.text === 'string')
-    .map((block) => block.text)
-    .join('\n');
-}
-
-function parseElementInfo(text) {
-  const elements = [];
-  for (const rawLine of text.split('\n')) {
-    const match = rawLine.match(/^\s*(\d+)\s+(.+)$/);
-    if (!match) continue;
-    const line = match[0].trim();
-    const id = line.match(/(?:^|[\s,])ID:\s*([^,\n]+)/)?.[1]?.trim();
-    const explicitDescription = line.match(/Description:\s*([^,\n]+)/)?.[1]?.trim();
-    const buttonLabel = line.match(/^\d+\s+button\s+([^,]+?)(?:,\s|$)/)?.[1]?.trim();
-    const description = explicitDescription ?? (buttonLabel && !buttonLabel.startsWith('Description:') ? buttonLabel : undefined);
-    elements.push({ index: match[1], id, description, line });
-  }
-  return elements;
-}
-
-function updateElementCache(cache, app, result) {
-  if (typeof app !== 'string') return;
-  const elements = parseElementInfo(toolResultText(result));
-  if (elements.length > 0) cache.set(app, elements);
-}
-
-function elementSummary(elements, limit = 40) {
-  if (elements.length === 0) return 'No cached elements for this app.';
-  const shown = elements.slice(0, limit).map((element) => element.line).join('\n');
-  const remaining = elements.length > limit ? `\n…${elements.length - limit} more elements omitted` : '';
-  return `${shown}${remaining}`;
-}
-
-function targetsElement(tool, args) {
-  if (tool === 'get_app_state' || typeof args.app !== 'string') return false;
-  return args.element_index !== undefined || args.element !== undefined || typeof args.elementId === 'string' || typeof args.element_id === 'string' || typeof args.elementDescription === 'string' || typeof args.element_description === 'string';
-}
-
-function resolveElementTarget(args, cache) {
-  const normalized = normalizeToolArguments(args);
-  const elementId = normalized.elementId ?? normalized.element_id;
-  if (typeof elementId === 'string' && normalized.element_index === undefined) {
-    if (typeof normalized.app !== 'string') throw new Error('elementId targeting requires an app argument');
-    const elements = cache.get(normalized.app) || [];
-    const match = elements.find((element) => element.id === elementId);
-    if (!match) {
-      const knownIds = elements.map((element) => element.id).filter(Boolean).join(', ');
-      throw new Error(`No elementId ${elementId} found for ${normalized.app}.${knownIds ? ` Known IDs: ${knownIds}.` : ''}\nAvailable elements:\n${elementSummary(elements)}`);
-    }
-    normalized.element_index = match.index;
-    delete normalized.elementId;
-    delete normalized.element_id;
-  }
-  const elementDescription = normalized.elementDescription ?? normalized.element_description;
-  if (typeof elementDescription === 'string' && normalized.element_index === undefined) {
-    if (typeof normalized.app !== 'string') throw new Error('elementDescription targeting requires an app argument');
-    const elements = cache.get(normalized.app) || [];
-    const matches = elements.filter((element) => element.description?.toLowerCase() === elementDescription.toLowerCase());
-    if (matches.length !== 1) {
-      const reason = matches.length === 0 ? 'No' : `Ambiguous ${matches.length}`;
-      throw new Error(`${reason} elementDescription ${elementDescription} found for ${normalized.app}. Match is exact and case-insensitive.\nAvailable elements:\n${elementSummary(elements)}`);
-    }
-    normalized.element_index = matches[0].index;
-    delete normalized.elementDescription;
-    delete normalized.element_description;
-  }
-  if (normalized.element_index !== undefined) {
-    delete normalized.elementId;
-    delete normalized.element_id;
-    delete normalized.elementDescription;
-    delete normalized.element_description;
-  }
-  return normalized;
 }
 
 class AppServerClient {
@@ -397,14 +301,14 @@ async function handleRequest(message) {
       if (POINTER_TOOLS.has(name) && args.allowPointer !== true) throw new Error(`${name} requires allowPointer:true; prefer non-pointer actions when possible`);
       if (targetsElement(name, args)) {
         const refresh = await appServer.callTool('get_app_state', { app: args.app, approval: args.approval || 'inherit' });
-        updateElementCache(elementCache, args.app, refresh);
+        updateElementCache(elementCache, args.app, toolResultText(refresh));
       }
       args = resolveElementTarget(args, elementCache);
       const mouseBefore = POINTER_TOOLS.has(name) ? getMousePosition() : null;
       let result;
       try {
         result = await appServer.callTool(name, args);
-        updateElementCache(elementCache, args.app, result);
+        updateElementCache(elementCache, args.app, toolResultText(result));
       } finally {
         if (mouseBefore) restoreMousePosition(mouseBefore);
       }

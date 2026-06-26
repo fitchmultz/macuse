@@ -33,7 +33,7 @@ function compareVersionLike(a, b) {
   return a.localeCompare(b);
 }
 
-export function discoverComputerUsePluginDir(root = DEFAULT_COMPUTER_USE_PLUGIN_ROOT) {
+export function discoverComputerUsePluginDir(root = DEFAULT_COMPUTER_USE_PLUGIN_ROOT, opts = {}) {
   try {
     const entries = readdirSync(root, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
@@ -45,7 +45,7 @@ export function discoverComputerUsePluginDir(root = DEFAULT_COMPUTER_USE_PLUGIN_
   } catch {
     // Fall back to latest path observed when this helper was updated.
   }
-  return resolve(root, '1.0.809');
+  return opts.fallback === false ? null : resolve(root, '1.0.809');
 }
 
 export function nowIsoForPath(date = new Date()) {

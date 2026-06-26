@@ -150,7 +150,7 @@ Save a screenshot artifact:
 
 Tool details include saved image path, bytes, SHA-256, width, and height when an image is saved. In sequences, `saveImagePath` defaults to the first step for compatibility; pass `screenshotStep: "final"` to save the final visual state.
 
-The installable extension source lives at `extensions/codex-computer-use.ts` and is declared in `package.json#pi.extensions`. This package also declares `skills/` in `package.json#pi.skills`; there is no project-local `.pi/extensions` shim.
+The installable extension entry lives at `extensions/codex-computer-use.ts`, uses modules in `extensions/codex-computer-use-modules/`, and is declared in `package.json#pi.extensions`. This package also declares `skills/` in `package.json#pi.skills`; there is no project-local `.pi/extensions` shim. Shared app-server/MCP helper code lives in `tools/cu-helpers.mjs`.
 
 For local global install testing from this checkout:
 
