@@ -14,7 +14,7 @@ import {
 } from './macuse-utils.mjs';
 
 function help() {
-  process.stdout.write(`macuse live demo ${VERSION}\n\nUsage:\n  node tools/macuse-demo.mjs [options]\n\nOptions:\n  --out <dir>              Artifact directory. Default: .scratch/macuse-demo-<timestamp>.\n  --skip-doctor            Skip the embedded standard doctor pass.\n  --skip-mcp               Skip the standard-MCP wrapper validation pass.\n  --tool-timeout-ms <ms>   Tool timeout for live checks. Default: 90000.\n  -h, --help               Show this help.\n\nWhat it proves:\n  - app-server-backed Computer Use works outside Codex\n  - the pi extension survives a real Activity Monitor app flow\n  - Activity Monitor search-name drift is handled\n  - CPU/Memory tab actions restore safely\n  - strict frontmost focus validation passes\n  - Cursor/standard-MCP wrapper is ready, unless --skip-mcp is passed\n\nExamples:\n  node tools/macuse-demo.mjs\n  node tools/macuse-demo.mjs --out .scratch/demo\n`);
+  process.stdout.write(`macuse live demo ${VERSION}\n\nUsage:\n  node tools/macuse-demo.mjs [options]\n\nOptions:\n  --out <dir>              Artifact directory. Default: .scratch/macuse-demo-<timestamp>.\n  --skip-doctor            Skip the embedded standard doctor pass.\n  --skip-mcp               Skip the standard-MCP wrapper validation pass.\n  --tool-timeout-ms <ms>   Tool timeout for live checks. Default: 90000.\n  -h, --help               Show this help.\n\nWhat it proves:\n  - app-server-backed Computer Use works outside Codex\n  - the pi extension survives a real Activity Monitor app flow\n  - Activity Monitor search-name drift is handled\n  - CPU/Memory tab actions restore safely\n  - native frontmost focus is not stolen\n  - Cursor/standard-MCP wrapper is ready, unless --skip-mcp is passed\n\nExamples:\n  node tools/macuse-demo.mjs\n  node tools/macuse-demo.mjs --out .scratch/demo\n`);
 }
 
 function parse(argv) {
@@ -57,7 +57,7 @@ function renderReport(report) {
   return `# macuse live demo\n\nGenerated: ${report.generatedAt}\nArtifact directory: ${report.out}\n\n## Verdict\n\n${report.ok ? '✅ macuse actual-app demo passed.' : '❌ Demo found a problem. Inspect transcript.json.'}\n\n${markdownTable(['Proof point', 'Status', 'Evidence'], [
     ['Doctor', report.status.doctor === null ? 'skipped' : report.status.doctor ? '✅' : '❌', report.status.doctor === null ? 'not run' : 'standard checks passed'],
     ['Activity Monitor mutation', report.status.mutating ? '✅' : '❌', 'search drift, clear fallback, Memory, CPU restore'],
-    ['Strict focus', report.status.focus ? '✅' : '❌', 'frontmost app unchanged'],
+    ['Background focus', report.status.focus ? '✅' : '❌', 'native frontmost app unchanged'],
     ['MCP wrapper', report.status.mcp === null ? 'skipped' : report.status.mcp ? '✅' : '❌', report.status.mcp === null ? 'not run' : 'approval/get_state/pointer guard passed'],
   ])}\n\n## Artifacts\n\n${markdownTable(['Artifact', 'Path'], [
     ['Report', 'report.md'],
@@ -70,7 +70,7 @@ function renderReport(report) {
 function renderHtml(report) {
   const safe = (value) => String(value ?? '').replace(/[&<>]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[char]));
   const badge = report.ok ? '<span class="badge pass">READY</span>' : '<span class="badge fail">CHECK</span>';
-  return `<!doctype html><meta charset="utf-8"><title>macuse live demo</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:40px;background:#0b1020;color:#edf2ff}.card{background:#151b2f;border:1px solid #29324d;border-radius:18px;padding:24px;margin:18px 0}.badge{display:inline-block;padding:8px 12px;border-radius:999px;font-weight:800}.pass{background:#143d2a;color:#75f0ac}.fail{background:#4a1820;color:#ff8fa3}td,th{border-bottom:1px solid #29324d;padding:10px;text-align:left}</style><h1>macuse actual-app demo ${badge}</h1><p>Generated ${safe(report.generatedAt)}</p><div class="card"><h2>Proof</h2><table><tr><th>Check</th><th>Status</th></tr><tr><td>Doctor</td><td>${safe(report.status.doctor)}</td></tr><tr><td>Activity Monitor mutation</td><td>${safe(report.status.mutating)}</td></tr><tr><td>Strict focus</td><td>${safe(report.status.focus)}</td></tr><tr><td>MCP wrapper</td><td>${safe(report.status.mcp)}</td></tr></table></div><div class="card"><h2>Artifacts</h2><ul><li><a href="report.md">report.md</a></li><li><a href="transcript.json">transcript.json</a></li><li><a href="cursor-mcp.json">cursor-mcp.json</a></li></ul></div>`;
+  return `<!doctype html><meta charset="utf-8"><title>macuse live demo</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:40px;background:#0b1020;color:#edf2ff}.card{background:#151b2f;border:1px solid #29324d;border-radius:18px;padding:24px;margin:18px 0}.badge{display:inline-block;padding:8px 12px;border-radius:999px;font-weight:800}.pass{background:#143d2a;color:#75f0ac}.fail{background:#4a1820;color:#ff8fa3}td,th{border-bottom:1px solid #29324d;padding:10px;text-align:left}</style><h1>macuse actual-app demo ${badge}</h1><p>Generated ${safe(report.generatedAt)}</p><div class="card"><h2>Proof</h2><table><tr><th>Check</th><th>Status</th></tr><tr><td>Doctor</td><td>${safe(report.status.doctor)}</td></tr><tr><td>Activity Monitor mutation</td><td>${safe(report.status.mutating)}</td></tr><tr><td>Background focus</td><td>${safe(report.status.focus)}</td></tr><tr><td>MCP wrapper</td><td>${safe(report.status.mcp)}</td></tr></table></div><div class="card"><h2>Artifacts</h2><ul><li><a href="report.md">report.md</a></li><li><a href="transcript.json">transcript.json</a></li><li><a href="cursor-mcp.json">cursor-mcp.json</a></li></ul></div>`;
 }
 
 async function main() {
@@ -92,7 +92,7 @@ async function main() {
   const mutating = runJsonCommand('actual-app mutating validation', ['tools/validate-macuse.mjs', 'mutating', '--json', '--tool-timeout-ms', String(opts.toolTimeoutMs)], 600_000);
   transcript.commands.push(mutating);
 
-  const focus = runJsonCommand('strict focus validation', ['tools/validate-macuse.mjs', 'focus', '--json', '--tool-timeout-ms', String(opts.toolTimeoutMs)], 600_000);
+  const focus = runJsonCommand('background focus validation', ['tools/validate-macuse.mjs', 'focus', '--json', '--tool-timeout-ms', String(opts.toolTimeoutMs)], 600_000);
   transcript.commands.push(focus);
 
   const mcp = opts.skipMcp ? null : runJsonCommand('MCP wrapper validation', ['tools/validate-macuse.mjs', 'mcp', '--json', '--tool-timeout-ms', String(opts.toolTimeoutMs)], 600_000);

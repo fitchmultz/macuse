@@ -3,7 +3,7 @@
 Source: Local policy for this `macuse` investigation, based on the installed Codex Computer Use skill, OpenAI's Computer Use docs snapshot, and local bridge behavior.
 Author: Local investigation notes
 Created: May 22, 2026
-Status: Active guardrails for the packaged pi extension; read-only tools and a persistent-session sequence tool are enabled
+Status: Active guardrails for the packaged pi extension; one `macuse` tool exposes read-only and persistent-session sequence actions
 
 ## Current allowed scope
 
@@ -13,7 +13,7 @@ Allowed today:
 - `get_app_state`
 - app-approval denial probes
 - app-server status/discovery probes
-- `codex_cu_sequence` calls with explicit `allowMutating: true` and a concrete
+- `macuse` calls with `action: "sequence"`, explicit `allowMutating: true`, and a concrete
   `safetyNote` for mutating steps
 
 Not allowed as always-on standalone tools:
@@ -27,8 +27,7 @@ Not allowed as always-on standalone tools:
 - `select_text`
 - `perform_secondary_action`
 
-The packaged pi extension exposes standalone read-only tools plus one
-persistent-session sequence tool. It does not expose standalone mutating tools.
+The packaged pi extension exposes one `macuse` tool with read-only actions and one guarded persistent-session sequence action. It does not expose standalone mutating tools.
 
 ## Preconditions before any mutating action
 
@@ -98,7 +97,7 @@ The mutating validation now uses a non-destructive Activity Monitor probe:
 4. Clear the search field after its accessibility name drifts to the typed value.
 5. Switch to the `Memory` tab with `perform_secondary_action`.
 6. Switch back to the `CPU` tab with `perform_secondary_action`.
-7. Verify CPU/search state and frontmost focus are restored.
+7. Verify CPU/search state and native frontmost focus did not change.
 
 Reusable commands:
 
@@ -109,10 +108,9 @@ node tools/validate-macuse.mjs mcp
 ```
 
 The focus validation records the frontmost app before/after the mutating probe
-and fails if the harness cannot restore the original frontmost app. Whole-run
-mouse coordinate drift is reported separately because the user may move the
-mouse during the run. Demo sequences that pass `--preserve-mouse` check their
-own before/restored coordinates separately.
+and fails if native frontmost focus changes. Whole-run mouse coordinate drift is
+reported separately because the user may move the mouse during the run. Pointer
+sequences check their own before/restored coordinates separately.
 
 Separate controlled TextEdit probes were also run:
 
@@ -131,7 +129,7 @@ Separate controlled TextEdit probes were also run:
 ## Implementation guidance
 
 Prefer one mutating sequence surface over many always-on standalone mutating tools. The current
-persistent `codex_cu_sequence` wrapper requires or enforces:
+persistent `macuse` sequence action requires or enforces:
 
 - ordered `steps`, preferably starting and ending with `get_app_state`
 - optional sequence-level `app` to apply a default target app to steps that omit
@@ -159,7 +157,7 @@ persistent `codex_cu_sequence` wrapper requires or enforces:
   `allowPointerDrag: true` for pointer-based `drag` steps; prefer
   `perform_secondary_action` with `action: "Press"`, `press_key`, `set_value`,
   or element-targeted `scroll` when possible to preserve mouse/system focus.
-  Pointer drag/click sequences use extension-level mouse restoration.
+  Pointer drag/click sequences restore mouse position; non-pointer sequences do not warp the cursor.
 - a `safetyNote` that states target app, intended effect, and stop boundary
 - sequence `detail: "minimal"` for token-efficient action logs that suppress
   successful action and state bodies while preserving target resolution,

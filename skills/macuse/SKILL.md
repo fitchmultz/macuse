@@ -1,6 +1,6 @@
 ---
 name: macuse
-description: "Use for macuse/Codex Computer Use in pi: inspect, QA, dogfood, or safely control local macOS native apps with codex_cu_* tools while preserving focus. Do not use for browser DOM automation, generic pi extension work, raw MCP probes, or sends/deletes/purchases/account/security/privacy changes without exact approval."
+description: "Use for the macuse pi tool: inspect, QA, dogfood, or safely control local macOS native apps through Codex Computer Use while preserving focus. Do not use for browser DOM automation, generic pi extension work, raw MCP probes, or sends/deletes/purchases/account/security/privacy changes without exact approval."
 compatibility: macOS with the macuse pi package/extension loaded and Codex Computer Use available.
 metadata:
   version: "0.2.0"
@@ -22,7 +22,7 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
 ## Use when
 
 - The task needs local macOS app state, native app QA, low-risk UI control, or macuse dogfood.
-- The user asks for Computer Use through macuse or the `codex_cu_*` pi tools.
+- The user asks for Computer Use through the `macuse` pi tool.
 - A flow needs focus-preserving accessibility actions rather than pointer-first automation.
 
 ## Do not use when
@@ -34,8 +34,8 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
 
 ## Default workflow
 
-1. Start read-only: call `codex_cu_list_apps({ runningOnly: true })` or a filtered list when the target app name is uncertain.
-2. Inspect before acting: call `codex_cu_get_app_state` with `detail: "minimal"` and `targetScope: "main"`; use `detail: "compact"` only when you need more target context. Focus capture on `get_app_state` is opt-in (`trackFocus: true`). Mutating sequences capture native frontmost focus before/after and report whether it changed; they do not auto-restore frontmost focus.
+1. Start read-only: call `macuse({ action: "list_apps", listApps: { runningOnly: true } })` or a filtered list when the target app name is uncertain.
+2. Inspect before acting: call `macuse({ action: "get_app_state", getAppState: { app, detail: "minimal", targetScope: "main" } })`; use `detail: "compact"` only when you need more target context. Focus capture on `get_app_state` is opt-in (`trackFocus: true`). Mutating sequences capture native frontmost focus before/after and report whether it changed; they do not auto-restore frontmost focus.
 3. Prefer stable targets in this order:
    - `elementId`
    - exact `elementDescription`
@@ -44,7 +44,7 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
    - raw `element_index` only with `expectedRole`/`expectedName` guards.
 4. For dynamic controls, prefer `arguments.targets` fallback objects that include both stable IDs and visible descriptions when available.
 5. Prefer non-pointer actions: `perform_secondary_action`, `set_value`, `press_key`, `type_text`, `select_text`, and wait helpers. For text entry, prefer `set_value` only on a verified settable target; use `type_text` only after verified focus. `select_text` selects by text string, not offsets. Use pointer `click`/`drag` only when necessary and only with the explicit pointer allow flag.
-6. For mutations, use `codex_cu_sequence` with:
+6. For mutations, use `macuse({ action: "sequence", sequence: ... })` with:
    - `allowMutating: true`
    - a narrow `safetyNote`
    - before/after `get_app_state`

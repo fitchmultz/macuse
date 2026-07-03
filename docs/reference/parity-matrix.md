@@ -25,14 +25,14 @@ The app-server-backed path provides:
 
 | Capability | Codex native Computer Use | pi extension | standard MCP wrapper | Local validation |
 | --- | --- | --- | --- | --- |
-| App listing | `list_apps` | `codex_cu_list_apps` | `list_apps` | `validate-macuse read-only`, `validate-macuse mcp` |
-| App state + screenshot | `get_app_state` | `codex_cu_get_app_state`, sequence step | `get_app_state` | Activity Monitor get-state; image save/include probes |
-| Accessibility press/action | `perform_secondary_action` | `codex_cu_sequence` | `perform_secondary_action` | Activity Monitor CPU/Memory tab actions |
-| Keyboard | `press_key` | `codex_cu_sequence` | `press_key` | TextEdit save/select-all |
-| Literal typing | `type_text` | `codex_cu_sequence` | `type_text` | TextEdit `/tmp/macuse-type-test.txt` |
-| Set accessibility value | `set_value` | `codex_cu_sequence` | `set_value` | TextEdit `/tmp/macuse-set-value-test.txt` |
-| Text selection | `select_text` | `codex_cu_sequence` | `select_text` | TextEdit `/tmp/macuse-select-test.txt` |
-| Element scrolling | `scroll` | `codex_cu_sequence` | `scroll` | TextEdit `/tmp/macuse-scroll-test.txt` |
+| App listing | `list_apps` | `macuse` with `action: "list_apps"` | `list_apps` | `validate-macuse read-only`, `validate-macuse mcp` |
+| App state + screenshot | `get_app_state` | `macuse` with `action: "get_app_state"`, sequence step | `get_app_state` | Activity Monitor get-state; image save/include probes |
+| Accessibility press/action | `perform_secondary_action` | `macuse` with `action: "sequence"` | `perform_secondary_action` | Activity Monitor CPU/Memory tab actions |
+| Keyboard | `press_key` | `macuse` with `action: "sequence"` | `press_key` | TextEdit save/select-all |
+| Literal typing | `type_text` | `macuse` with `action: "sequence"` | `type_text` | TextEdit `/tmp/macuse-type-test.txt` |
+| Set accessibility value | `set_value` | `macuse` with `action: "sequence"` | `set_value` | TextEdit `/tmp/macuse-set-value-test.txt` |
+| Text selection | `select_text` | `macuse` with `action: "sequence"` | `select_text` | TextEdit `/tmp/macuse-select-test.txt` |
+| Element scrolling | `scroll` | `macuse` with `action: "sequence"` | `scroll` | TextEdit `/tmp/macuse-scroll-test.txt` |
 | Pointer click | `click` | guarded sequence only; `allowPointerClick` required | guarded; `allowPointer` required | Pointer guard validated; prefer `perform_secondary_action` |
 | Pointer drag | `drag` | guarded sequence only; `allowPointerDrag` required | guarded; `allowPointer` required | TextEdit drag returned success; mouse restore validated |
 | App approval behavior | Codex Any App setting | pi defaults to `approval: "inherit"`, auto-accepting app approvals; explicit `deny` remains available for tests | MCP wrapper also defaults to `inherit`; `ask` remains available for clients that want elicitation prompts | inherit/default, deny, and MCP elicitation proxy probes |
@@ -42,7 +42,7 @@ The app-server-backed path provides:
 
 | UX property | Status | Evidence / behavior |
 | --- | --- | --- |
-| Restores original frontmost app | Passing for Activity Monitor focus probe | `node tools/validate-macuse.mjs focus` |
+| Preserves native frontmost app | Passing for Activity Monitor focus probe | `node tools/validate-macuse.mjs focus` |
 | Avoids actual mouse movement by default | Implemented | pi guidance prefers secondary actions/keys/set-value/scroll; pointer click/drag require explicit flags |
 | Restores mouse after pointer actions | Implemented | pi extension restores pointer click/drag sequences; CLI bridge has `--preserve-mouse`; MCP wrapper restores pointer click/drag |
 | Before/after state evidence | Implemented | sequence steps can include `get_app_state`; validation uses before/after checks |
@@ -52,14 +52,14 @@ The app-server-backed path provides:
 | Durable refresh commands/docs | Implemented | `docs/reference/codex-computer-use-external-harness.md`, local install doc, and `docs/reference/demo-and-doctor.md` |
 | Optional local auto-heal | Implemented | `node tools/macuse-repair.mjs` dry-runs; `--apply` wakes/stops screensaver/reaps stale records; explicit flags cover macuse app-server restart, global Computer Use service restart, env-password unlock, and user-TCC AppleEvents repair |
 | One-command proof artifact | Implemented | `node tools/macuse-demo.mjs --out .scratch/macuse-demo` writes Markdown, HTML, screenshots, transcript, and MCP config |
-| Sequence action readback | Implemented | Mutating pi sequence steps read state after actions, warn with `actionDispatchedButNoStateChange` on no observable effect, and support per-step `requireStateChange` |
+| Sequence action readback | Implemented | Pi sequence steps read state after actions only when evidence is requested, warn with `actionDispatchedButNoStateChange` on no observable effect, and support per-step `requireStateChange` |
 | Scoped waits | Implemented | Wait helpers separate predicate timeout from transport timeout; `waitForText` supports `visibleOnly`, `title`, and `url` guards |
 | Final screenshot selection | Implemented | Sequence `saveImagePath` supports `screenshotStep:"final"` to capture the final visual state |
 | Persistent pi app-server session | Implemented | `node tools/validate-macuse.mjs quick` verifies two pi extension calls reuse one app-server thread and default approval inheritance auto-accepts Finder |
 | Element target normalization | Implemented | pi extension and CLI bridge coerce numeric `element_index` to string; pi extension also accepts `element` aliases, resolves `elementId` from the latest tree, exact-matches `elementDescription`, refreshes before element-targeted steps, reports duplicate ID/name diagnostics, and returns fallback element-index hints when a target is stale or missing |
-| Compact sequence output | Implemented | `codex_cu_sequence` defaults to `detail: "compact"`; full raw trees remain available with `detail: "full"`; TextEdit ruler marker noise is filtered |
-| Partial sequence failures | Implemented | failed `codex_cu_sequence` calls return completed step rows plus the failed-step diagnostic and resume hint; per-step `allowError:true` continues through resolution/tool errors |
-| Running app filtering | Implemented | `codex_cu_list_apps` supports `runningOnly:true` and substring `filter` |
+| Compact sequence output | Implemented | `macuse` with `action: "sequence"` defaults to `detail: "compact"`; full raw trees remain available with `detail: "full"`; TextEdit ruler marker noise is filtered |
+| Partial sequence failures | Implemented | failed `macuse` with `action: "sequence"` calls return completed step rows plus the failed-step diagnostic and resume hint; per-step `allowError:true` continues through resolution/tool errors |
+| Running app filtering | Implemented | `macuse` with `action: "list_apps"` supports `runningOnly:true` and substring `filter` |
 
 ## Known gaps
 

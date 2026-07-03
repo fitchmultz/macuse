@@ -2,6 +2,7 @@ import {
 	truncateString,
 	type AppMetadata,
 	type ContentBlock,
+	type FilteredToolResult,
 	type FocusSnapshot,
 } from "./core";
 import { contentText } from "./elements-state";
@@ -49,11 +50,17 @@ export function filterAppListContent(content: ContentBlock[], opts: { runningOnl
 	return [{ type: "text", text: truncateString(text, opts.maxTextChars) }];
 }
 
+export function listAppsDisplayContent(result: Pick<FilteredToolResult, "content" | "isError">, opts: { runningOnly?: boolean; filter?: string; maxTextChars: number }): ContentBlock[] {
+	return result.isError ? result.content : filterAppListContent(result.content, opts);
+}
 
 export function focusSnapshot(before: AppMetadata[] | null, after: AppMetadata[] | null): FocusSnapshot {
+	const identity = (app: AppMetadata) => app.bundleId ?? app.path ?? app.name;
 	const afterNames = (after ?? []).map((app) => app.name);
 	const beforeNames = (before ?? []).map((app) => app.name);
-	const changed = before && after ? beforeNames.join("|") !== afterNames.join("|") : null;
+	const afterIds = (after ?? []).map(identity);
+	const beforeIds = (before ?? []).map(identity);
+	const changed = before && after ? beforeIds.join("|") !== afterIds.join("|") : null;
 	return {
 		frontmost: after ?? [],
 		frontmostNames: afterNames,

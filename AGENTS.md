@@ -23,10 +23,18 @@ This repo investigates OpenAI Codex Computer Use reuse from non-Codex agents suc
 ## Safety
 
 - Read-only Computer Use probes are allowed: `list_apps` and `get_app_state`.
-- Mutating GUI actions must use `codex_cu_sequence` or `tools/codex-computer-use-appserver.mjs sequence` with a narrow target, before/after state checks, `allowMutating: true`, and a safety note. In pi, prefer the persistent `codex_cu_sequence` tool over the CLI bridge. For element-targeted actions, prefer stable `elementId` values from `get_app_state`, then exact `elementDescription` matches; `element_index` may be a string or number and `element` is an alias. If a sequence fails, inspect returned completed steps plus the failed-step diagnostic before retrying. Use per-step `allowError: true` only for optional/fallback steps where continuing is safe.
+- Mutating GUI actions must use `macuse` with `action: "sequence"` or `tools/codex-computer-use-appserver.mjs sequence` with a narrow target, before/after state checks, `allowMutating: true`, and a safety note. In pi, prefer the persistent `macuse` with `action: "sequence"` tool over the CLI bridge. For element-targeted actions, prefer stable `elementId` values from `get_app_state`, then exact `elementDescription` matches; `element_index` may be a string or number and `element` is an alias. If a sequence fails, inspect returned completed steps plus the failed-step diagnostic before retrying. Use per-step `allowError: true` only for optional/fallback steps where continuing is safe.
 - Preserve the user's mouse/system focus. Prefer `perform_secondary_action` with `action: "Press"`, `press_key`, `set_value`, or element-targeted `scroll` over pointer `click` when they can accomplish the same task. In pi, pointer `click` requires `allowPointerClick: true`; pointer `drag` requires `allowPointerDrag: true` and the extension restores mouse position afterward. Run `node tools/validate-macuse.mjs focus` after focus-related changes.
 - Do not perform purchases, sends, deletes, credential/account/security/privacy changes, installs, or ambiguous wrong-window actions without fresh explicit approval for that exact operation.
 - Keep direct raw-MCP probes non-mutating; use them for discovery, app-approval denial paths, and parity investigation.
+
+## macOS Automation / TCC requirements
+
+- `-609`, `-1712`, `-1743`, and AppleEvents denial signatures mean the responsible host app lacks TCC/Automation access, not necessarily that Computer Use is down.
+- Preserve `list_apps` errors; do not turn them into "No apps matched the requested filter."
+- Repair with `node tools/macuse-repair.mjs --apply --repair-tcc --responsible auto --restart-tccd --sudo-password-env MACUSE_SUDO_PASSWORD`; it grants the responsible launcher and SkyComputerUseClient to `com.openai.sky.CUAService` after backing up the user TCC DB.
+
+Full background, log predicates, and the June 26, 2026 repair note: `docs/reference/codex-computer-use-external-harness.md`.
 
 ## Validation commands
 

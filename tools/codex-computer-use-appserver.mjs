@@ -155,6 +155,7 @@ function parseAppListLine(line) {
 }
 
 function filterListAppsResult(result, opts) {
+  if (result.isError) return { ...result, apps: [], frontmostApps: [] };
   const lines = filteredAppListLines(result.content, opts);
   const apps = lines.map(parseAppListLine);
   const frontmost = apps.filter((app) => app.frontmost).map((app) => app.name).join(', ') || '<none>';

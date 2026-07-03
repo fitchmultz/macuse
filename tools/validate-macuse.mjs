@@ -14,7 +14,7 @@ function recordCheck(status, name, detail = '') {
 }
 
 function help() {
-  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n  node tools/validate-macuse.mjs focus [options]\n  node tools/validate-macuse.mjs mcp [options]\n\nModes:\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, verify the pi\n      extension reuses one persistent app-server thread, run direct raw-MCP\n      discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only probes: app-server list_apps and get_app_state.\n      The direct raw-MCP Finder deny probe is diagnostic-only and warns instead\n      of failing because SkyComputerUseClient mcp is unreliable outside Codex.\n\n  mutating\n      Run read-only plus an Activity Monitor real-app mutation smoke: filter\n      search, clear search after the field name changes, switch Memory, restore\n      CPU, and verify focus is restored.\n\n  focus\n      Run mutating plus the extension sequence focus-restoration check.\n      Harness-level frontmost drift is reported only as context.\n\n  mcp\n      Smoke-test the Cursor/standard-MCP wrapper: initialize, tools/list,\n      approval elicitation, get_app_state, and pointer guard behavior.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  --json                         Print a machine-readable validation summary.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating edits only Activity Monitor's\n  search field and tab selection, then restores CPU/search state.\n\nExamples:\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs focus\n  node tools/validate-macuse.mjs mcp\n  node tools/validate-macuse.mjs read-only --app \"Activity Monitor\" --tool-timeout-ms 120000\n`);
+  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n  node tools/validate-macuse.mjs focus [options]\n  node tools/validate-macuse.mjs mcp [options]\n\nModes:\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, verify the pi\n      extension reuses one persistent app-server thread, run direct raw-MCP\n      discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only probes: app-server list_apps and get_app_state.\n      The direct raw-MCP Finder deny probe is diagnostic-only and warns instead\n      of failing because SkyComputerUseClient mcp is unreliable outside Codex.\n\n  mutating\n      Run read-only plus an Activity Monitor real-app mutation smoke: filter\n      search, clear search after the field name changes, switch Memory, restore\n      CPU, and verify native frontmost focus is not stolen.\n\n  focus\n      Run mutating plus the extension sequence background-focus check.\n      Native frontmost drift fails; no restore fallback is attempted.\n\n  mcp\n      Smoke-test the Cursor/standard-MCP wrapper: initialize, tools/list,\n      approval elicitation, get_app_state, and pointer guard behavior.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  --json                         Print a machine-readable validation summary.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating edits only Activity Monitor's\n  search field and tab selection, then restores CPU/search state.\n\nExamples:\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs focus\n  node tools/validate-macuse.mjs mcp\n  node tools/validate-macuse.mjs read-only --app \"Activity Monitor\" --tool-timeout-ms 120000\n`);
 }
 function parse(argv) {
   if (argv.includes('-h') || argv.includes('--help')) return { help: true };
@@ -40,6 +40,11 @@ function parse(argv) {
   return opts;
 }
 
+function tail(value, max = 4000) {
+  if (!value) return '';
+  return value.length > max ? value.slice(-max) : value;
+}
+
 function run(name, command, args, opts = {}) {
   const result = spawnSync(command, args, {
     cwd: process.cwd(),
@@ -48,12 +53,16 @@ function run(name, command, args, opts = {}) {
     timeout: opts.timeoutMs || 120_000,
     maxBuffer: 10 * 1024 * 1024,
   });
+  const output = [tail(result.stdout), tail(result.stderr)].filter(Boolean).join('\n');
+  const outputTail = output ? `\n--- child output tail ---\n${output}` : '';
   if (!jsonOutput && (opts.verbose || (result.status !== 0 && !opts.quietOnFailure))) {
     if (result.stdout) process.stdout.write(result.stdout);
     if (result.stderr) process.stderr.write(result.stderr);
   }
-  if (result.error) throw new Error(`${name} failed to start: ${result.error.message}`);
-  if (result.status !== 0) throw new Error(`${name} exited ${result.status}${result.signal ? ` signal ${result.signal}` : ''}`);
+  if (result.error) throw new Error(`${name} failed: ${result.error.message}${outputTail}`);
+  if (result.status !== 0) {
+    throw new Error(`${name} exited ${result.status}${result.signal ? ` signal ${result.signal}` : ''}${outputTail}`);
+  }
   return result.stdout;
 }
 
@@ -145,10 +154,8 @@ factory({
   registerCommand() {},
   on() {},
 });
-for (const expected of ['codex_cu_list_apps', 'codex_cu_get_app_state', 'codex_cu_sequence']) {
-  if (!tools.includes(expected)) {
-    throw new Error('missing extension tool: ' + expected + '; saw ' + tools.join(','));
-  }
+if (tools.length !== 1 || tools[0] !== 'macuse') {
+  throw new Error('expected only macuse extension tool; saw ' + tools.join(','));
 }
 console.log(tools.join(','));
 `;
@@ -158,6 +165,36 @@ console.log(tools.join(','));
     process.env.NODE_PATH || '',
   ].filter(Boolean).join(':');
   const stdout = run('pi extension registration smoke', process.execPath, ['-e', script], {
+    env: { NODE_PATH: nodePath },
+    timeoutMs: 120_000,
+    verbose,
+  });
+  return stdout.trim();
+}
+
+function runListAppsErrorPreservationSmoke(verbose) {
+  const script = String.raw`
+const { createJiti } = require('jiti');
+const jiti = createJiti(process.cwd() + '/validate-list-apps-error.js', { interopDefault: true });
+const { filterAppListContent, listAppsDisplayContent } = jiti('./extensions/codex-computer-use-modules/apps.ts');
+const { computerUseDiagnostic } = jiti('./extensions/codex-computer-use-modules/diagnostics.ts');
+const errorContent = [{ type: 'text', text: 'NSOSStatusErrorDomain Code=-609 connectionInvalid' }];
+const displayed = listAppsDisplayContent({ content: errorContent, isError: true }, { filter: 'nope', maxTextChars: 1000 });
+if (displayed[0].text.includes('No apps matched')) throw new Error('list_apps error was masked as empty filter result');
+const filtered = filterAppListContent(errorContent, { filter: 'nope', maxTextChars: 1000 });
+if (!filtered[0].text.includes('No apps matched')) throw new Error('normal list_apps filtering stopped summarizing empty filters');
+const accessDeniedState = { content: [{ type: 'text', text: 'Visible page text: Access Denied connectionInvalid' }], isError: false };
+if (computerUseDiagnostic(accessDeniedState, 'get_app_state', { app: 'Browser' })) throw new Error('non-error app text produced a TCC diagnostic');
+const tccError = { content: errorContent, isError: true };
+if (!computerUseDiagnostic(tccError, 'list_apps', {})) throw new Error('TCC list_apps error did not produce a diagnostic');
+console.log('list-apps-error-preserved');
+`;
+  const nodePath = [
+    '/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules',
+    '/opt/homebrew/lib/node_modules',
+    process.env.NODE_PATH || '',
+  ].filter(Boolean).join(':');
+  const stdout = run('list_apps error preservation smoke', process.execPath, ['-e', script], {
     env: { NODE_PATH: nodePath },
     timeoutMs: 120_000,
     verbose,
@@ -188,12 +225,15 @@ factory({
   await commands.get('macuse-status').handler('', commandCtx);
   const lazyStatus = notifications.at(-1)?.message || '';
   if (!lazyStatus.includes('has not been started')) throw new Error('pi extension /macuse-status started or missed lazy stopped state before any tool call: ' + lazyStatus);
-  const running = await tools.get('codex_cu_list_apps').execute('running', { runningOnly: true, maxTextChars: 5000, toolTimeoutMs: 90000 }, signal, () => {});
+  const macuse = tools.get('macuse');
+  if (!macuse) throw new Error('missing extension tool: macuse');
+  if ([...tools.keys()].some((name) => name.startsWith('codex' + '_cu_'))) throw new Error('legacy prefixed tools are still registered: ' + [...tools.keys()].join(','));
+  const running = await macuse.execute('running', { action: 'list_apps', listApps: { runningOnly: true, maxTextChars: 5000, toolTimeoutMs: 90000 } }, signal, () => {});
   if (!running.content[0].text.includes('running')) throw new Error('pi extension runningOnly list_apps returned no running apps');
   const nonRunningLines = running.content[0].text.split('\n').filter((line) => line.trim() && !line.includes('running'));
   if (nonRunningLines.length > 0) throw new Error('pi extension runningOnly list_apps kept non-running lines: ' + nonRunningLines.slice(0, 3).join(' | '));
-  const first = await tools.get('codex_cu_get_app_state').execute('first', { app: 'Activity Monitor', maxTextChars: 500, toolTimeoutMs: 90000 }, signal, () => {});
-  const second = await tools.get('codex_cu_get_app_state').execute('second', { app: 'Finder', maxTextChars: 500, toolTimeoutMs: 90000 }, signal, () => {});
+  const first = await macuse.execute('first', { action: 'get_app_state', getAppState: { app: 'Activity Monitor', maxTextChars: 500, toolTimeoutMs: 90000 } }, signal, () => {});
+  const second = await macuse.execute('second', { action: 'get_app_state', getAppState: { app: 'Finder', maxTextChars: 500, toolTimeoutMs: 90000 } }, signal, () => {});
   const firstThread = first.details.computerUse.threadId;
   const secondThread = second.details.computerUse.threadId;
   if (!firstThread || firstThread !== secondThread) throw new Error('pi extension did not reuse persistent app-server thread');
@@ -242,25 +282,31 @@ factory({
 });
 (async () => {
   const signal = new AbortController().signal;
-  const sequence = await tools.get('codex_cu_sequence').execute('actual-app', {
-    app: 'Activity Monitor',
-    steps: [
-      { label: 'before', tool: 'get_app_state', arguments: {}, expectVisibleText: 'CPU' },
-      { label: 'filter', tool: 'set_value', arguments: { role: 'search', name: 'search', value: 'Codex' }, requireStateChange: true },
-      { label: 'filtered-state', tool: 'get_app_state', arguments: {}, expectVisibleText: 'Codex' },
-      { label: 'clear-after-name-drift', tool: 'set_value', arguments: { role: 'search', name: 'search', value: '' }, requireStateChange: true },
-      { label: 'cleared-state', tool: 'get_app_state', arguments: {}, expectVisibleText: 'Activity Monitor All Processes' },
-      { label: 'memory-tab', tool: 'perform_secondary_action', arguments: { elementDescription: 'Memory', action: 'Press' }, requireStateChange: true },
-      { label: 'memory-state', tool: 'get_app_state', arguments: {}, expectVisibleText: 'Memory' },
-      { label: 'cpu-restore', tool: 'perform_secondary_action', arguments: { elementDescription: 'CPU', action: 'Press' }, requireStateChange: true },
-      { label: 'cpu-state', tool: 'get_app_state', arguments: {}, expectVisibleText: 'CPU' },
-    ],
-    allowMutating: true,
-    safetyNote: 'Validate Activity Monitor only: temporary search text and CPU/Memory tab selection; do not press Stop, Inspector, Actions, or terminate processes.',
-    detail: 'minimal',
-    targetScope: 'main',
-    maxTextChars: 12000,
-    toolTimeoutMs: 120000,
+  const macuse = tools.get('macuse');
+  if (!macuse) throw new Error('missing extension tool: macuse');
+  if ([...tools.keys()].some((name) => name.startsWith('codex' + '_cu_'))) throw new Error('legacy prefixed tools are still registered: ' + [...tools.keys()].join(','));
+  const sequence = await macuse.execute('actual-app', {
+    action: 'sequence',
+    sequence: {
+      app: 'Activity Monitor',
+      steps: [
+        { label: 'before', tool: 'get_app_state', arguments: {}, expectVisibleText: ['CPU'] },
+        { label: 'filter', tool: 'set_value', arguments: { role: 'search', name: 'search', value: 'Codex' }, requireStateChange: true },
+        { label: 'filtered-state', tool: 'get_app_state', arguments: {}, expectVisibleText: ['Codex'] },
+        { label: 'clear-after-name-drift', tool: 'set_value', arguments: { role: 'search', name: 'search', value: '' }, requireStateChange: true },
+        { label: 'cleared-state', tool: 'get_app_state', arguments: {}, expectVisibleText: ['Activity Monitor All Processes'] },
+        { label: 'memory-tab', tool: 'perform_secondary_action', arguments: { elementDescription: 'Memory', action: 'Press' }, requireStateChange: true },
+        { label: 'memory-state', tool: 'get_app_state', arguments: {}, expectVisibleText: ['Memory'] },
+        { label: 'cpu-restore', tool: 'perform_secondary_action', arguments: { elementDescription: 'CPU', action: 'Press' }, requireStateChange: true },
+        { label: 'cpu-state', tool: 'get_app_state', arguments: {}, expectVisibleText: ['CPU'] },
+      ],
+      allowMutating: true,
+      safetyNote: 'Validate Activity Monitor only: temporary search text and CPU/Memory tab selection; do not press Stop, Inspector, Actions, or terminate processes.',
+      detail: 'minimal',
+      targetScope: 'main',
+      maxTextChars: 12000,
+      toolTimeoutMs: 120000,
+    },
   }, signal, () => {});
   if (sequence.details.computerUse.failed) throw new Error('actual-app sequence failed:\n' + sequence.content[0].text);
   const clearStep = sequence.details.computerUse.steps[3];
@@ -274,9 +320,12 @@ factory({
   const finalMemoryState = finalElements.find((element) => element.description === 'Memory' || element.name === 'Memory');
   if (cpuState?.value !== '1' || finalMemoryState?.value !== '0') throw new Error('CPU tab was not restored after Activity Monitor sequence');
   const focus = sequence.details.computerUse.focus;
-  if (!focus || focus.changed !== false) throw new Error('actual-app sequence did not prove frontmost focus restoration');
+  if (!focus || focus.changed !== false) throw new Error('actual-app sequence changed native frontmost focus');
+  const staleFocusField = 'focus' + 'Restoration';
+  if (staleFocusField in sequence.details.computerUse) throw new Error('sequence details still expose stale focus field');
+  if (sequence.details.computerUse.mousePreservation) throw new Error('non-pointer actual-app sequence warped/restored the mouse');
   if (handlers.has('session_shutdown')) await handlers.get('session_shutdown')({ reason: 'test' }, {});
-  console.log('activity-monitor-search-clear-tabs-focus');
+  console.log('activity-monitor-background-focus');
 })().catch(async (error) => {
   try { if (handlers.has('session_shutdown')) await handlers.get('session_shutdown')({ reason: 'test' }, {}); } catch {}
   console.error(error.stack || error.message);
@@ -320,11 +369,6 @@ function writeJsonSummary(opts, ok, error = null) {
   process.stdout.write(`${JSON.stringify({ ok, mode: opts?.mode ?? null, generatedAt: new Date().toISOString(), counts, checks, artifacts: {} }, null, 2)}\n`);
 }
 
-function restoreFrontmostApp(app) {
-  if (!app?.bundleId) return false;
-  return spawnSync('/usr/bin/open', ['-b', app.bundleId], { encoding: 'utf8', timeout: 10000 }).status === 0;
-}
-
 async function main() {
   const opts = parse(process.argv.slice(2));
   activeOpts = opts;
@@ -349,12 +393,19 @@ async function main() {
   const piSmoke = runPiExtensionSmoke(opts.verbose);
   printPass('pi extension load smoke', piSmoke);
 
+  const listAppsErrorSmoke = runListAppsErrorPreservationSmoke(opts.verbose);
+  printPass('list_apps error preservation smoke', listAppsErrorSmoke);
+
   const piPersistentSmoke = runPiExtensionPersistentSmoke(opts.verbose);
   printPass('pi extension persistent app-server smoke', `thread=${piPersistentSmoke}`);
 
-  const directDiscover = run('direct raw-MCP discover', process.execPath, ['tools/probe-codex-computer-use-mcp.mjs', 'discover'], { timeoutMs: 120_000, verbose: opts.verbose });
-  if (!directDiscover.includes('Tools (10):') || !directDiscover.includes('list_apps')) throw new Error('direct discover did not show expected tools');
-  printPass('direct raw-MCP discover', 'expected tool family found');
+  if (opts.mode === 'focus') {
+    printWarn('direct raw-MCP discover', 'skipped in focus mode because the raw diagnostic client can steal native frontmost focus; app-server status remains authoritative for extension focus validation');
+  } else {
+    const directDiscover = run('direct raw-MCP discover', process.execPath, ['tools/probe-codex-computer-use-mcp.mjs', 'discover'], { timeoutMs: 120_000, verbose: opts.verbose });
+    if (!directDiscover.includes('Tools (10):') || !directDiscover.includes('list_apps')) throw new Error('direct discover did not show expected tools');
+    printPass('direct raw-MCP discover', 'expected tool family found');
+  }
 
   const status = parseJsonOutput('app-server status', run('app-server status', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'status', '--quiet'], { timeoutMs: 180_000, verbose: opts.verbose }));
   requireOk('app-server status', status);
@@ -364,12 +415,16 @@ async function main() {
   printPass('app-server status', `${computerUse.toolCount ?? computerUse.toolNames?.length ?? 0} tools`);
 
   if (opts.mode === 'read-only' || opts.mode === 'mutating' || opts.mode === 'focus') {
-    try {
-      const directDeny = run('direct raw-MCP deny', process.execPath, ['tools/probe-codex-computer-use-mcp.mjs', 'deny', '--app', 'Finder'], { timeoutMs: 120_000, verbose: opts.verbose, quietOnFailure: true });
-      if (!directDeny.includes('"isError": true') && !directDeny.includes('approval denied')) throw new Error('direct deny did not return expected denial');
-      printPass('direct raw-MCP deny', 'Finder denial path returned');
-    } catch (error) {
-      printWarn('direct raw-MCP deny', `raw SkyComputerUseClient denial probe is non-blocking; app-server bridge remains authoritative. ${error.message || String(error)}`);
+    if (opts.mode === 'focus') {
+      printWarn('direct raw-MCP deny', 'skipped in focus mode because the raw diagnostic client can steal native frontmost focus');
+    } else {
+      try {
+        const directDeny = run('direct raw-MCP deny', process.execPath, ['tools/probe-codex-computer-use-mcp.mjs', 'deny', '--app', 'Finder'], { timeoutMs: 120_000, verbose: opts.verbose, quietOnFailure: true });
+        if (!directDeny.includes('"isError": true') && !directDeny.includes('approval denied')) throw new Error('direct deny did not return expected denial');
+        printPass('direct raw-MCP deny', 'Finder denial path returned');
+      } catch (error) {
+        printWarn('direct raw-MCP deny', `raw SkyComputerUseClient denial probe is non-blocking; app-server bridge remains authoritative. ${error.message || String(error)}`);
+      }
     }
 
     const list = parseJsonOutput('app-server list-apps', run('app-server list-apps', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'list-apps', '--quiet', '--tool-timeout-ms', String(opts.toolTimeoutMs), '--max-text-chars', '1000'], { timeoutMs: opts.toolTimeoutMs + 30_000, verbose: opts.verbose }));
@@ -394,20 +449,13 @@ async function main() {
   }
 
   if (opts.mode === 'focus') {
-    let focusAfter = { frontmost: frontmostApp(), mouse: mousePosition() };
+    const focusAfter = { frontmost: frontmostApp(), mouse: mousePosition() };
     const beforeBundle = focusBefore?.frontmost?.bundleId || 'unknown';
-    let afterBundle = focusAfter.frontmost?.bundleId || 'unknown';
-    let harnessRestored = false;
-    if (beforeBundle !== 'unknown' && beforeBundle !== afterBundle) {
-      harnessRestored = restoreFrontmostApp(focusBefore.frontmost);
-      await new Promise((resolve) => setTimeout(resolve, 300));
-      focusAfter = { frontmost: frontmostApp(), mouse: mousePosition() };
-      afterBundle = focusAfter.frontmost?.bundleId || 'unknown';
-    }
-    if (beforeBundle !== afterBundle) throw new Error(`focus harness failed to restore frontmost app: before=${beforeBundle}; after=${afterBundle}`);
+    const afterBundle = focusAfter.frontmost?.bundleId || 'unknown';
+    if (beforeBundle !== afterBundle) throw new Error(`native frontmost focus changed: before=${beforeBundle}; after=${afterBundle}`);
     const beforeMouse = focusBefore?.mouse ? `${focusBefore.mouse.x},${focusBefore.mouse.y}` : 'unknown';
     const afterMouse = focusAfter.mouse ? `${focusAfter.mouse.x},${focusAfter.mouse.y}` : 'unknown';
-    printPass('extension and harness restored frontmost focus', `${beforeBundle}; harnessRestored=${harnessRestored}`);
+    printPass('extension preserved native frontmost focus', beforeBundle);
     if (beforeMouse === afterMouse) printPass('whole-run mouse position unchanged', beforeMouse);
     else if (!jsonOutput) process.stdout.write(`INFO mouse position changed outside the strict contract — before=${beforeMouse}; after=${afterMouse}\n`);
     if (!jsonOutput) process.stdout.write(`INFO mouse position report — before=${beforeMouse}; after=${afterMouse}\n`);

@@ -241,11 +241,41 @@ function insertTccRowSql(columns, row) {
   return `insert or replace into access (${wanted.map(([key]) => key).join(',')}) values (${wanted.map(([, value]) => sqliteValue(value)).join(',')});`;
 }
 
+function executableFromBundle(bundlePath) {
+  const plist = `${bundlePath}/Contents/Info.plist`;
+  const result = runCommand('bundle executable', '/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleExecutable', plist], { timeoutMs: 5000 });
+  const executable = result.ok ? result.stdout.trim() : '';
+  return executable ? `${bundlePath}/Contents/MacOS/${executable}` : null;
+}
+
+function appExecutableFromArgs(args) {
+  const bundlePath = String(args || '').match(/(\/.*?\.app)(?:\/Contents\/MacOS(?:\/|\s|$)|\s|$)/)?.[1];
+  return bundlePath && existsSync(bundlePath) ? executableFromBundle(bundlePath) : null;
+}
+
+function parentProcessInfo(pid) {
+  const result = runCommand('parent process', 'ps', ['-p', String(pid), '-o', 'ppid=', '-o', 'args='], { timeoutMs: 5000 });
+  if (!result.ok) return null;
+  const match = result.stdout.trim().match(/^(\d+)\s+([\s\S]+)$/);
+  if (!match) return null;
+  return { ppid: Number(match[1]), args: match[2] };
+}
+
+function responsibleFromProcessTree(startPid = process.ppid) {
+  let pid = startPid;
+  for (let depth = 0; Number.isInteger(pid) && pid > 1 && depth < 20; depth += 1) {
+    const info = parentProcessInfo(pid);
+    if (!info) return null;
+    const appExecutable = appExecutableFromArgs(info.args);
+    if (appExecutable && existsSync(appExecutable)) return appExecutable;
+    pid = info.ppid;
+  }
+  return null;
+}
+
 function autoResponsiblePath() {
   if (process.env.SSH_CONNECTION || process.env.SSH_TTY) return '/usr/libexec/sshd-keygen-wrapper';
-  const front = runCommand('frontmost bundle', '/usr/bin/lsappinfo', ['front'], { timeoutMs: 5000 });
-  if (front.ok && front.stdout.trim()) return null;
-  return null;
+  return responsibleFromProcessTree();
 }
 
 function repairTcc(report, apply, opts) {
@@ -254,7 +284,7 @@ function repairTcc(report, apply, opts) {
   if (!responsible) throw new Error('could not auto-detect responsible launcher; pass --responsible <path>');
   if (!existsSync(USER_TCC_DB)) throw new Error(`user TCC DB not found: ${USER_TCC_DB}`);
   if (!apply) {
-    add(report, 'would-fix', 'TCC AppleEvents repair', `would add ${responsible} -> ${SERVICE_BUNDLE_ID} to ${USER_TCC_DB}`);
+    add(report, 'would-fix', 'TCC AppleEvents repair', `would add ${responsible} and ${CLIENT_BUNDLE_ID} -> ${SERVICE_BUNDLE_ID} to ${USER_TCC_DB}`);
     return;
   }
   const dir = mkdtempSync(join(tmpdir(), 'macuse-tcc-'));

@@ -76,15 +76,21 @@ node tools/codex-computer-use-appserver.mjs list-apps --running-only --filter "A
 node tools/codex-computer-use-appserver.mjs get-state --app "Activity Monitor" --quiet --pretty
 ```
 
-The packaged pi extension keeps a persistent Codex app-server thread for the session and registers:
+The packaged pi extension keeps a persistent Codex app-server thread for the session and registers one model-facing tool: `macuse`.
 
-- `codex_cu_list_apps`
-- `codex_cu_get_app_state`
-- `codex_cu_sequence` for multi-step flows, including mutating steps with `allowMutating: true`, a `safetyNote`, and optional per-step `expectText` / `expectAbsentText` / `expectVisibleText` assertions. App approval defaults to `inherit`, which auto-accepts Computer Use app approvals to match Codex's Any App setting. Pointer `click` steps also require `allowPointerClick: true`; pointer `drag` steps require `allowPointerDrag: true` and automatically restore mouse position. Prefer accessibility actions/keys/values to preserve mouse focus. Use sequence-level `app` to avoid repeating the same app in every step, or per-step `app` for multi-app sequences. Element targets accept `element_index` as a string or number, `element` as an alias, stable `elementId` values, exact `elementDescription` matches such as `CPU`, role/name selectors such as `{ "role": "search", "name": "search" }`, or `arguments.targets` fallback objects such as `[{"elementDescription":"Memory"},{"role":"button","name":"Memory"}]`; raw index targets can pass `expectedRole` / `expectedName` / `expectedValue` stale guards. Search fields normalize `role:"search text field"` to `role:"search"`; settable/search/transient fields expose `tags` such as `settable-field`, `search-field`, `transient-editor`, `clear-control`, and `risk-sensitive-control`, keep stable names when values change, prioritize transient editor targets in summaries, warn when risk-sensitive controls are visible, and support a conservative empty-`set_value` clear-button fallback when one clear control is available. Compact trees and failed lookups include preferred target syntax plus index fallbacks. `get_app_state` supports `detail: "minimal"` for app/window, visible text, and concise target hints, `detail: "compact"` for grouped interactive elements, and `detail: "full"` for raw trees; `targetScope: "main"` suppresses likely chrome/window controls where possible. Sequence output defaults to `detail: "compact"`; pass `detail: "minimal"` for assertion-focused low-token summaries or `detail: "full"` for complete trees. `get_app_state` and sequence details include parsed `visibleText`, `targets`/`elements`, target-stability diagnostics showing elementId/elementDescription/unique-role-name/raw-index coverage plus duplicate-ID/name warnings, focus before/after summaries, a concise sequence run summary, target warnings, changed-state summaries, resolved-target safety tags, and next-action hints. Mutating sequence steps now perform a post-action `get_app_state` readback; if upstream reports success but no title, URL, visible-text, or target change is observed, output includes `actionDispatchedButNoStateChange`, and per-step `requireStateChange: true` turns that warning into a sequence failure. `requireStateChange` takes a pre-action state baseline even for non-element actions such as `press_key`, so keyboard shortcuts can be verified without a prior manual `get_app_state`; if the first readback shows no change, it performs one short delayed readback before failing to better catch transient popovers/editors. Failed sequences return completed step results plus a failed-step diagnostic with `failedStepIndex`, `completedStepCount`, and `resumeFromStepIndex`; per-step `allowError: true` lets the sequence continue through resolution or tool errors. If a failed step has no app-state readback, changed-state summaries are suppressed to avoid false deltas from error text; re-read app state before deciding whether the UI changed. Sequence wait helpers (`waitForText` for parsed visible text or raw text-entry values, `waitForElement`, `waitUntilElementEnabled`, `waitUntilElementDisabled`, plus best-effort `waitForURL` / `waitForTitle`) poll `get_app_state` without manual sleeps; waits accept separate predicate `timeoutMs`, per-poll `toolTimeoutMs`, and `waitForText` accepts `visibleOnly`, strict window `title`, and `url` scoping. `waitForURL` recognizes HTTP(S), file, browser-internal URLs such as `brave://newtab/`, and `about:` URLs.
+`macuse` routes by `action`:
 
-The persistent session avoids spawning the bridge for every pi tool call. On startup it uses app-server `mcpServerStatus/list` with `detail: "toolsAndAuthOnly"` to fail fast if the `computer-use` MCP server or its expected 10-tool inventory is missing; `/macuse-status` reports the cached inventory once running. Use `/macuse-stop` to stop the app-server process while leaving it available for lazy restart on the next tool call, and `/macuse-restart` to stop-and-lazily-restart after a suspected stale Computer Use state. The extension writes a macOS temp PID record under `/tmp/macuse-appserver`, starts a small watchdog, and reaps only matching macuse-owned orphaned `codex app-server` processes on startup; it does not try to own or kill Codex's global `SkyComputerUseService`. Use `codex_cu_list_apps({ runningOnly: true })` for a short currently-running app list.
+- `action: "list_apps"` with `listApps` payload lists known or running local macOS apps.
+- `action: "get_app_state"` with `getAppState` payload inspects a target app. `detail: "minimal"` returns app/window, visible text, and concise target hints; `detail: "compact"` returns grouped interactive elements; `detail: "full"` keeps raw trees. `targetScope: "main"` suppresses likely chrome/window controls where possible.
+- `action: "sequence"` with `sequence` payload runs multi-step flows, including mutating steps with `allowMutating: true`, a `safetyNote`, and optional per-step `expectText` / `expectAbsentText` / `expectVisibleText` assertions.
 
-The package also ships `/skill:macuse`, a small Agent Skill that teaches agents the safe default macuse workflow, target-selection order, mutation guardrails, and evidence to report when using the `codex_cu_*` tools.
+Sequence pointer `click` steps require `allowPointerClick: true`; pointer `drag` steps require `allowPointerDrag: true`; pointer steps restore mouse position afterward. Prefer accessibility actions/keys/values so non-pointer sequences do not warp the cursor or steal focus. Use sequence-level `app` to avoid repeating the same app in every step, or per-step `app` for multi-app sequences. Element targets accept `element_index` as a string or number, `element` as an alias, stable `elementId` values, exact `elementDescription` matches such as `CPU`, role/name selectors such as `{ "role": "search", "name": "search" }`, or `arguments.targets` fallback objects such as `[{"elementDescription":"Memory"},{"role":"button","name":"Memory"}]`; raw index targets can pass `expectedRole` / `expectedName` / `expectedValue` stale guards. Search fields normalize `role:"search text field"` to `role:"search"`; settable/search/transient fields expose `tags` such as `settable-field`, `search-field`, `transient-editor`, `clear-control`, and `risk-sensitive-control`, keep stable names when values change, prioritize transient editor targets in summaries, warn when risk-sensitive controls are visible, and support a conservative empty-`set_value` clear-button fallback when one clear control is available. Compact trees and failed lookups include preferred target syntax plus index fallbacks. Sequence output defaults to `detail: "compact"`; pass `detail: "minimal"` for assertion-focused low-token summaries or `detail: "full"` for complete trees. App state and sequence details include parsed `visibleText`, `targets`/`elements`, target-stability diagnostics, native focus before/after summaries, a concise sequence run summary, target warnings, changed-state summaries, resolved-target safety tags, and next-action hints. Sequence steps reuse upstream action results by default and perform post-action `get_app_state` readback only when evidence is requested (`requireStateChange`, assertions, or image artifacts); if upstream reports success but requested readback shows no title, URL, visible-text, or target change, output includes `actionDispatchedButNoStateChange`, and per-step `requireStateChange: true` turns that warning into a sequence failure. Failed sequences return completed step results plus a failed-step diagnostic with `failedStepIndex`, `completedStepCount`, and `resumeFromStepIndex`; per-step `allowError: true` lets the sequence continue through resolution or tool errors. If a failed step has no app-state readback, changed-state summaries are suppressed to avoid false deltas from error text; re-read app state before deciding whether the UI changed. Sequence wait helpers (`waitForText` for parsed visible text or raw text-entry values, `waitForElement`, `waitUntilElementEnabled`, `waitUntilElementDisabled`, plus best-effort `waitForURL` / `waitForTitle`) poll `get_app_state` without manual sleeps; waits accept separate predicate `timeoutMs`, per-poll `toolTimeoutMs`, and `waitForText` accepts `visibleOnly`, strict window `title`, and `url` scoping.
+
+The persistent session avoids spawning the bridge for every pi tool call. On startup it uses app-server `mcpServerStatus/list` with `detail: "toolsAndAuthOnly"` to fail fast if the `computer-use` MCP server or its expected 10-tool inventory is missing; `/macuse-status` reports the cached inventory once running. Use `/macuse-stop` to stop the app-server process while leaving it available for lazy restart on the next tool call, and `/macuse-restart` to stop-and-lazily-restart after a suspected stale Computer Use state. The extension writes a macOS temp PID record under `/tmp/macuse-appserver`, starts a small watchdog, and reaps only matching macuse-owned orphaned `codex app-server` processes on startup; it does not try to own or kill Codex's global `SkyComputerUseService`.
+
+Upstream also ships separate native `event-stream mcp` and `skysight mcp` subservers in `SkyComputerUseClient` for Record & Replay and recent-activity context. They are intentionally not folded into the default `macuse` tool because they record user activity and need separate product/safety UX.
+
+The package also ships `/skill:macuse`, a small Agent Skill that teaches agents the safe default macuse workflow, target-selection order, mutation guardrails, and evidence to report when using the `macuse` tool.
 
 ## Optional repair / auto-heal
 
@@ -100,7 +106,8 @@ node tools/macuse-repair.mjs --apply --restart-service
 # Unlock a screensaver/locked console with a password supplied by env.
 node tools/macuse-repair.mjs --apply --unlock-with-env MACUSE_UNLOCK_PASSWORD
 
-# Repair this SSH/tmux TCC AppleEvents path, back up the user TCC DB, and restart tccd.
+# Repair this host's TCC AppleEvents path, back up the user TCC DB, and restart tccd.
+# --responsible auto detects the current responsible app/process (RepoPrompt, iTerm, sshd, etc.).
 node tools/macuse-repair.mjs --apply --repair-tcc --responsible auto --restart-tccd --sudo-password-env MACUSE_SUDO_PASSWORD
 ```
 
@@ -111,32 +118,41 @@ Do not commit password env files. Use a dedicated environment variable only for 
 List running apps:
 
 ```json
-{ "runningOnly": true }
+{
+  "action": "list_apps",
+  "listApps": { "runningOnly": true }
+}
 ```
 
 Inspect Activity Monitor with the lowest-token useful state view:
 
 ```json
-{ "app": "Activity Monitor", "detail": "minimal" }
+{
+  "action": "get_app_state",
+  "getAppState": { "app": "Activity Monitor", "detail": "minimal" }
+}
 ```
 
 Safe Activity Monitor mutation:
 
 ```json
 {
-  "app": "Activity Monitor",
-  "detail": "minimal",
-  "targetScope": "main",
-  "steps": [
-    { "tool": "get_app_state", "arguments": {}, "expectVisibleText": "CPU" },
-    { "tool": "set_value", "arguments": { "role": "search", "name": "search", "value": "Codex" }, "requireStateChange": true },
-    { "tool": "get_app_state", "arguments": {}, "expectVisibleText": "Codex" },
-    { "tool": "set_value", "arguments": { "role": "search", "name": "search", "value": "" }, "requireStateChange": true },
-    { "tool": "perform_secondary_action", "arguments": { "elementDescription": "Memory", "action": "Press" }, "requireStateChange": true },
-    { "tool": "perform_secondary_action", "arguments": { "elementDescription": "CPU", "action": "Press" }, "requireStateChange": true }
-  ],
-  "allowMutating": true,
-  "safetyNote": "Activity Monitor only: temporary search text and CPU/Memory tab selection; do not press Stop, Inspector, Actions, or terminate processes."
+  "action": "sequence",
+  "sequence": {
+    "app": "Activity Monitor",
+    "detail": "minimal",
+    "targetScope": "main",
+    "steps": [
+      { "tool": "get_app_state", "arguments": {}, "expectVisibleText": ["CPU"] },
+      { "tool": "set_value", "arguments": { "role": "search", "name": "search", "value": "Codex" }, "requireStateChange": true },
+      { "tool": "get_app_state", "arguments": {}, "expectVisibleText": ["Codex"] },
+      { "tool": "set_value", "arguments": { "role": "search", "name": "search", "value": "" }, "requireStateChange": true },
+      { "tool": "perform_secondary_action", "arguments": { "elementDescription": "Memory", "action": "Press" }, "requireStateChange": true },
+      { "tool": "perform_secondary_action", "arguments": { "elementDescription": "CPU", "action": "Press" }, "requireStateChange": true }
+    ],
+    "allowMutating": true,
+    "safetyNote": "Activity Monitor only: temporary search text and CPU/Memory tab selection; do not press Stop, Inspector, Actions, or terminate processes."
+  }
 }
 ```
 
@@ -145,7 +161,10 @@ Bad-target recovery: use the diagnostic's closest matches and per-row `target: {
 Save a screenshot artifact:
 
 ```json
-{ "app": "Activity Monitor", "saveImagePath": ".scratch/activity-monitor.jpg", "detail": "compact" }
+{
+  "action": "get_app_state",
+  "getAppState": { "app": "Activity Monitor", "saveImagePath": ".scratch/activity-monitor.jpg", "detail": "compact" }
+}
 ```
 
 Tool details include saved image path, bytes, SHA-256, width, and height when an image is saved. In sequences, `saveImagePath` defaults to the first step for compatibility; pass `screenshotStep: "final"` to save the final visual state.

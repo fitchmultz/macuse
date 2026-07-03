@@ -27,8 +27,8 @@ import {
 import { AppServerClient } from "./app-server-client";
 import { filterToolResult, isTextBlock, toolResultText } from "./content";
 import { appendComputerUseDiagnostic, appendImageWarning, failureResult } from "./diagnostics";
-import { focusSnapshot, parseAppListContent } from "./apps";
-import { getMousePosition, restoreFrontmostApp, restoreMousePosition } from "./macos-focus";
+import { focusSnapshot } from "./apps";
+import { getMousePosition, nativeFrontmostApps, restoreMousePosition } from "./macos-focus";
 import {
 	appendElementStabilityNote,
 	appendText,
@@ -67,14 +67,8 @@ import {
 	waitConditionMet,
 } from "./sequence";
 
-export async function captureFocusSnapshot(getClient: () => AppServerClient, approval: ApprovalMode, timeoutMs: number, maxTextChars: number, signal?: AbortSignal): Promise<AppMetadata[] | null> {
-	try {
-		const call = await getClient().callTool("list_apps", {}, { approval, timeoutMs, signal });
-		const result = filterToolResult(call.result, { maxTextChars });
-		return parseAppListContent(result.content, { runningOnly: true }).filter((app) => app.frontmost);
-	} catch {
-		return null;
-	}
+export async function captureFocusSnapshot(): Promise<AppMetadata[] | null> {
+	return nativeFrontmostApps();
 }
 
 async function runWaitStep(step: SequenceStep, args: Record<string, JsonValue>, opts: { getClient: () => AppServerClient; sessionElementCache: Map<string, ElementInfo[]>; approval: ApprovalMode; timeoutMs: number; maxTextChars: number; signal?: AbortSignal; cache: Map<string, ElementInfo[]>; beforeState: StateSummary | null; scope: TargetScope }): Promise<{ result: FilteredToolResult; durationMs: number; targetResolution?: string; elements: MachineElement[]; visibleText: string[]; changed: ChangeSummary | null; nextActions: string[] }> {
@@ -111,7 +105,7 @@ async function runWaitStep(step: SequenceStep, args: Record<string, JsonValue>, 
 		if (sleepMs <= 0) break;
 		await new Promise((resolve) => setTimeout(resolve, sleepMs));
 	}
-	const message = `${step.tool} timed out after ${waitTimeoutMs}ms: ${lastMessage}. Next action: re-run codex_cu_get_app_state with detail:"minimal" for ${args.app}. Transport get_app_state calls used up to ${perPollToolTimeoutMs}ms each, with the final sub-1000ms remainder handled by the wait predicate instead of issuing a tiny transport call.`;
+	const message = `${step.tool} timed out after ${waitTimeoutMs}ms: ${lastMessage}. Next action: re-run macuse action=get_app_state with detail:"minimal" for ${args.app}. Transport get_app_state calls used up to ${perPollToolTimeoutMs}ms each, with the final sub-1000ms remainder handled by the wait predicate instead of issuing a tiny transport call.`;
 	if (last) appendText(last, message);
 	else last = failureResult(message, opts.maxTextChars);
 	last.isError = true;
@@ -136,15 +130,15 @@ export async function executeSequence(
 		const hasPointerClick = steps.some((step) => step.tool === "click");
 		const hasPointerDrag = steps.some((step) => step.tool === "drag");
 		if (hasPointerClick && !input.allowPointerClick) {
-			throw new Error("codex_cu_sequence pointer click steps require allowPointerClick=true. Prefer perform_secondary_action with action=Press when possible to preserve mouse focus.");
+			throw new Error("macuse action=sequence pointer click steps require allowPointerClick=true. Prefer perform_secondary_action with action=Press when possible to preserve mouse focus.");
 		}
 		if (hasPointerDrag && !input.allowPointerDrag) {
-			throw new Error("codex_cu_sequence pointer drag steps require allowPointerDrag=true. Pointer drag can move the user's cursor; the extension restores mouse position afterward.");
+			throw new Error("macuse action=sequence pointer drag steps require allowPointerDrag=true. Pointer drag can move the user's cursor; the extension restores mouse position afterward.");
 		}
 		if (mutating) {
-			if (!input.allowMutating) throw new Error("codex_cu_sequence mutating steps require allowMutating=true.");
+			if (!input.allowMutating) throw new Error("macuse action=sequence mutating steps require allowMutating=true.");
 			const safetyNote = String(input.safetyNote || "").trim();
-			if (safetyNote.length < 20) throw new Error("codex_cu_sequence mutating steps require a safetyNote describing target, intended effect, and stop boundary.");
+			if (safetyNote.length < 20) throw new Error("macuse action=sequence mutating steps require a safetyNote describing target, intended effect, and stop boundary.");
 		}
 		const approval = input.approval || "inherit";
 		onUpdate?.({ content: [{ type: "text", text: `Running persistent Codex Computer Use sequence (${steps.length} steps, mutating=${mutating})...` }], details: {} });
@@ -153,9 +147,10 @@ export async function executeSequence(
 		const detail = normalizeDetail(input.detail, "compact");
 		const targetScope: TargetScope = input.targetScope === "main" ? "main" : "all";
 		const screenshotStep = input.screenshotStep === "final" ? "final" : "first";
-		const mouseBefore = mutating ? getMousePosition() : null;
+		const preserveMouse = hasPointerClick || hasPointerDrag;
+		const mouseBefore = preserveMouse ? getMousePosition() : null;
 		let mouseRestored = false;
-		const frontmostBefore = await captureFocusSnapshot(getClient, approval, toolTimeoutMs, maxTextChars, signal);
+		const frontmostBefore = await captureFocusSnapshot();
 		const results: SequencedResult[] = [];
 		const elementCache = new Map(sessionElementCache);
 		const stateCache = new Map<string, StateSummary>();
@@ -263,6 +258,8 @@ export async function executeSequence(
 					let postActionNoChange = false;
 					let postActionReadbackDone = false;
 					let actionErrorRecoveredByStateChange = false;
+					const hasAssertions = step.expectText.length > 0 || step.expectAbsentText.length > 0 || step.expectVisibleText.length > 0;
+					const needsStateReadback = step.requireStateChange || hasAssertions || Boolean(input.includeImage && saveImageForStep);
 					if (filtered.isError && step.requireStateChange && typeof stepArgs.app === "string") {
 						const verify = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
 						const verified = filterToolResult(verify.result, {
@@ -283,7 +280,7 @@ export async function executeSequence(
 							postActionReadbackDone = true;
 						}
 					}
-					if (step.tool === "set_value" && typeof stepArgs.value === "string" && stepArgs.value.length > 0 && typeof stepArgs.app === "string") {
+					if (needsStateReadback && step.tool === "set_value" && typeof stepArgs.value === "string" && stepArgs.value.length > 0 && typeof stepArgs.app === "string") {
 						const verify = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
 						const verified = filterToolResult(verify.result, {
 							includeImage: Boolean(input.includeImage),
@@ -308,7 +305,7 @@ export async function executeSequence(
 						}
 					}
 					const isStateTool = step.tool === "get_app_state" || step.tool === "list_apps";
-					if (!postActionReadbackDone && !filtered.isError && !isStateTool && typeof stepArgs.app === "string") {
+					if (needsStateReadback && !postActionReadbackDone && !filtered.isError && !isStateTool && typeof stepArgs.app === "string") {
 						const verify = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
 						let verified = filterToolResult(verify.result, {
 							includeImage: Boolean(input.includeImage),
@@ -366,8 +363,8 @@ export async function executeSequence(
 						appendText(filtered, `Warning: browserInputChangedNavigationState — ${step.tool} in a browser changed URL/title state. Treat address/search fields as navigation controls even without pressing Return; verify no unintended external request or tab navigation occurred before continuing.`);
 					}
 					const nextActions = [
-						...(rawIndexTarget && changed && (changed.urlChanged || changed.titleChanged || changed.visibleTextChanged) && !step.tool.startsWith("get_app_state") ? [`If the UI rerendered or navigated, call codex_cu_get_app_state({app:${JSON.stringify(stepArgs.app)}, detail:"minimal"}) before using raw element_index targets.`] : []),
-						...(!hasStateContent && filtered.isError ? [`No app-state readback was available from this failed step, so changed-state summaries are intentionally suppressed to avoid false deltas. Re-run codex_cu_get_app_state before deciding whether the UI actually changed.`] : []),
+						...(rawIndexTarget && changed && (changed.urlChanged || changed.titleChanged || changed.visibleTextChanged) && !step.tool.startsWith("get_app_state") ? [`If the UI rerendered or navigated, call macuse action=get_app_state for ${JSON.stringify(stepArgs.app)} with detail:"minimal" before using raw element_index targets.`] : []),
+						...(!hasStateContent && filtered.isError ? [`No app-state readback was available from this failed step, so changed-state summaries are intentionally suppressed to avoid false deltas. Re-run macuse action=get_app_state before deciding whether the UI actually changed.`] : []),
 						...(diagnostics.length > 0 ? [`Resolve upstream Computer Use state for ${JSON.stringify(stepArgs.app)} before retrying mutating actions; use agent_browser for web/Chrome if Computer Use state keeps timing out.`] : []),
 						...(postActionNoChange ? [`AX action dispatched but no observable state change was seen. If a click/open was expected, retry with a fresh state read; use a pointer click fallback only with allowPointerClick and an unambiguous target/window.`] : []),
 						...(actionErrorRecoveredByStateChange ? [`Upstream reported an error, but post-action state changed. Inspect the final state carefully before issuing another mutating step.`] : []),
@@ -467,7 +464,7 @@ export async function executeSequence(
 						elements: [],
 						visibleText: [],
 						changed: null,
-						nextActions: ["Inspect the failed-step diagnostic, then re-run codex_cu_get_app_state with detail:\"minimal\" before retrying any raw element_index target."],
+						nextActions: ["Inspect the failed-step diagnostic, then re-run macuse action=get_app_state with detail:\"minimal\" before retrying any raw element_index target."],
 						acceptedElicitations: 0,
 						elicitationCount: 0,
 					});
@@ -478,58 +475,49 @@ export async function executeSequence(
 			if (mouseBefore) mouseRestored = restoreMousePosition(mouseBefore);
 		}
 		const mouseAfter = mouseBefore ? getMousePosition() : null;
-		let frontmostAfter = await captureFocusSnapshot(getClient, approval, toolTimeoutMs, maxTextChars, signal);
-		const focusBeforeRestore = focusSnapshot(frontmostBefore, frontmostAfter);
-		const originalFrontmost = frontmostBefore?.[0] ?? null;
-		let focusRestored = false;
-		if (focusBeforeRestore.changed && originalFrontmost) {
-			focusRestored = restoreFrontmostApp(originalFrontmost);
-			if (focusRestored) {
-				await new Promise((resolve) => setTimeout(resolve, 300));
-				frontmostAfter = await captureFocusSnapshot(getClient, approval, toolTimeoutMs, maxTextChars, signal);
-			}
-		}
+		const frontmostAfter = await captureFocusSnapshot();
 		const focus = focusSnapshot(frontmostBefore, frontmostAfter);
 		const mousePreservation = mouseBefore ? { before: mouseBefore, after: mouseAfter, restored: mouseRestored } : undefined;
 		const content = sequenceContent(results, Boolean(input.includeImage), failed, steps.length, detail, maxTextChars, focus, defaultApp, mousePreservation);
 		const details = bridgeDetails({
-			tool: "sequence",
-				threadId: getClient().status().threadId,
-				detail,
-				targetScope,
-				failed,
-				failedStepIndex: failed?.index ?? null,
-				failedStepNumber: failed?.stepNumber ?? null,
-				failedStepLabel: failed?.label ?? null,
-				completedStepCount: failed ? failed.index : results.length,
-				resumeFromStepIndex: failed?.index ?? null,
-				defaultApp: defaultApp ?? null,
-				implicitRefreshes,
-				imageSupportNote: input.includeImage ? "Image rendering is model/host dependent; saveImagePath is the reliable screenshot artifact path." : null,
-				screenshotStep,
-				focus,
-				focusRestoration: { attempted: Boolean(focusBeforeRestore.changed && originalFrontmost), restored: focusRestored, beforeRestore: focusBeforeRestore },
-				pointerToolsUsed: hasPointerClick || hasPointerDrag,
-				steps: results.map((step) => ({
-					index: step.index,
-					tool: step.tool,
-					arguments: step.arguments,
-					durationMs: step.durationMs,
-					isError: step.result.isError,
-					omittedImages: step.result.omittedImages,
-					savedImagePath: step.result.savedImagePath,
-					savedImageArtifact: step.result.savedImageArtifact,
-					acceptedElicitations: step.acceptedElicitations,
-					elicitationCount: step.elicitationCount,
-					targetResolution: step.targetResolution ?? null,
-					targetWarnings: step.targetWarnings,
-					visibleText: step.visibleText,
-					changed: step.changed,
-					nextActions: step.nextActions,
-					elements: step.elements,
-				})),
-				mousePreservation: mousePreservation ?? null,
-			}, getClient().status().stderrTail);
+			tool: "macuse",
+			action: "sequence",
+			computerUseTool: "sequence",
+			threadId: getClient().status().threadId,
+			detail,
+			targetScope,
+			failed,
+			failedStepIndex: failed?.index ?? null,
+			failedStepNumber: failed?.stepNumber ?? null,
+			failedStepLabel: failed?.label ?? null,
+			completedStepCount: failed ? failed.index : results.length,
+			resumeFromStepIndex: failed?.index ?? null,
+			defaultApp: defaultApp ?? null,
+			implicitRefreshes,
+			imageSupportNote: input.includeImage ? "Image rendering is model/host dependent; saveImagePath is the reliable screenshot artifact path." : null,
+			screenshotStep,
+			focus,
+			pointerToolsUsed: hasPointerClick || hasPointerDrag,
+			steps: results.map((step) => ({
+				index: step.index,
+				tool: step.tool,
+				arguments: step.arguments,
+				durationMs: step.durationMs,
+				isError: step.result.isError,
+				omittedImages: step.result.omittedImages,
+				savedImagePath: step.result.savedImagePath,
+				savedImageArtifact: step.result.savedImageArtifact,
+				acceptedElicitations: step.acceptedElicitations,
+				elicitationCount: step.elicitationCount,
+				targetResolution: step.targetResolution ?? null,
+				targetWarnings: step.targetWarnings,
+				visibleText: step.visibleText,
+				changed: step.changed,
+				nextActions: step.nextActions,
+				elements: step.elements,
+			})),
+			mousePreservation: mousePreservation ?? null,
+		}, getClient().status().stderrTail);
 		// Resumable partial failure (>=1 step completed before a hard failure): keep
 		// the rich content/details so the agent can resume from failedStepIndex.
 		// Zero-progress hard failure (no step completed) or a wait-step timeout on
@@ -541,7 +529,7 @@ export async function executeSequence(
 			// self-contained: include the run summary text so the model can
 			// diagnose the zero-progress failure from the message alone.
 			const summaryBlock = content.find(isTextBlock);
-			throw new ComputerUseError(`codex_cu_sequence failed at step 1 (index 0, ${failed.tool}): ${failed.message}.\n\n${truncateString(summaryBlock?.text ?? "", 4000)}`, details);
+			throw new ComputerUseError(`macuse action=sequence failed at step 1 (index 0, ${failed.tool}): ${failed.message}.\n\n${truncateString(summaryBlock?.text ?? "", 4000)}`, details);
 		}
 		return { content: content as (TextContentBlock | ImageContentBlock)[], details };
 	

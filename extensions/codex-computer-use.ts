@@ -95,7 +95,7 @@ import {
 	visibleAssertionValues,
 } from "./codex-computer-use-modules/elements-state";
 import {
-	filterAppListContent,
+	listAppsDisplayContent,
 	focusSnapshot,
 	focusSummaryText,
 	parseAppListContent,
@@ -116,7 +116,6 @@ import {
 	waitConditionMet,
 } from "./codex-computer-use-modules/sequence";
 import { captureFocusSnapshot, executeSequence } from "./codex-computer-use-modules/sequence-runner";
-import { getMousePosition, restoreFrontmostApp, restoreMousePosition } from "./codex-computer-use-modules/macos-focus";
 
 const timeoutParam = Type.Optional(Type.Number({ minimum: 1_000, maximum: 300_000, description: "Tool timeout in milliseconds. Default 90000." }));
 const maxTextParam = Type.Optional(Type.Number({ minimum: 1_000, maximum: 200_000, description: "Maximum characters per returned text block. Default 20000." }));
@@ -124,7 +123,7 @@ const approvalParam = Type.Optional(StringEnum(["inherit", "accept-all", "accept
 const detailParam = Type.Optional(StringEnum(["minimal", "compact", "full"] as const, { description: "Output detail. minimal returns app/window, visible text, and concise target hints; compact trims accessibility trees to interactive element lines; full returns the raw Computer Use text." }));
 
 /**
- * Permissive object schema for one codex_cu_sequence step. It advertises the
+ * Permissive object schema for one macuse action=sequence step. It advertises the
  * supported step fields to the model (vs. an opaque {}), but stays loose
  * (additionalProperties: true, all fields optional) so the runtime validator
  * normalizeSequenceSteps() remains the single hard gate on step shape.
@@ -143,6 +142,66 @@ const sequenceStepParam = Type.Object(
 	},
 	{ additionalProperties: true, description: "One Computer Use tool call. Must include a non-empty tool string and an arguments object; see the tool description for targeting, waits, and set_value shorthand." },
 );
+
+const listAppsPayloadParam = Type.Object({
+	runningOnly: Type.Optional(Type.Boolean({ description: "Return only currently running apps. Default false." })),
+	filter: Type.Optional(Type.String({ description: "Optional case-insensitive substring filter across each app list line." })),
+	maxTextChars: maxTextParam,
+	toolTimeoutMs: timeoutParam,
+});
+
+const getAppStatePayloadParam = Type.Object({
+	app: Type.String({ description: "App name, full app path, or unambiguous bundle identifier, e.g. Activity Monitor or com.apple.ActivityMonitor." }),
+	approval: approvalParam,
+	includeImage: Type.Optional(Type.Boolean({ description: "Attach the screenshot image returned by Computer Use when the current model/host supports image blocks. Use saveImagePath for reliable screenshot artifacts. Default false to keep turns light." })),
+	saveImagePath: Type.Optional(Type.String({ description: "Optional filesystem path where the screenshot should be saved." })),
+	detail: detailParam,
+	targetScope: Type.Optional(StringEnum(["all", "main"] as const, { description: "Output target scope. all includes app/window/chrome targets; main prioritizes likely app/page content controls." })),
+	trackFocus: Type.Optional(Type.Boolean({ description: "Capture native frontmost-app focus before/after. Default false; set true when focus evidence matters for this read. Mutating sequences always capture native focus." })),
+	maxTextChars: maxTextParam,
+	toolTimeoutMs: timeoutParam,
+});
+
+const sequencePayloadParam = Type.Object({
+	app: Type.Optional(Type.String({ description: "Optional default app name/bundle/path applied to steps whose arguments omit app." })),
+	steps: Type.Array(sequenceStepParam, { minItems: 1, description: "Ordered Computer Use tool calls to run in one persistent app-server thread." }),
+	approval: approvalParam,
+	allowMutating: Type.Optional(Type.Boolean({ description: "Required when any step is not list_apps or get_app_state." })),
+	allowPointerClick: Type.Optional(Type.Boolean({ description: "Required to use the pointer-based click tool. Prefer perform_secondary_action action=Press when possible." })),
+	allowPointerDrag: Type.Optional(Type.Boolean({ description: "Required to use the pointer-based drag tool. Pointer tools restore the mouse position afterward." })),
+	safetyNote: Type.Optional(Type.String({ description: "Required for mutating steps. State target app, intended effect, and stop boundary." })),
+	includeImage: Type.Optional(Type.Boolean({ description: "Attach screenshot image blocks returned by sequence steps when the current model/host supports image blocks. Use saveImagePath for reliable screenshot artifacts. Default false." })),
+	saveImagePath: Type.Optional(Type.String({ description: "Optional filesystem path where a sequence screenshot should be saved. Use screenshotStep to choose first or final state. Default first for backward compatibility." })),
+	screenshotStep: Type.Optional(StringEnum(["first", "final"] as const, { description: "Which sequence step may save saveImagePath. Default first; use final to capture final visual state." })),
+	detail: Type.Optional(StringEnum(["minimal", "compact", "full"] as const, { description: "Output detail. Default compact for sequences. minimal suppresses successful non-state action bodies; full returns full accessibility trees for every step." })),
+	targetScope: Type.Optional(StringEnum(["all", "main"] as const, { description: "Output target scope for parsed targets. main suppresses likely app/browser chrome and window controls where possible." })),
+	maxTextChars: maxTextParam,
+	toolTimeoutMs: timeoutParam,
+});
+
+type MacuseAction = "list_apps" | "get_app_state" | "sequence";
+type MacuseParams = {
+	action: MacuseAction;
+	listApps?: ListAppsParams;
+	getAppState?: GetAppStateParams;
+	sequence?: SequenceParams;
+};
+
+const actionPayloadKey: Record<MacuseAction, "listApps" | "getAppState" | "sequence"> = {
+	list_apps: "listApps",
+	get_app_state: "getAppState",
+	sequence: "sequence",
+};
+
+function actionPayload<T>(input: MacuseParams): T {
+	const key = actionPayloadKey[input.action];
+	if (!key) throw new Error("macuse action must be one of list_apps, get_app_state, or sequence.");
+	const payloadKeys = (["listApps", "getAppState", "sequence"] as const).filter((item) => (input as Record<string, unknown>)[item] !== undefined);
+	if (payloadKeys.length !== 1 || payloadKeys[0] !== key) throw new Error(`macuse action=${input.action} requires exactly one ${key} payload object and no other action payloads.`);
+	const payload = input[key];
+	if (!isRecord(payload)) throw new Error(`macuse action=${input.action} requires ${key} to be an object.`);
+	return payload as T;
+}
 
 let client: AppServerClient | null = null;
 const sessionElementCache = new Map<string, ElementInfo[]>();
@@ -170,7 +229,7 @@ export default function (pi: ExtensionAPI) {
 		description: "Show Codex Computer Use persistent app-server status without starting it",
 		handler: async (_args, ctx) => {
 			if (!client) {
-				if (ctx.hasUI) ctx.ui.notify("macuse stopped; app-server has not been started in this pi session. It starts lazily on the first codex_cu_* tool call.", "warning");
+				if (ctx.hasUI) ctx.ui.notify("macuse stopped; app-server has not been started in this pi session. It starts lazily on the first macuse tool call.", "warning");
 				return;
 			}
 			const status = client.status();
@@ -200,155 +259,111 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerTool({
-		name: "codex_cu_list_apps",
-		label: "Codex CU List Apps",
-		description: "Read-only: list apps known to OpenAI Codex Computer Use through a persistent Codex app-server session. Use runningOnly:true to return only currently running apps, and filter to substring-match app names, paths, or bundle IDs.",
-		promptSnippet: "List local macOS apps available to Codex Computer Use.",
+		name: "macuse",
+		label: "macuse",
+		description: "Use macuse, backed by OpenAI Codex Computer Use, to list local macOS apps, inspect app state, or run guarded native-app action sequences through one persistent Codex app-server session.",
+		promptSnippet: "Inspect or safely operate local macOS apps with macuse",
 		promptGuidelines: [
-			"Use codex_cu_list_apps to discover the exact app name, bundle ID, or path before using codex_cu_get_app_state.",
-			"codex_cu_list_apps is read-only; it does not click, type, drag, scroll, or mutate GUI state.",
+			"Use macuse action=list_apps to discover the exact app name, bundle ID, or path before app-state inspection when the target app is uncertain.",
+			"Use macuse action=get_app_state for read-only local macOS app inspection when file, CLI, or browser DOM tools are insufficient.",
+			"Use macuse action=sequence only after get_app_state has identified the target app/window or when the first sequence step is get_app_state.",
+			"For mutating macuse sequences, keep the flow narrow, include a concrete safetyNote, set allowMutating=true, and stop before purchases, sends, deletes, credential changes, account/security/privacy changes, or ambiguous windows.",
+			"Prefer macuse sequence steps using perform_secondary_action with action=Press, press_key, set_value, select_text, or element-targeted scroll over pointer click when possible to preserve mouse/system focus.",
+			"For macuse element targeting, prefer stable elementId values from get_app_state when present, then exact elementDescription, then unique role/name, then guarded element_index.",
 		],
 		parameters: Type.Object({
-			runningOnly: Type.Optional(Type.Boolean({ description: "Return only currently running apps. Default false." })),
-			filter: Type.Optional(Type.String({ description: "Optional case-insensitive substring filter across each app list line." })),
-			maxTextChars: maxTextParam,
-			toolTimeoutMs: timeoutParam,
+			action: StringEnum(["list_apps", "get_app_state", "sequence"] as const, { description: "macuse operation to run." }),
+			listApps: Type.Optional(listAppsPayloadParam),
+			getAppState: Type.Optional(getAppStatePayloadParam),
+			sequence: Type.Optional(sequencePayloadParam),
 		}),
 		async execute(_toolCallId, params, signal, onUpdate) {
-			const input = params as ListAppsParams;
-			onUpdate?.({ content: [{ type: "text", text: "Calling persistent Codex Computer Use list_apps..." }], details: {} });
-			const toolTimeoutMs = asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
-			const maxTextChars = asInt(input.maxTextChars, DEFAULT_MAX_TEXT_CHARS);
-			const call = await getClient().callTool("list_apps", {}, { approval: "inherit", timeoutMs: toolTimeoutMs, signal });
-			const result = filterToolResult(call.result, { maxTextChars });
-			const appMetadata = parseAppListContent(result.content, { runningOnly: Boolean(input.runningOnly), filter: input.filter });
-			const outputContent = filterAppListContent(result.content, { runningOnly: Boolean(input.runningOnly), filter: input.filter, maxTextChars });
-			return {
-				content: outputContent as (TextContentBlock | ImageContentBlock)[],
-				details: bridgeDetails({
-					tool: "list_apps",
-					threadId: getClient().status().threadId,
-					isError: result.isError,
-					omittedImages: result.omittedImages,
-					runningOnly: Boolean(input.runningOnly),
-					filter: input.filter ?? null,
-					apps: appMetadata,
-					frontmostApps: appMetadata.filter((app) => app.frontmost),
-					acceptedElicitations: call.acceptedElicitations,
-					elicitationCount: call.elicitationCount,
-					durationMs: call.durationMs,
-				}, getClient().status().stderrTail),
-			};
-		},
-	});
-
-	pi.registerTool({
-		name: "codex_cu_get_app_state",
-		label: "Codex CU Get App State",
-		description: "Read-only: get a target macOS app's accessibility tree and optional screenshot through persistent OpenAI Codex Computer Use. Pass detail:'minimal' for app/window/display summary plus concise target hints, detail:'compact' for grouped interactive elements, or detail:'full' for the raw tree. targetScope:'main' suppresses likely chrome/window targets in transformed output.",
-		promptSnippet: "Inspect a local macOS app window with Codex Computer Use.",
-		promptGuidelines: [
-			"Use codex_cu_get_app_state for read-only inspection of a local macOS app when file, CLI, or browser tools are insufficient.",
-			"App approval defaults to inherit, matching Codex's Any App setting by auto-accepting app approvals.",
-			"Use codex_cu_sequence for mutating Computer Use actions, with before/after get_app_state evidence, allowMutating=true, and a concrete safetyNote.",
-		],
-		parameters: Type.Object({
-			app: Type.String({ description: "App name, full app path, or unambiguous bundle identifier, e.g. Activity Monitor or com.apple.ActivityMonitor." }),
-			approval: approvalParam,
-			includeImage: Type.Optional(Type.Boolean({ description: "Attach the screenshot image returned by Computer Use when the current model/host supports image blocks. Use saveImagePath for reliable screenshot artifacts. Default false to keep turns light." })),
-			saveImagePath: Type.Optional(Type.String({ description: "Optional filesystem path where the screenshot should be saved." })),
-			detail: detailParam,
-			targetScope: Type.Optional(StringEnum(["all", "main"] as const, { description: "Output target scope. all includes app/window/chrome targets; main prioritizes likely app/page content controls." })),
-			trackFocus: Type.Optional(Type.Boolean({ description: "Capture frontmost-app focus before/after (two extra app-server list_apps round-trips). Default false; set true when focus evidence matters for this read. Mutating sequences always capture focus." })),
-			maxTextChars: maxTextParam,
-			toolTimeoutMs: timeoutParam,
-		}),
-		async execute(_toolCallId, params, signal, onUpdate) {
-			const input = params as GetAppStateParams;
-			const app = input.app;
-			const approval = input.approval || "inherit";
-			onUpdate?.({ content: [{ type: "text", text: `Calling persistent Computer Use get_app_state for ${app} with approval=${approval}...` }], details: {} });
-			const toolTimeoutMs = asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
-			const maxTextChars = asInt(input.maxTextChars, DEFAULT_MAX_TEXT_CHARS);
-			const detail = normalizeDetail(input.detail, "full");
-			const targetScope: TargetScope = input.targetScope === "main" ? "main" : "all";
-			// Focus capture costs two extra list_apps round-trips; skip it by default
-			// for this read-only tool and reserve it for mutating sequences where
-			// frontmost restoration actually matters.
-			const trackFocus = input.trackFocus === true;
-			const frontmostBefore = trackFocus ? await captureFocusSnapshot(getClient, approval, toolTimeoutMs, maxTextChars, signal) : null;
-			const call = await getClient().callTool("get_app_state", { app }, { approval, timeoutMs: toolTimeoutMs, signal });
-			const frontmostAfter = trackFocus ? await captureFocusSnapshot(getClient, approval, toolTimeoutMs, maxTextChars, signal) : null;
-			const result = filterToolResult(call.result, {
-				includeImage: Boolean(input.includeImage),
-				saveImagePath: input.saveImagePath,
-				maxTextChars,
-			});
-			updateElementCache(sessionElementCache, app, result.content);
-			const diagnostics = [appendComputerUseDiagnostic(result, "get_app_state", { app })].filter((item): item is string => Boolean(item));
-			if (detail === "full") appendElementStabilityNote(result);
-			appendImageWarning(result, { includeImage: Boolean(input.includeImage), saveImagePath: input.saveImagePath });
-			const focus = focusSnapshot(frontmostBefore, frontmostAfter);
-			const transformedContent = detail === "minimal" ? minimalContent(result.content, targetScope) : detail === "compact" ? compactContent(result.content, targetScope) : result.content;
-			const focusLine = trackFocus ? { type: "text" as const, text: focusSummaryText(focus, app) } : null;
-			const outputContent = truncateTextContent(focusLine ? [...transformedContent, focusLine] : transformedContent, maxTextChars);
-			return {
-				content: outputContent as (TextContentBlock | ImageContentBlock)[],
-				details: bridgeDetails({
-					tool: "get_app_state",
-					threadId: getClient().status().threadId,
-					isError: result.isError,
-					omittedImages: result.omittedImages,
-					savedImagePath: result.savedImagePath,
-					savedImageArtifact: result.savedImageArtifact,
-					imageSupportNote: input.includeImage ? "Image rendering is model/host dependent; saveImagePath is the reliable screenshot artifact path." : null,
-					detail,
-					targetScope,
-					...stateSummary(result.content, targetScope),
-					focus,
-					diagnostics,
-					elements: machineElements(result.content, targetScope),
-					acceptedElicitations: call.acceptedElicitations,
-					elicitationCount: call.elicitationCount,
-					durationMs: call.durationMs,
-				}, getClient().status().stderrTail),
-			};
-		},
-	});
-
-	pi.registerTool({
-		name: "codex_cu_sequence",
-		label: "Codex CU Sequence",
-		description: "Run Codex Computer Use calls in one persistent app-server thread. Valid tools: list_apps, get_app_state, perform_secondary_action, press_key, type_text, set_value, select_text, scroll, click, drag, waitForText, waitForURL, waitForTitle, waitForElement, waitUntilElementEnabled, waitUntilElementDisabled. Element targets use element_index as a string; numbers are coerced, element is accepted as an alias, elementId resolves IDs, elementDescription exact-matches descriptions such as CPU or Memory, and role/name selectors match parsed accessibility targets. Example step: {tool:'perform_secondary_action', arguments:{app:'Activity Monitor', elementDescription:'Memory', action:'Press'}}.",
-		promptSnippet: "Run a sequence of local macOS Computer Use actions.",
-		promptGuidelines: [
-			"Use codex_cu_sequence only after codex_cu_get_app_state has identified the target app/window or when the first sequence step is get_app_state.",
-			"For mutating codex_cu_sequence steps, keep the flow narrow, include an explicit safetyNote, set allowMutating=true, and stop before purchases, sends, deletes, credential changes, account/security/privacy changes, or ambiguous windows.",
-			"App approval defaults to inherit, matching Codex's Any App setting by auto-accepting app approvals.",
-			"Prefer perform_secondary_action with action=Press, press_key, set_value, select_text, or element-targeted scroll over pointer click when possible to preserve mouse/system focus.",
-			"press_key uses xdotool-style key names. Examples: '5', 'Return', 'Escape', 'Tab', 'space', 'plus', 'minus', 'equal', 'ctrl+c'. For text entry, prefer type_text unless a real key event is required.",
-			"select_text requires a text string to match; start/end offset selection is not supported by the upstream Computer Use tool.",
-			"For element targeting, prefer stable elementId values from get_app_state when present, then elementDescription exact matches, then element_index. Numeric indices can shift after mutations; the extension refreshes before element-targeted sequence steps, but description/ID targeting is still safer.",
-			"For dynamic controls, codex_cu_sequence steps may use arguments.targets with fallback target objects; the extension resolves the first currently valid target before calling Computer Use.",
-		],
-		parameters: Type.Object({
-			app: Type.Optional(Type.String({ description: "Optional default app name/bundle/path applied to steps whose arguments omit app." })),
-			steps: Type.Array(sequenceStepParam, { minItems: 1, description: "Ordered Computer Use tool calls to run in one persistent app-server thread." }),
-			approval: approvalParam,
-			allowMutating: Type.Optional(Type.Boolean({ description: "Required when any step is not list_apps or get_app_state." })),
-			allowPointerClick: Type.Optional(Type.Boolean({ description: "Required to use the pointer-based click tool. Prefer perform_secondary_action action=Press when possible." })),
-			allowPointerDrag: Type.Optional(Type.Boolean({ description: "Required to use the pointer-based drag tool. The extension restores the mouse position afterward." })),
-			safetyNote: Type.Optional(Type.String({ description: "Required for mutating steps. State target app, intended effect, and stop boundary." })),
-			includeImage: Type.Optional(Type.Boolean({ description: "Attach screenshot image blocks returned by sequence steps when the current model/host supports image blocks. Use saveImagePath for reliable screenshot artifacts. Default false." })),
-			saveImagePath: Type.Optional(Type.String({ description: "Optional filesystem path where a sequence screenshot should be saved. Use screenshotStep to choose first or final state. Default first for backward compatibility." })),
-			screenshotStep: Type.Optional(StringEnum(["first", "final"] as const, { description: "Which sequence step may save saveImagePath. Default first; use final to capture final visual state." })),
-			detail: Type.Optional(StringEnum(["minimal", "compact", "full"] as const, { description: "Output detail. Default compact for sequences. minimal suppresses successful non-state action bodies; full returns full accessibility trees for every step." })),
-			targetScope: Type.Optional(StringEnum(["all", "main"] as const, { description: "Output target scope for parsed targets. main suppresses likely app/browser chrome and window controls where possible." })),
-			maxTextChars: maxTextParam,
-			toolTimeoutMs: timeoutParam,
-		}),
-		async execute(_toolCallId, params, signal, onUpdate) {
-			return executeSequence(params, signal, onUpdate, getClient, sessionElementCache);
+			const input = params as MacuseParams;
+			if (input.action === "list_apps") {
+				const payload = actionPayload<ListAppsParams>(input);
+				onUpdate?.({ content: [{ type: "text", text: "Calling macuse list_apps..." }], details: {} });
+				const toolTimeoutMs = asInt(payload.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
+				const maxTextChars = asInt(payload.maxTextChars, DEFAULT_MAX_TEXT_CHARS);
+				const call = await getClient().callTool("list_apps", {}, { approval: "inherit", timeoutMs: toolTimeoutMs, signal });
+				const result = filterToolResult(call.result, { maxTextChars });
+				const diagnostics = [appendComputerUseDiagnostic(result, "list_apps", {})].filter((item): item is string => Boolean(item));
+				const appMetadata = result.isError ? [] : parseAppListContent(result.content, { runningOnly: Boolean(payload.runningOnly), filter: payload.filter });
+				const outputContent = listAppsDisplayContent(result, { runningOnly: Boolean(payload.runningOnly), filter: payload.filter, maxTextChars });
+				return {
+					content: outputContent as (TextContentBlock | ImageContentBlock)[],
+					details: bridgeDetails({
+						tool: "macuse",
+						action: "list_apps",
+						computerUseTool: "list_apps",
+						threadId: getClient().status().threadId,
+						isError: result.isError,
+						omittedImages: result.omittedImages,
+						runningOnly: Boolean(payload.runningOnly),
+						filter: payload.filter ?? null,
+						apps: appMetadata,
+						frontmostApps: appMetadata.filter((app) => app.frontmost),
+						diagnostics,
+						acceptedElicitations: call.acceptedElicitations,
+						elicitationCount: call.elicitationCount,
+						durationMs: call.durationMs,
+					}, getClient().status().stderrTail),
+				};
+			}
+			if (input.action === "get_app_state") {
+				const payload = actionPayload<GetAppStateParams>(input);
+				const app = payload.app;
+				const approval = payload.approval || "inherit";
+				onUpdate?.({ content: [{ type: "text", text: `Calling macuse get_app_state for ${app} with approval=${approval}...` }], details: {} });
+				const toolTimeoutMs = asInt(payload.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
+				const maxTextChars = asInt(payload.maxTextChars, DEFAULT_MAX_TEXT_CHARS);
+				const detail = normalizeDetail(payload.detail, "full");
+				const targetScope: TargetScope = payload.targetScope === "main" ? "main" : "all";
+				const trackFocus = payload.trackFocus === true;
+				const frontmostBefore = trackFocus ? await captureFocusSnapshot() : null;
+				const call = await getClient().callTool("get_app_state", { app }, { approval, timeoutMs: toolTimeoutMs, signal });
+				const frontmostAfter = trackFocus ? await captureFocusSnapshot() : null;
+				const result = filterToolResult(call.result, {
+					includeImage: Boolean(payload.includeImage),
+					saveImagePath: payload.saveImagePath,
+					maxTextChars,
+				});
+				updateElementCache(sessionElementCache, app, result.content);
+				const diagnostics = [appendComputerUseDiagnostic(result, "get_app_state", { app })].filter((item): item is string => Boolean(item));
+				if (detail === "full") appendElementStabilityNote(result);
+				appendImageWarning(result, { includeImage: Boolean(payload.includeImage), saveImagePath: payload.saveImagePath });
+				const focus = focusSnapshot(frontmostBefore, frontmostAfter);
+				const transformedContent = detail === "minimal" ? minimalContent(result.content, targetScope) : detail === "compact" ? compactContent(result.content, targetScope) : result.content;
+				const focusLine = trackFocus ? { type: "text" as const, text: focusSummaryText(focus, app) } : null;
+				const outputContent = truncateTextContent(focusLine ? [...transformedContent, focusLine] : transformedContent, maxTextChars);
+				return {
+					content: outputContent as (TextContentBlock | ImageContentBlock)[],
+					details: bridgeDetails({
+						tool: "macuse",
+						action: "get_app_state",
+						computerUseTool: "get_app_state",
+						threadId: getClient().status().threadId,
+						isError: result.isError,
+						omittedImages: result.omittedImages,
+						savedImagePath: result.savedImagePath,
+						savedImageArtifact: result.savedImageArtifact,
+						imageSupportNote: payload.includeImage ? "Image rendering is model/host dependent; saveImagePath is the reliable screenshot artifact path." : null,
+						detail,
+						targetScope,
+						...stateSummary(result.content, targetScope),
+						focus,
+						diagnostics,
+						elements: machineElements(result.content, targetScope),
+						acceptedElicitations: call.acceptedElicitations,
+						elicitationCount: call.elicitationCount,
+						durationMs: call.durationMs,
+					}, getClient().status().stderrTail),
+				};
+			}
+			if (input.action === "sequence") {
+				const payload = actionPayload<SequenceParams>(input);
+				return executeSequence(payload, signal, onUpdate, getClient, sessionElementCache);
+			}
+			throw new Error("macuse action must be one of list_apps, get_app_state, or sequence.");
 		},
 	});
 }

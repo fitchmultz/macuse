@@ -89,7 +89,7 @@ export function waitConditionMet(tool: string, args: Record<string, JsonValue>, 
 
 
 export function normalizeSequenceSteps(value: unknown): SequenceStep[] {
-	if (!Array.isArray(value) || value.length === 0) throw new Error("codex_cu_sequence requires at least one step.");
+	if (!Array.isArray(value) || value.length === 0) throw new Error("macuse action=sequence requires at least one step.");
 	return value.map((step, index) => {
 		if (!isRecord(step)) throw new Error(`sequence step ${index} must be an object.`);
 		if (typeof step.tool !== "string" || step.tool.length === 0) throw new Error(`sequence step ${index} requires a non-empty tool string.`);
@@ -190,7 +190,7 @@ export function sequenceRunSummary(steps: SequencedResult[], failed: SequenceFai
 		`- safety tags on resolved targets: ${tags.length ? tags.join(", ") : "none reported"}`,
 		`- final visible text: ${finalVisible.length ? JSON.stringify(finalVisible.join(" | ")) : "<none parsed>"}`,
 		...(focus ? [`- focus: before=${focus.before?.map((app) => app.name).join(", ") || "<unknown>"}; after=${focus.after?.map((app) => app.name).join(", ") || "<unknown>"}; changed=${focus.changed ?? "unknown"}`] : []),
-		...(mousePreservation ? [`- mouse: restored=${mousePreservation.restored}`] : []),
+		...(mousePreservation ? [`- pointer mouse: restored=${mousePreservation.restored}`] : []),
 		...(failed ? [`- failure: step ${failed.stepNumber} ${failed.tool}: ${failed.message}`] : []),
 		...(readbackDrift.length ? [`- anomaly hints: ${readbackDrift.join("; ")}`] : []),
 	];
@@ -204,7 +204,7 @@ export function sequenceContent(steps: SequencedResult[], includeImages = false,
 		? `Sequence failed at step ${failed.stepNumber} of ${totalSteps} (index ${failed.index}, ${failed.tool}). Completed ${completedStepCount} step${completedStepCount === 1 ? "" : "s"}. To resume, start a new sequence from step index ${failed.index} against current app state.`
 		: `Sequence completed ${steps.length} of ${totalSteps} step${totalSteps === 1 ? "" : "s"}.`;
 	const focusLine = focus ? `\n${focusSummaryText(focus, targetApp)}` : "";
-	const mouseLine = mousePreservation ? `\nMouse preservation: before=(${mousePreservation.before.x},${mousePreservation.before.y}); after=(${mousePreservation.after?.x ?? "unknown"},${mousePreservation.after?.y ?? "unknown"}); restored=${mousePreservation.restored}` : "";
+	const mouseLine = mousePreservation ? `\nPointer mouse preservation: before=(${mousePreservation.before.x},${mousePreservation.before.y}); after=(${mousePreservation.after?.x ?? "unknown"},${mousePreservation.after?.y ?? "unknown"}); restored=${mousePreservation.restored}` : "";
 	const runSummary = sequenceRunSummary(steps, failed, focus, mousePreservation);
 	const orderedSteps = failed ? [steps[failed.index], ...steps.filter((step) => step.index !== failed.index)].filter((step): step is SequencedResult => Boolean(step)) : steps;
 	const stepText = orderedSteps.map((step) => {

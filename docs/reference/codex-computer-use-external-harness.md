@@ -36,7 +36,7 @@ What is proven:
 - Through app-server, read-only `computer-use/get_app_state` for Activity Monitor
   completed successfully and returned both accessibility-tree text and a JPEG
   screenshot block.
-- A guarded app-server sequence successfully filters and clears Activity Monitor search, switches Memory, then restores CPU/search/focus state.
+- A guarded app-server sequence successfully filters and clears Activity Monitor search, restores CPU/search state, and verifies native frontmost focus did not change.
 - A controlled TextEdit scroll probe against `/tmp/macuse-scroll-test.txt` returned successful `scroll down` and `scroll up` steps for scroll area element `1`; screenshot hashes changed across the sequence.
 - Controlled TextEdit probes against disposable `/tmp/macuse-type-test.txt` and `/tmp/macuse-set-value-test.txt` succeeded for `type_text` and `set_value`, with saved file contents matching the expected probe strings.
 - A controlled TextEdit selection probe against `/tmp/macuse-select-test.txt` succeeded for `select_text` with prefix/suffix disambiguation; file contents were unchanged.
@@ -331,13 +331,11 @@ Observed results:
   Computer Use denial text with `isError: true` instead of hanging.
 - `get-state --include-image --save-image /tmp/macuse-calculator.jpg` returned a
   text block plus one JPEG image block and saved the screenshot to disk.
-- `node tools/validate-macuse.mjs mutating` ran a guarded Calculator-only
-  sequence that cleared the display, activated digit `1` using
-  `perform_secondary_action`, verified display `1`, pressed key `2`, verified
-  display `2`, cleared again, and verified display `0`.
-- `node tools/validate-macuse.mjs focus` repeated the mutating probe and passed
-  the target-app focus check: Calculator was not left frontmost. Exact
-  before/after frontmost-app drift is reported as a warning, not a pass.
+- `node tools/validate-macuse.mjs mutating` ran a guarded Activity Monitor
+  sequence that filtered search for `Codex`, cleared search after name drift,
+  switched to Memory, restored CPU, and verified final search/tab state.
+- `node tools/validate-macuse.mjs focus` repeated the Activity Monitor probe and
+  failed closed if native frontmost focus changed.
 
 This proves a pi/Cursor-style integration can work today by wrapping Codex
 app-server. Mutating actions should still stay inside the guarded sequence path
@@ -449,6 +447,24 @@ The direct raw-MCP script only lists tools and calls read-only `list_apps` /
 `get_app_state`. It does **not** perform click/type/drag/scroll probes. Keep it
 as the discovery, elicitation, denial-path, and raw-MCP regression harness.
 
+## Upstream native capability map
+
+The installed `SkyComputerUseClient` exposes one public `computer-use` MCP server with 10 tools: `list_apps`, `get_app_state`, `click`, `perform_secondary_action`, `set_value`, `select_text`, `scroll`, `drag`, `press_key`, and `type_text`. Reuse these primitives; do not rebuild screenshot capture, AX capture, app sessions, pointer dispatch, keyboard dispatch, text selection, or app approval.
+
+The same binary also exposes separate subcommands:
+
+```bash
+SkyComputerUseClient event-stream mcp
+SkyComputerUseClient skysight mcp
+SkyComputerUseClient turn-ended <payload>
+```
+
+`event-stream mcp` exposes `event_stream_start`, `event_stream_status`, and `event_stream_stop` for Record & Replay. `skysight mcp` exposes `skysight_start`, `skysight_stop`, `skysight_status`, `skysight_update_exclusion`, and `skysight_list_exclusions` for recent-activity context and exclusions. These are native upstream features, but they are separate privacy-sensitive recording surfaces and are not part of the default app-server `computer-use` server.
+
+Binary-string evidence shows private upstream internals such as `virtualCursor`, `focusEnforcer`, `focusRestoreTarget`, `ComputerUseIPCFrontmostWindow`, `ComputerUseIPCScreenshot`, `ComputerUseIPCSkyshot`, `ActivateCodingKeys`, and `DeactivateCodingKeys`. Treat those as upstream-owned implementation details unless OpenAI exposes stable MCP/app-server schemas.
+
+Wrapper-owned value should stay narrow: Codex app-server lifecycle, app approval bridging, safety gates, stable target ergonomics over raw indexes, sequencing, optional evidence readbacks, waits, output shaping, screenshot artifact saving, and focus/mouse evidence. Prefer deleting wrapper behavior when upstream exposes the same stable capability.
+
 This repository also includes an app-server-backed standard MCP wrapper for
 Cursor or other MCP-capable clients:
 
@@ -477,7 +493,7 @@ through Codex app-server. It proxies MCP `elicitation/create` app-approval
 prompts when the client advertises elicitation support; otherwise approval mode
 `ask` falls back to decline. It is stateful: call `get_app_state` for an app
 before mutating that app. Pointer `click` / `drag` require `allowPointer: true`
-and restore mouse position after the call.
+and restore mouse position after the call. Non-pointer AX actions do not need cursor restoration.
 
 This repository also includes a validation wrapper for repeated checks:
 
@@ -521,11 +537,11 @@ The installable pi extension source is:
 extensions/codex-computer-use.ts
 ```
 
-It is declared through `package.json#pi.extensions` and registers two standalone read-only pi tools plus one persistent-session sequence tool:
+It is declared through `package.json#pi.extensions` and registers one `macuse` pi tool with three actions:
 
-- `codex_cu_list_apps`
-- `codex_cu_get_app_state`
-- `codex_cu_sequence`
+- `action: "list_apps"`
+- `action: "get_app_state"`
+- `action: "sequence"`
 
 The pi extension keeps a persistent Codex app-server process and thread for the
 session instead of shelling out to the CLI bridge for every tool call. Normal
@@ -537,15 +553,15 @@ the originating pi process, and reaps only matching macuse-owned orphaned
 `codex app-server` processes on startup. It intentionally does not kill the
 Codex-managed `SkyComputerUseService`, which may remain resident after macuse
 exits.
-`codex_cu_get_app_state` and `codex_cu_sequence` default to
+`macuse` actions `get_app_state` and `sequence` default to
 `approval: "inherit"`, which auto-accepts Computer Use app-approval elicitations
-to match Codex's Any App setting. For mutating `codex_cu_sequence` steps, the
+to match Codex's Any App setting. For mutating `macuse` sequence steps, the
 extension requires `allowMutating: true` and a concrete `safetyNote`. Sequence
 steps can include `expectText`, `expectAbsentText`, `expectVisibleText`, and
 `allowError` so the extension can stop on unexpected state or tool errors.
 Sequence output defaults
 to `detail: "compact"`; use `detail: "full"` when every raw tree is needed.
-`codex_cu_sequence` also accepts a sequence-level `app` default, which is
+`macuse` sequence also accepts a sequence-level `app` default, which is
 applied to steps whose `arguments` omit `app`. Element-targeted tools accept
 `element_index` as a string or number, `element` as an alias, `elementId` /
 `element_id` resolved from the latest `get_app_state` tree, exact
@@ -579,13 +595,13 @@ step `value` into `arguments.value`. Search fields normalize
 fields expose semantic `tags` and stable names even when the accessible value is
 folded into the raw line. Empty `set_value` uses a conservative clear-control
 fallback when exactly one non-risky clear/cancel button is available. Non-empty
-`set_value` is verified with a post-action state read so upstream false positives
-on text areas are reported before later assertions. Per-step `expectText` /
+`set_value` is verified with a post-action state read only when evidence is requested
+(`requireStateChange`, assertions, or image artifacts), so simple upstream successes stay fast. Per-step `expectText` /
 `expectAbsentText` assertions strip invisible bidi marks before substring
 matching, which makes accessibility text assertions such as `text 1` reliable;
 `expectVisibleText` checks parsed visible text values directly, such as `0` or
 `1`, so agents do not need to copy accessibility line formats for display
-assertions. `codex_cu_get_app_state` supports `detail: "minimal"` for app/window,
+assertions. `macuse` action `get_app_state` supports `detail: "minimal"` for app/window,
 visible text, and concise target hints, `detail: "compact"` for grouped
 interactive elements, and `detail: "full"` for raw trees. `targetScope: "main"`
 suppresses likely browser/app chrome and OS window controls in transformed
@@ -605,8 +621,8 @@ and target-app frontmost checks) so background-control runs can prove whether th
 target app stole focus. `get_app_state` and sequence `get_app_state` step details
 include machine-readable parsed element metadata with target hints, `visibleText`,
 `targets`, semantic `tags`, `changed`, `warnings`, and `nextActions` where
-available. Mutating sequence steps perform a post-action state readback and
-report `actionDispatchedButNoStateChange` when an AX action reports success but
+available. Mutating sequence steps perform a post-action state readback when
+evidence is requested and report `actionDispatchedButNoStateChange` when an AX action reports success but
 no observable title, URL, visible-text, or target change appears; per-step
 `requireStateChange: true` makes that condition fail closed and captures a
 pre-action baseline for non-element actions such as `press_key`; if the first
@@ -711,6 +727,8 @@ Connected to Codex appserver IPC socket at <private>
 An accepted `TCC RESULT` only proves the Apple Events gate passed; it did not
 make `list_apps` return in the observed iTerm-hosted probe.
 
+June 26, 2026 repair note: a RepoPrompt-hosted pi session hit the same external-host AppleEvents gate while Codex.app Computer Use still worked. Raw `list_apps` returned `NSOSStatusErrorDomain Code=-609 "connectionInvalid"`; app-server `list_apps` returned `Computer Use server error -1743`; `get_app_state` returned `NSOSStatusErrorDomain Code=-1712 "errAETimeout"`. macOS logs showed `kTCCServiceAppleEvents` evaluating the responsible host `/Applications/CustomHost.app/Contents/MacOS/RepoPrompt` (`com.example.customhost`), not Codex.app. That proves this class of failure is host Automation/TCC, not a Computer Use tool inventory or parser change.
+
 June 12, 2026 repair note: a pi session running under SSH/tmux hit a lower-level
 AppleEvents gate where service-backed calls hung while raw MCP discovery still
 worked. Logs showed `kTCCServiceAppleEvents` denials with the responsible
@@ -732,10 +750,13 @@ node tools/macuse-repair.mjs --apply --unlock-with-env MACUSE_UNLOCK_PASSWORD
 node tools/macuse-repair.mjs --apply --repair-tcc --responsible auto --restart-tccd --sudo-password-env MACUSE_SUDO_PASSWORD
 ```
 
-`--repair-tcc` backs up the current user's TCC DB before writing and inserts
-only the responsible launcher / `com.openai.sky.CUAService.cli` AppleEvents rows
-that target `com.openai.sky.CUAService`. `--unlock-with-env` uses a temporary
-local Swift HID-event helper and does not install or download third-party code.
+`--repair-tcc --responsible auto` resolves the responsible launcher from
+the current process tree. `--repair-tcc`
+backs up the current user's TCC DB before writing and inserts only the
+responsible launcher / `com.openai.sky.CUAService.cli` AppleEvents rows that
+target `com.openai.sky.CUAService`. The applying host needs Full Disk Access to
+read and back up the user TCC DB. `--unlock-with-env` uses a temporary local
+Swift HID-event helper and does not install or download third-party code.
 
 The important regression signals are:
 
@@ -753,9 +774,9 @@ The important regression signals are:
 5. App-server `get-state --app Calculator` still returns
    a normal read-only accessibility tree and, when requested, an image block.
 6. `node tools/validate-macuse.mjs mutating` still completes the guarded
-   Calculator action/key-and-restore smoke test.
-7. `node tools/validate-macuse.mjs focus` still confirms Calculator is not left
-   frontmost after the mutating probe.
+   Activity Monitor search/filter/clear and CPU/Memory restore smoke test.
+7. `node tools/validate-macuse.mjs focus` still fails if the Activity Monitor
+   mutating probe changes native frontmost focus.
 8. Any direct raw-MCP accepted `state` probe either completes or produces enough
    JSON-RPC and macOS-log evidence to decide whether raw-MCP parity improved or
    still needs the app-server thread/session wrapper.
@@ -803,8 +824,8 @@ Finder, and Brave using only macuse/Codex Computer Use. Current status:
   risk-sensitive-control note when controls such as Save/Delete/Add/Remove are
   visible.
 - `Raise`/frontmost restoration is not reliable across apps and offscreen
-  windows. Treat focus summaries as evidence, not a guarantee; report failure to
-  restore focus rather than hiding it.
+  windows. Treat focus summaries as evidence, not a guarantee; report focus
+  change/drift rather than hiding it.
 - Upstream state collection can still be slow or time out for heavy Calendar,
   Finder, and browser windows. Detail/targetScope reduce output after upstream
   returns; they cannot make a hung snapshot safe.
@@ -820,9 +841,9 @@ Reusable now for broad pi operation:
 - Codex app-server supplies the thread/session/lifecycle wrapper that direct raw
   MCP was missing in these probes.
 - The Codex skill and app-specific instruction files are available locally.
-- pi can load `extensions/codex-computer-use.ts` through the package manifest and expose standalone read-only tools plus the persistent-session `codex_cu_sequence` tool backed by a live Codex app-server thread.
-- A harmless Calculator mutating smoke test has passed through the app-server
-  sequence path.
+- pi can load `extensions/codex-computer-use.ts` through the package manifest and expose the single `macuse` tool with read-only and persistent-session sequence actions backed by a live Codex app-server thread.
+- A harmless Activity Monitor search/filter/clear and CPU/Memory restore smoke
+  test has passed through the app-server sequence path.
 
 Still needed before broad mutating GUI operation:
 
@@ -833,7 +854,7 @@ Still needed before broad mutating GUI operation:
 2. Validate additional mutating tool shapes, such as scroll and text input, only
    in controlled apps/states with before/after `get_app_state` evidence.
 3. Decide whether standalone mutating pi tools are ever worthwhile; the current
-   default is one sequence tool rather than many standalone mutating tools.
+   default is one `macuse` tool with a guarded sequence action rather than many standalone mutating tools.
 4. A host-app permission setup story for macOS Automation/TCC. Current evidence
    shows the service checks the responsible host app, such as Repo Prompt or a
    terminal, when the MCP client sends Apple Events to `Codex Computer Use.app`.

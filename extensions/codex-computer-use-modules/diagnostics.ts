@@ -19,11 +19,14 @@ export function appendImageWarning(result: FilteredToolResult, opts: { includeIm
 export function computerUseDiagnostic(result: FilteredToolResult, tool: string, args: Record<string, JsonValue>): string | null {
 	const text = toolResultText(result);
 	const app = typeof args.app === "string" ? args.app : "the target app";
+	if (result.isError && /NSOSStatusErrorDomain Code=-(?:609|1712)|Computer Use server error -1743|connectionInvalid|errAETimeout|ACCESS DENIED|kTCCServiceAppleEvents/i.test(text)) {
+		return `Diagnostic: macOS Automation/TCC blocked the external macuse host while Computer Use tried to talk to its helper for ${app}. Codex.app can still work because it has its own Automation entitlement and TCC grants; macuse runs under the current host app. Run node tools/macuse-repair.mjs --repair-tcc --responsible auto for the exact responsible launcher, then apply it from a host with Full Disk Access or relaunch a signed host that has com.apple.security.automation.apple-events.`;
+	}
 	if (/-10005|timeoutReached/i.test(text)) {
 		return `Diagnostic: upstream Computer Use timed out while collecting state for ${app}. macuse cannot safely operate that app until upstream get_app_state succeeds. detail:\"minimal\" and targetScope filtering reduce returned tokens only after upstream responds, so they cannot fix this timeout. Try /macuse-restart, a larger toolTimeoutMs, closing heavy browser windows/tabs, or use agent_browser for web/Chrome tasks when browser automation is acceptable.`;
 	}
 	if (/Computer Use is not active .*first must call get_app_state|first must call get_app_state/i.test(text)) {
-		return `Diagnostic: upstream Computer Use refused ${tool} because ${app} has no active state session. No mutation was performed by macuse. A successful codex_cu_get_app_state for the same app is required first; if that state call times out, this is an upstream Computer Use blocker rather than a target-selection problem.`;
+		return `Diagnostic: upstream Computer Use refused ${tool} because ${app} has no active state session. No mutation was performed by macuse. A successful macuse action=get_app_state call for the same app is required first; if that state call times out, this is an upstream Computer Use blocker rather than a target-selection problem.`;
 	}
 	return null;
 }

@@ -278,7 +278,7 @@ Practical limits:
   service alone.
 - A guarded app-server-mediated Activity Monitor search/tab sequence and controlled
   TextEdit scroll/type/set-value/select sequences are validated. The sequence path is
-  exposed through `codex_cu_sequence`. Broader mutating workflows should stay
+  exposed through `macuse` with `action: "sequence"`. Broader mutating workflows should stay
   guarded by the local safety policy and before/after `get_app_state` evidence.
 
 ## Related user-state paths found

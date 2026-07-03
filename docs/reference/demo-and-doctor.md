@@ -89,7 +89,7 @@ node tools/macuse-repair.mjs --apply --unlock-with-env MACUSE_UNLOCK_PASSWORD
 node tools/macuse-repair.mjs --apply --repair-tcc --responsible auto --restart-tccd --sudo-password-env MACUSE_SUDO_PASSWORD
 ```
 
-The repair tool does **not** store or print passwords. It does not install third-party binaries. The unlock path compiles a temporary local Swift helper that posts HID events, then deletes the helper. `--repair-tcc` edits only the current user's TCC DB and writes a timestamped backup first. `--restart-appserver` does not kill Codex's global `SkyComputerUseService` helper; use the separate `--restart-service` flag when that broader reset is intended. If broad unfiltered `list_apps` reports `procNotFound` but filtered/running `list_apps` and `get_app_state` pass, keep using filtered app lists and run `--restart-service` during a safe maintenance window.
+The repair tool does **not** store or print passwords. It does not install third-party binaries. The unlock path compiles a temporary local Swift helper that posts HID events, then deletes the helper. `--repair-tcc --responsible auto` detects the responsible launcher from the current process tree (for example RepoPrompt or iTerm). `--repair-tcc` edits only the current user's TCC DB and writes a timestamped backup first, so the applying host needs Full Disk Access. `--restart-appserver` does not kill Codex's global `SkyComputerUseService` helper; use the separate `--restart-service` flag when that broader reset is intended. If broad unfiltered `list_apps` reports `procNotFound` but filtered/running `list_apps` and `get_app_state` pass, keep using filtered app lists and run `--restart-service` during a safe maintenance window.
 
 ## Demo
 
@@ -115,7 +115,7 @@ The demo proves:
 3. Activity Monitor search is filtered and cleared after the search field name changes.
 4. CPU/Memory tab actions work through accessibility actions without pointer clicks.
 5. The sequence restores CPU/search state.
-6. The original frontmost app is restored.
+6. Native frontmost focus is unchanged.
 7. The standard MCP wrapper validates, including app-approval elicitation and pointer guard behavior.
 
 ## Config generator
