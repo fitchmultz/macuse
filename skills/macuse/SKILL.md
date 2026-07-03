@@ -13,6 +13,12 @@ metadata:
 
 Use macuse's Codex Computer Use tools to inspect and safely operate local macOS apps while preserving the user's focus and producing evidence that is easy to audit.
 
+## Sources of truth
+
+- Tool schemas and runtime behavior: `extensions/codex-computer-use.ts` and `extensions/codex-computer-use-modules/`.
+- Hard-stop safety policy: `docs/reference/codex-computer-use-safety-policy.md`.
+- Validation modes and current smoke scope: `node tools/validate-macuse.mjs --help`.
+
 ## Use when
 
 - The task needs local macOS app state, native app QA, low-risk UI control, or macuse dogfood.
@@ -29,7 +35,7 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
 ## Default workflow
 
 1. Start read-only: call `codex_cu_list_apps({ runningOnly: true })` or a filtered list when the target app name is uncertain.
-2. Inspect before acting: call `codex_cu_get_app_state` with `detail: "minimal"` and `targetScope: "main"`; use `detail: "compact"` only when you need more target context. Focus capture on `get_app_state` is opt-in (`trackFocus: true`); it defaults off because it costs two extra `list_apps` round-trips and frontmost rarely changes during a read. Mutating sequences always capture focus and report restoration.
+2. Inspect before acting: call `codex_cu_get_app_state` with `detail: "minimal"` and `targetScope: "main"`; use `detail: "compact"` only when you need more target context. Focus capture on `get_app_state` is opt-in (`trackFocus: true`). Mutating sequences capture native frontmost focus before/after and report whether it changed; they do not auto-restore frontmost focus.
 3. Prefer stable targets in this order:
    - `elementId`
    - exact `elementDescription`
@@ -37,7 +43,7 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
    - `arguments.targets` fallback objects
    - raw `element_index` only with `expectedRole`/`expectedName` guards.
 4. For dynamic controls, prefer `arguments.targets` fallback objects that include both stable IDs and visible descriptions when available.
-5. Prefer non-pointer actions: `perform_secondary_action`, `set_value`, `press_key`, `type_text`, `select_text`, and wait helpers. For text entry, prefer `set_value`; use `type_text` only after verified focus. `select_text` selects by text string, not offsets. Use pointer `click`/`drag` only when necessary and only with the explicit pointer allow flag.
+5. Prefer non-pointer actions: `perform_secondary_action`, `set_value`, `press_key`, `type_text`, `select_text`, and wait helpers. For text entry, prefer `set_value` only on a verified settable target; use `type_text` only after verified focus. `select_text` selects by text string, not offsets. Use pointer `click`/`drag` only when necessary and only with the explicit pointer allow flag.
 6. For mutations, use `codex_cu_sequence` with:
    - `allowMutating: true`
    - a narrow `safetyNote`
@@ -57,9 +63,9 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
 - If Computer Use times out or state looks stale, stop mutation and report the blocker. Try `/macuse-restart`, a larger `toolTimeoutMs`, or a read-only re-snapshot before considering another action.
 - Treat `actionDispatchedButNoStateChange` as a failed intended open/navigation unless the action was expected to be a no-op. Retry from a fresh state read; use pointer fallback only with `allowPointerClick` and an unambiguous target/window. For transient popovers/editors, a delayed readback is attempted automatically, but upstream may still miss very short-lived or hidden UI.
 - Scope waits when possible. `waitForText` accepts `visibleOnly: true` plus optional `title` or `url` guards to avoid matching stale/recent-list text. `title` is a strict window-title guard; if browser chrome reports a stale/non-intuitive title, omit the title guard and rely on a specific visible/url assertion instead.
-- Do not assume `Raise` restores focus; if focus restoration matters, verify the final focus summary and report failure honestly.
+- Do not use `Raise` to restore focus. If focus matters, verify the native focus summary and report any change honestly.
 - Finder sidebar/file rows and Calendar toolbar/popover controls are known to have sparse or unstable AX actions. If `Press` is invalid, switch target strategy or stop before pointer fallback unless explicitly approved.
-- For repeated `cgWindowNotFound`, `frontmost=<none>`, service timeouts, or suspected macOS TCC/Automation failures, run `node tools/macuse-doctor.mjs --out .scratch/doctor` when you are in this repo. Use `node tools/macuse-repair.mjs` for a dry-run repair preview. Apply repairs only with explicit user approval because `--apply`, `--restart-appserver`, `--restart-service`, `--unlock-with-env`, and `--repair-tcc` mutate local GUI/process/privacy state.
+- For repeated `cgWindowNotFound`, `frontmost=<none>`, service timeouts, `connectionInvalid`, `errAETimeout`, `Computer Use server error -1743`, or suspected macOS TCC/Automation failures, run `node tools/macuse-doctor.mjs --out .scratch/doctor` when you are in this repo. Use `node tools/macuse-repair.mjs --repair-tcc --responsible auto` for a dry-run responsible-launcher preview. Apply repairs only with explicit user approval because `--apply`, `--restart-appserver`, `--restart-service`, `--unlock-with-env`, and `--repair-tcc` mutate local GUI/process/privacy state; applying TCC repair requires a host with Full Disk Access.
 
 ## Evidence to report
 
@@ -72,14 +78,17 @@ Include only the facts needed for audit:
 - saved screenshot artifact path if used; for sequences use `screenshotStep: "final"` when the final visual state matters
 - failures, anomaly hints, and whether cleanup restored the app state
 
-## Local validation commands
+## Local checks
 
-When changing or dogfooding this package, prefer:
+When changing or dogfooding this package, use the smallest check that proves the touched path:
 
 ```bash
 node tools/validate-macuse.mjs quick
+node tools/validate-macuse.mjs read-only
+node tools/validate-macuse.mjs mutating
+node tools/validate-macuse.mjs focus
 node tools/validate-macuse.mjs mcp
 node tools/macuse-doctor.mjs --out .scratch/doctor
-node tools/macuse-repair.mjs
+node tools/macuse-repair.mjs --repair-tcc --responsible auto
 node tools/codex-computer-use-appserver.mjs list-apps --running-only --filter "Activity Monitor" --quiet --pretty
 ```

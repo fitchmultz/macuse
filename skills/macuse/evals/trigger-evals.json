@@ -15,6 +15,11 @@
     "reason": "Names a macuse tool and asks for safe local app control."
   },
   {
+    "query": "Call codex_cu_get_app_state on Calendar and summarize visible controls.",
+    "should_trigger": true,
+    "reason": "Names a macuse read-only tool for native app state inspection."
+  },
+  {
     "query": "Open this website and fill the signup form in the browser DOM.",
     "should_trigger": false,
     "reason": "Ordinary web-page automation should use browser tooling, not macuse native app control."
@@ -28,5 +33,10 @@
     "query": "Probe raw SkyComputerUseClient MCP and compare protocol messages.",
     "should_trigger": false,
     "reason": "Raw MCP protocol investigation is outside the macuse tool-use workflow."
+  },
+  {
+    "query": "Use Peekaboo to inspect Finder's toolbar.",
+    "should_trigger": false,
+    "reason": "Explicitly requests Peekaboo rather than macuse/Codex Computer Use."
   }
 ]
