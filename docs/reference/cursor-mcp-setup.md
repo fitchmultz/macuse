@@ -46,7 +46,8 @@ The wrapper:
 - exposes the Computer Use tool family over standard MCP,
 - defaults to `approval: "inherit"`, auto-accepting Computer Use app approvals
   to match Codex's Any App setting,
-- routes tool execution through app-server `mcpServer/tool/call`, and
+- routes tool execution through app-server `mcpServer/tool/call`,
+- sanitizes stopped-session sentinels and restarts only its app-server session before retrying read-only Computer Use calls once, and
 - restores mouse position after pointer `click` / `drag` calls.
 
 ## Tool use rules

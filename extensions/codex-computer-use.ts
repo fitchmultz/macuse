@@ -115,6 +115,7 @@ import {
 	validateWaitArguments,
 	waitConditionMet,
 } from "./codex-computer-use-modules/sequence";
+import { restartComputerUseRuntime } from "./codex-computer-use-modules/computer-use-recovery";
 import { captureFocusSnapshot, executeSequence } from "./codex-computer-use-modules/sequence-runner";
 
 const timeoutParam = Type.Optional(Type.Number({ minimum: 1_000, maximum: 300_000, description: "Tool timeout in milliseconds. Default 90000." }));
@@ -131,7 +132,7 @@ const detailParam = Type.Optional(StringEnum(["minimal", "compact", "full"] as c
 const sequenceStepParam = Type.Object(
 	{
 		tool: Type.Optional(Type.String({ description: "Computer Use tool name, e.g. get_app_state, perform_secondary_action, press_key, type_text, set_value, select_text, scroll, click, drag, or a wait helper (waitForText, waitForURL, waitForTitle, waitForElement, waitUntilElementEnabled, waitUntilElementDisabled)." })),
-		arguments: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Arguments object for the tool. Element targets accept element_index (string/number), element alias, elementId/element_id, elementDescription/element_description, role/name selectors, or arguments.targets fallback objects; raw index targets may pass expectedRole/expectedName/expectedDescription/expectedId/expectedValue stale guards. set_value accepts value; wait helpers accept timeoutMs, intervalMs, toolTimeoutMs, visibleOnly, title, url." })),
+		arguments: Type.Optional(Type.Record(Type.String(), Type.Unknown(), { description: "Arguments object for the tool. Element targets accept element_index (string/number), element alias, elementId/element_id, elementDescription/element_description, role/name selectors, or arguments.targets fallback objects; raw index targets may pass expectedRole/expectedName/expectedDescription/expectedId/expectedValue stale guards. press_key accepts xdotool-style key combos or key plus modifiers, e.g. key:\",\", modifiers:[\"COMMAND\"] -> super+comma. set_value accepts value; wait helpers accept timeoutMs, intervalMs, toolTimeoutMs, visibleOnly, title, url." })),
 		value: Type.Optional(Type.Unknown({ description: "Shorthand for set_value when arguments.value is omitted." })),
 		label: Type.Optional(Type.String({ description: "Optional human-readable label for this step." })),
 		expectText: Type.Optional(Type.Array(Type.String(), { description: "App content text/value substrings that must appear after this step (ignores macuse/upstream metadata)." })),
@@ -162,6 +163,11 @@ const getAppStatePayloadParam = Type.Object({
 	toolTimeoutMs: timeoutParam,
 });
 
+const restartComputerUsePayloadParam = Type.Object({
+	reason: Type.Optional(Type.String({ description: "Optional reason recorded in recovery details. Default: user/requested macuse restart." })),
+	toolTimeoutMs: timeoutParam,
+});
+
 const sequencePayloadParam = Type.Object({
 	app: Type.Optional(Type.String({ description: "Optional default app name/bundle/path applied to steps whose arguments omit app." })),
 	steps: Type.Array(sequenceStepParam, { minItems: 1, description: "Ordered Computer Use tool calls to run in one persistent app-server thread." }),
@@ -179,24 +185,31 @@ const sequencePayloadParam = Type.Object({
 	toolTimeoutMs: timeoutParam,
 });
 
-type MacuseAction = "list_apps" | "get_app_state" | "sequence";
+type RestartComputerUseParams = {
+	reason?: string;
+	toolTimeoutMs?: number;
+};
+
+type MacuseAction = "list_apps" | "get_app_state" | "sequence" | "restart_computer_use";
 type MacuseParams = {
 	action: MacuseAction;
 	listApps?: ListAppsParams;
 	getAppState?: GetAppStateParams;
 	sequence?: SequenceParams;
+	restartComputerUse?: RestartComputerUseParams;
 };
 
-const actionPayloadKey: Record<MacuseAction, "listApps" | "getAppState" | "sequence"> = {
+const actionPayloadKey: Record<MacuseAction, "listApps" | "getAppState" | "sequence" | "restartComputerUse"> = {
 	list_apps: "listApps",
 	get_app_state: "getAppState",
 	sequence: "sequence",
+	restart_computer_use: "restartComputerUse",
 };
 
 function actionPayload<T>(input: MacuseParams): T {
 	const key = actionPayloadKey[input.action];
-	if (!key) throw new Error("macuse action must be one of list_apps, get_app_state, or sequence.");
-	const payloadKeys = (["listApps", "getAppState", "sequence"] as const).filter((item) => (input as Record<string, unknown>)[item] !== undefined);
+	if (!key) throw new Error("macuse action must be one of list_apps, get_app_state, sequence, or restart_computer_use.");
+	const payloadKeys = (["listApps", "getAppState", "sequence", "restartComputerUse"] as const).filter((item) => (input as Record<string, unknown>)[item] !== undefined);
 	if (payloadKeys.length !== 1 || payloadKeys[0] !== key) throw new Error(`macuse action=${input.action} requires exactly one ${key} payload object and no other action payloads.`);
 	const payload = input[key];
 	if (!isRecord(payload)) throw new Error(`macuse action=${input.action} requires ${key} to be an object.`);
@@ -250,11 +263,12 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.registerCommand("macuse-restart", {
-		description: "Restart the persistent Codex Computer Use app-server session",
+		description: "Restart the persistent Codex Computer Use app-server session and Computer Use runtime helpers",
 		handler: async (_args, ctx) => {
 			sessionElementCache.clear();
+			const recovery = restartComputerUseRuntime("/macuse-restart command");
 			await getClient().restart();
-			if (ctx.hasUI) ctx.ui.notify("macuse Computer Use app-server stopped; it will restart on the next tool call.", "info");
+			if (ctx.hasUI) ctx.ui.notify(`macuse Computer Use runtime restarted (${recovery.targets.length} helper signal event${recovery.targets.length === 1 ? "" : "s"}); app-server will restart on the next tool call.`, "info");
 		},
 	});
 
@@ -266,19 +280,39 @@ export default function (pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use macuse action=list_apps to discover the exact app name, bundle ID, or path before app-state inspection when the target app is uncertain.",
 			"Use macuse action=get_app_state for read-only local macOS app inspection when file, CLI, or browser DOM tools are insufficient.",
+			"If Computer Use reports an application session stopped or transport-closed state, macuse auto-recovers read-only calls once; use action=restart_computer_use to explicitly restart Computer Use without user input before retrying.",
 			"Use macuse action=sequence only after get_app_state has identified the target app/window or when the first sequence step is get_app_state.",
 			"For mutating macuse sequences, keep the flow narrow, include a concrete safetyNote, set allowMutating=true, and stop before purchases, sends, deletes, credential changes, account/security/privacy changes, or ambiguous windows.",
 			"Prefer macuse sequence steps using perform_secondary_action with action=Press, press_key, set_value, select_text, or element-targeted scroll over pointer click when possible to preserve mouse/system focus.",
 			"For macuse element targeting, prefer stable elementId values from get_app_state when present, then exact elementDescription, then unique role/name, then guarded element_index.",
 		],
 		parameters: Type.Object({
-			action: StringEnum(["list_apps", "get_app_state", "sequence"] as const, { description: "macuse operation to run." }),
+			action: StringEnum(["list_apps", "get_app_state", "sequence", "restart_computer_use"] as const, { description: "macuse operation to run." }),
 			listApps: Type.Optional(listAppsPayloadParam),
 			getAppState: Type.Optional(getAppStatePayloadParam),
 			sequence: Type.Optional(sequencePayloadParam),
+			restartComputerUse: Type.Optional(restartComputerUsePayloadParam),
 		}),
 		async execute(_toolCallId, params, signal, onUpdate) {
 			const input = params as MacuseParams;
+			if (input.action === "restart_computer_use") {
+				const payload = actionPayload<RestartComputerUseParams>(input);
+				onUpdate?.({ content: [{ type: "text", text: "Restarting macuse Computer Use runtime helpers..." }], details: {} });
+				const toolTimeoutMs = asInt(payload.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
+				const reason = typeof payload.reason === "string" && payload.reason.trim() ? payload.reason.trim() : "macuse action=restart_computer_use";
+				sessionElementCache.clear();
+				const recovery = await getClient().recoverComputerUseSession(reason, toolTimeoutMs, signal);
+				return {
+					content: [{ type: "text" as const, text: `Computer Use runtime restarted. Helper signal events: ${recovery.targets.length}. macuse app-server thread is ready for retry.` }],
+					details: bridgeDetails({
+						tool: "macuse",
+						action: "restart_computer_use",
+						computerUseTool: null,
+						threadId: getClient().status().threadId,
+						recovery,
+					}, getClient().status().stderrTail),
+				};
+			}
 			if (input.action === "list_apps") {
 				const payload = actionPayload<ListAppsParams>(input);
 				onUpdate?.({ content: [{ type: "text", text: "Calling macuse list_apps..." }], details: {} });
@@ -306,6 +340,7 @@ export default function (pi: ExtensionAPI) {
 						acceptedElicitations: call.acceptedElicitations,
 						elicitationCount: call.elicitationCount,
 						durationMs: call.durationMs,
+						computerUseRecoveryEvents: getClient().status().computerUseRecoveryEvents,
 					}, getClient().status().stderrTail),
 				};
 			}
@@ -356,6 +391,7 @@ export default function (pi: ExtensionAPI) {
 						acceptedElicitations: call.acceptedElicitations,
 						elicitationCount: call.elicitationCount,
 						durationMs: call.durationMs,
+						computerUseRecoveryEvents: getClient().status().computerUseRecoveryEvents,
 					}, getClient().status().stderrTail),
 				};
 			}
@@ -363,7 +399,7 @@ export default function (pi: ExtensionAPI) {
 				const payload = actionPayload<SequenceParams>(input);
 				return executeSequence(payload, signal, onUpdate, getClient, sessionElementCache);
 			}
-			throw new Error("macuse action must be one of list_apps, get_app_state, or sequence.");
+			throw new Error("macuse action must be one of list_apps, get_app_state, sequence, or restart_computer_use.");
 		},
 	});
 }

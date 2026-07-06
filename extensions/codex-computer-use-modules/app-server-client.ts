@@ -10,12 +10,14 @@ import {
 	PROCESS_REGISTRY_PREFIX,
 	UPSTREAM_COMPUTER_USE_TOOLS,
 	VERSION,
+	errorMessage,
 	isRecord,
 	type ApprovalMode,
 	type ComputerUseInventory,
 	type ComputerUseToolResult,
 	type JsonValue,
 } from "./core";
+import { appServerSessionRecoverySummary, restartComputerUseRuntime, sanitizeRecoverableComputerUseText, withReadOnlyComputerUseRecovery, type ComputerUseRestartSummary } from "./computer-use-recovery";
 
 type ProcessRecord = {
 	version: string;
@@ -298,6 +300,13 @@ function parseJsonMessage(line: string): JsonRpcMessage | null {
 	}
 }
 
+function computerUseToolResultText(result: ComputerUseToolResult): string {
+	return (Array.isArray(result?.content) ? result.content : [])
+		.filter((block): block is { type: string; text: string } => isRecord(block) && block.type === "text" && typeof block.text === "string")
+		.map((block) => block.text)
+		.join("\n");
+}
+
 function summarizeComputerUseInventory(statusResult: unknown): ComputerUseInventory {
 	const servers = isRecord(statusResult) && Array.isArray(statusResult.data) ? statusResult.data : [];
 	const server = servers.find((candidate) => isRecord(candidate) && candidate.name === "computer-use");
@@ -339,6 +348,7 @@ export class AppServerClient {
 	private watchdog: ChildProcess | null = null;
 	private staleReapSummary: ReapSummary[] = [];
 	private computerUseInventory: ComputerUseInventory | null = null;
+	private computerUseRecoveryEvents: ComputerUseRestartSummary[] = [];
 
 	constructor(private readonly codexBin = process.env.CODEX_BIN || DEFAULT_CODEX_BIN, private readonly cwd = process.cwd()) {
 		this.staleReapSummary = reapStaleAppServers(this.cwd, this.codexBin);
@@ -357,6 +367,7 @@ export class AppServerClient {
 			staleReapSummary: this.staleReapSummary,
 			threadId: this.thread?.id ?? null,
 			computerUse: this.computerUseInventory,
+			computerUseRecoveryEvents: this.computerUseRecoveryEvents.slice(-10),
 			acceptedElicitations: this.acceptedElicitations,
 			elicitationCount: this.elicitationCount,
 			notifications: this.notifications.slice(-10),
@@ -438,7 +449,7 @@ export class AppServerClient {
 			if (remaining <= 1_000 && page > 0) break;
 			const params: Record<string, unknown> = { detail: "toolsAndAuthOnly", limit: 100 };
 			if (cursor) params.cursor = cursor;
-			const status = await this.request("mcpServerStatus/list", params, Math.min(remaining, 10_000), signal);
+			const status = await this.request("mcpServerStatus/list", params, Math.min(remaining, 30_000), signal);
 			inventory = mergeComputerUseInventories(inventory, summarizeComputerUseInventory(status));
 			const nextCursor = isRecord(status) && typeof status.nextCursor === "string" ? status.nextCursor : null;
 			if (inventory.present || !nextCursor) break;
@@ -572,33 +583,63 @@ export class AppServerClient {
 		});
 	}
 
+	private rememberRecovery(recovery: ComputerUseRestartSummary): void {
+		this.computerUseRecoveryEvents.push(recovery);
+		if (this.computerUseRecoveryEvents.length > 20) this.computerUseRecoveryEvents = this.computerUseRecoveryEvents.slice(-20);
+	}
+
+	async recoverAppServerSession(reason: string, timeoutMs: number, signal?: AbortSignal): Promise<ComputerUseRestartSummary> {
+		const recovery = appServerSessionRecoverySummary(sanitizeRecoverableComputerUseText(reason).text);
+		this.rememberRecovery(recovery);
+		await this.stop();
+		await this.ensureReady(timeoutMs, signal);
+		return recovery;
+	}
+
+	async recoverComputerUseSession(reason: string, timeoutMs: number, signal?: AbortSignal): Promise<ComputerUseRestartSummary> {
+		const recovery = restartComputerUseRuntime(sanitizeRecoverableComputerUseText(reason).text);
+		this.rememberRecovery(recovery);
+		await this.stop();
+		await this.ensureReady(timeoutMs, signal);
+		return recovery;
+	}
+
 	async callTool(tool: string, args: Record<string, JsonValue>, opts: { approval: ApprovalMode; timeoutMs: number; signal?: AbortSignal }): Promise<{ result: ComputerUseToolResult; durationMs: number; acceptedElicitations: number; elicitationCount: number }> {
 		return this.runExclusive(async () => {
-			await this.ensureReady(opts.timeoutMs, opts.signal);
 			const acceptedBefore = this.acceptedElicitations;
 			const elicitationBefore = this.elicitationCount;
-			this.currentApproval = opts.approval;
-			this.acceptedThisCall = 0;
 			const started = Date.now();
-			try {
-				const threadId = this.thread?.id;
-				if (!threadId) throw new ComputerUseError("Codex app-server thread is not ready.");
-				const result = await this.request("mcpServer/tool/call", {
-					threadId,
-					server: "computer-use",
-					tool,
-					arguments: args,
-				}, opts.timeoutMs, opts.signal) as ComputerUseToolResult;
-				return {
-					result,
-					durationMs: Date.now() - started,
-					acceptedElicitations: this.acceptedElicitations - acceptedBefore,
-					elicitationCount: this.elicitationCount - elicitationBefore,
-				};
-			} finally {
-				this.currentApproval = "inherit";
-				this.acceptedThisCall = 0;
-			}
+			const result = await withReadOnlyComputerUseRecovery({
+				tool,
+				resultText: computerUseToolResultText,
+				errorMessage,
+				errorFactory: (message) => new ComputerUseError(message),
+				recover: (reason) => this.recoverAppServerSession(reason, opts.timeoutMs, opts.signal),
+				run: async () => {
+					await this.ensureReady(opts.timeoutMs, opts.signal);
+					this.currentApproval = opts.approval;
+					this.acceptedThisCall = 0;
+					try {
+						const threadId = this.thread?.id;
+						if (!threadId) throw new ComputerUseError("Codex app-server thread is not ready.");
+						return await this.request("mcpServer/tool/call", {
+							threadId,
+							server: "computer-use",
+							tool,
+							arguments: args,
+						}, opts.timeoutMs, opts.signal) as ComputerUseToolResult;
+					} finally {
+						this.currentApproval = "inherit";
+						this.acceptedThisCall = 0;
+					}
+				},
+			});
+			return {
+				result,
+				durationMs: Date.now() - started,
+				acceptedElicitations: this.acceptedElicitations - acceptedBefore,
+				elicitationCount: this.elicitationCount - elicitationBefore,
+			};
 		});
 	}
 

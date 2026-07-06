@@ -517,6 +517,7 @@ export async function executeSequence(
 				elements: step.elements,
 			})),
 			mousePreservation: mousePreservation ?? null,
+			computerUseRecoveryEvents: getClient().status().computerUseRecoveryEvents,
 		}, getClient().status().stderrTail);
 		// Resumable partial failure (>=1 step completed before a hard failure): keep
 		// the rich content/details so the agent can resume from failedStepIndex.

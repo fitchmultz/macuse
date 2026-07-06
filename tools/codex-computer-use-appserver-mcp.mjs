@@ -4,13 +4,16 @@ import { accessSync, constants } from 'node:fs';
 import process from 'node:process';
 import { DEFAULT_CODEX_BIN, VERSION } from './macuse-utils.mjs';
 import {
+  appServerSessionRecoverySummary,
   getMousePosition,
   normalizeToolArguments,
   resolveElementTarget,
   restoreMousePosition,
+  sanitizeComputerUseText,
   targetsElement,
   toolResultText,
   updateElementCache,
+  withReadOnlyComputerUseRecovery,
 } from './cu-helpers.mjs';
 
 const DEFAULT_CWD = process.cwd();
@@ -55,8 +58,8 @@ const TOOL_SCHEMAS = {
   },
   press_key: {
     name: 'press_key',
-    description: 'Press a key or key combination in the target app. Requires prior get_app_state for the same app.',
-    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, key: { type: 'string' } }, required: ['app', 'key'] },
+    description: 'Press a key or key combination in the target app. Requires prior get_app_state for the same app. Uses xdotool-style combos such as super+comma; key:",", modifiers:["COMMAND"] normalizes to that form.',
+    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, key: { type: 'string' }, modifiers: { type: 'array', items: { type: 'string' } } }, required: ['app', 'key'] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   type_text: {
@@ -117,6 +120,21 @@ function rpcError(id, code, message, data) {
   send({ jsonrpc: '2.0', id, error: { code, message, data } });
 }
 
+function computerUseResultText(result) {
+  return (result?.content || []).filter((block) => block?.type === 'text' && typeof block.text === 'string').map((block) => block.text).join('\n');
+}
+
+function sanitizeComputerUseResult(result) {
+  let forcedError = false;
+  const content = (result?.content || []).map((block) => {
+    if (block?.type !== 'text' || typeof block.text !== 'string') return block;
+    const sanitized = sanitizeComputerUseText(block.text);
+    forcedError = forcedError || sanitized.forcedError;
+    return { ...block, text: sanitized.text };
+  });
+  return { ...result, content, ...(forcedError ? { isError: true } : {}) };
+}
+
 class AppServerClient {
   constructor({ codexBin, cwd, elicitationHandler }) {
     this.codexBin = codexBin;
@@ -136,15 +154,16 @@ class AppServerClient {
     accessSync(this.codexBin, constants.X_OK);
     const args = ['app-server'];
     for (const flag of FEATURE_FLAGS) args.push('--enable', flag);
-    this.proc = spawn(this.codexBin, args, { cwd: this.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
-    this.proc.stdout.setEncoding('utf8');
-    this.proc.stderr.setEncoding('utf8');
-    this.proc.stdout.on('data', (chunk) => this.onStdout(chunk));
-    this.proc.stderr.on('data', (chunk) => log('appserver.stderr', chunk.toString().trim()));
-    this.proc.on('exit', (code, signal) => {
+    const proc = spawn(this.codexBin, args, { cwd: this.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
+    this.proc = proc;
+    proc.stdout.setEncoding('utf8');
+    proc.stderr.setEncoding('utf8');
+    proc.stdout.on('data', (chunk) => this.onStdout(chunk));
+    proc.stderr.on('data', (chunk) => log('appserver.stderr', chunk.toString().trim()));
+    proc.on('exit', (code, signal) => {
       for (const pending of this.pending.values()) pending.reject(new Error(`app-server exited code=${code} signal=${signal}`));
       this.pending.clear();
-      this.threadId = null;
+      if (this.proc === proc) this.threadId = null;
     });
     await this.request('initialize', { clientInfo: { name: 'macuse-appserver-mcp', version: VERSION }, capabilities: { experimentalApi: true, requestAttestation: false } }, 15_000);
     this.notify('notifications/initialized', {});
@@ -213,17 +232,44 @@ class AppServerClient {
     });
   }
 
-  async callTool(tool, args = {}) {
-    const threadId = await this.ensureThread();
-    this.currentApproval = args.approval || 'inherit';
-    this.acceptedElicitations = 0;
-    const result = await this.request('mcpServer/tool/call', { threadId, server: 'computer-use', tool, arguments: stripWrapperArgs(args) }, REQUEST_TIMEOUT_MS);
-    this.currentApproval = 'deny';
-    return result;
+  async recoverComputerUse(reason) {
+    const recovery = appServerSessionRecoverySummary(reason);
+    await this.stop();
+    await this.ensureThread();
+    return recovery;
   }
 
-  stop() {
-    if (this.proc && this.proc.exitCode === null && this.proc.signalCode === null) this.proc.kill('SIGTERM');
+  async callTool(tool, args = {}) {
+    return withReadOnlyComputerUseRecovery({
+      tool,
+      resultText: computerUseResultText,
+      recover: (reason) => this.recoverComputerUse(reason),
+      run: async () => {
+        const threadId = await this.ensureThread();
+        this.currentApproval = args.approval || 'inherit';
+        this.acceptedElicitations = 0;
+        try {
+          return sanitizeComputerUseResult(await this.request('mcpServer/tool/call', { threadId, server: 'computer-use', tool, arguments: stripWrapperArgs(args) }, REQUEST_TIMEOUT_MS));
+        } finally {
+          this.currentApproval = 'deny';
+        }
+      },
+    });
+  }
+
+  async stop() {
+    const proc = this.proc;
+    this.proc = null;
+    this.threadId = null;
+    if (!proc || proc.exitCode !== null || proc.signalCode !== null) return;
+    proc.kill('SIGTERM');
+    await new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');
+        resolve();
+      }, 3000);
+      proc.once('exit', () => { clearTimeout(timer); resolve(); });
+    });
   }
 }
 
@@ -318,7 +364,7 @@ async function handleRequest(message) {
     if (method?.startsWith('notifications/')) return;
     rpcError(id, -32601, `method not found: ${method}`);
   } catch (error) {
-    rpcError(id, -32000, error.message || String(error));
+    rpcError(id, -32000, sanitizeComputerUseText(error.message || String(error)).text);
   }
 }
 

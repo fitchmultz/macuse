@@ -13,6 +13,7 @@ import {
 	type SavedImageArtifact,
 	type TextContentBlock,
 } from "./core";
+import { sanitizeRecoverableComputerUseText } from "./computer-use-recovery";
 
 export function isTextBlock(block: unknown): block is TextContentBlock {
 	return isRecord(block) && block.type === "text" && typeof block.text === "string";
@@ -66,6 +67,7 @@ export function filterToolResult(result: ComputerUseToolResult, opts: { includeI
 	let omittedImages = 0;
 	let savedImagePath: string | null = null;
 	let savedImageArtifact: SavedImageArtifact | null = null;
+	let forcedError = false;
 	const rawContent = result?.content;
 	const blocks = Array.isArray(rawContent)
 		? rawContent
@@ -74,7 +76,9 @@ export function filterToolResult(result: ComputerUseToolResult, opts: { includeI
 			: [{ type: "text", text: `Malformed Computer Use content field: ${truncateString(JSON.stringify(rawContent) ?? String(rawContent), opts.maxTextChars)}` }];
 	for (const block of blocks) {
 		if (isTextBlock(block)) {
-			content.push({ ...block, text: truncateString(block.text, opts.maxTextChars) });
+			const sanitized = sanitizeRecoverableComputerUseText(block.text);
+			forcedError = forcedError || sanitized.forcedError;
+			content.push({ ...block, text: truncateString(sanitized.text, opts.maxTextChars) });
 		} else if (isImageBlock(block)) {
 			if (opts.saveImagePath && !savedImagePath) {
 				const outPath = path.resolve(opts.saveImagePath);
@@ -99,7 +103,7 @@ export function filterToolResult(result: ComputerUseToolResult, opts: { includeI
 	}
 	return {
 		content: normalizeContent(content),
-		isError: Boolean(result?.isError ?? result?.is_error ?? false),
+		isError: forcedError || Boolean(result?.isError ?? result?.is_error ?? false),
 		meta: (result?._meta ?? result?.meta ?? null) as JsonValue,
 		omittedImages,
 		savedImagePath,

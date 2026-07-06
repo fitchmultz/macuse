@@ -2,6 +2,16 @@ import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
+import { sanitizeRecoverableComputerUseText } from '../extensions/codex-computer-use-modules/computer-use-recovery-runtime.mjs';
+
+export {
+  appServerSessionRecoverySummary,
+  isRecoverableComputerUseSessionText,
+  restartComputerUseRuntime,
+  sanitizeRecoverableComputerUseText,
+  shouldAutoRecoverComputerUse,
+  withReadOnlyComputerUseRecovery,
+} from '../extensions/codex-computer-use-modules/computer-use-recovery-runtime.mjs';
 
 export function truncateString(value, max) {
   if (typeof value !== 'string') return value;
@@ -25,6 +35,44 @@ export function restoreMousePosition(position) {
   return result.status === 0;
 }
 
+const PRESS_KEY_ALIASES = new Map([
+  ['cmd', 'super'],
+  ['command', 'super'],
+  ['meta', 'super'],
+  ['control', 'ctrl'],
+  ['option', 'alt'],
+  ['esc', 'Escape'],
+  ['escape', 'Escape'],
+  ['return', 'Return'],
+  ['enter', 'Return'],
+  ['tab', 'Tab'],
+  ['space', 'space'],
+  ['comma', 'comma'],
+  [',', 'comma'],
+  ['period', 'period'],
+  ['.', 'period'],
+]);
+const PRESS_KEY_MODIFIERS = new Set(['super', 'ctrl', 'alt', 'shift']);
+
+function normalizePressKeyPart(value) {
+  const part = String(value).trim();
+  return PRESS_KEY_ALIASES.get(part.toLowerCase()) ?? part;
+}
+
+export function normalizePressKeyValue(value, modifiers = undefined) {
+  const rawModifiers = modifiers === undefined ? [] : typeof modifiers === 'string' ? [modifiers] : modifiers;
+  if (!Array.isArray(rawModifiers) || !rawModifiers.every((item) => typeof item === 'string')) throw new Error('press_key modifiers must be a string or array of strings.');
+  const parts = [...rawModifiers.map(normalizePressKeyPart), ...String(value).split('+').map(normalizePressKeyPart)].filter(Boolean);
+  const seenModifiers = new Set();
+  return parts.filter((part) => {
+    const normalized = part.toLowerCase();
+    if (!PRESS_KEY_MODIFIERS.has(normalized)) return true;
+    if (seenModifiers.has(normalized)) return false;
+    seenModifiers.add(normalized);
+    return true;
+  }).join('+');
+}
+
 export function normalizeToolArguments(args) {
   const normalized = { ...args };
   if (normalized.element_index === undefined && normalized.element !== undefined) {
@@ -32,6 +80,10 @@ export function normalizeToolArguments(args) {
     delete normalized.element;
   }
   if (normalized.element_index !== undefined && normalized.element_index !== null) normalized.element_index = String(normalized.element_index);
+  if (typeof normalized.key === 'string') {
+    normalized.key = normalizePressKeyValue(normalized.key, normalized.modifiers);
+    delete normalized.modifiers;
+  }
   return normalized;
 }
 
@@ -171,14 +223,21 @@ function imageDimensions(path) {
   };
 }
 
+export function sanitizeComputerUseText(text) {
+  return sanitizeRecoverableComputerUseText(text);
+}
+
 export function filterToolResult(result, opts) {
   const content = [];
   let omittedImages = 0;
   let savedImagePath = null;
   let savedImageArtifact = null;
+  let forcedError = false;
   for (const block of result?.content || []) {
     if (block?.type === 'text') {
-      content.push({ ...block, text: truncateString(block.text || '', opts.maxTextChars) });
+      const sanitized = sanitizeRecoverableComputerUseText(block.text || '');
+      forcedError = forcedError || sanitized.forcedError;
+      content.push({ ...block, text: truncateString(sanitized.text, opts.maxTextChars) });
     } else if (block?.type === 'image') {
       if (opts.saveImage && !savedImagePath && block.data) {
         const outPath = resolve(opts.saveImage);
@@ -204,7 +263,7 @@ export function filterToolResult(result, opts) {
   }
   return {
     content,
-    isError: result?.isError ?? result?.is_error ?? false,
+    isError: forcedError || (result?.isError ?? result?.is_error ?? false),
     meta: opts.quiet ? null : result?._meta ?? result?.meta ?? null,
     omittedImages,
     savedImagePath,

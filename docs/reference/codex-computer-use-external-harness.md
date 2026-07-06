@@ -537,22 +537,24 @@ The installable pi extension source is:
 extensions/codex-computer-use.ts
 ```
 
-It is declared through `package.json#pi.extensions` and registers one `macuse` pi tool with three actions:
+It is declared through `package.json#pi.extensions` and registers one `macuse` pi tool with four actions:
 
 - `action: "list_apps"`
 - `action: "get_app_state"`
 - `action: "sequence"`
+- `action: "restart_computer_use"`
 
 The pi extension keeps a persistent Codex app-server process and thread for the
 session instead of shelling out to the CLI bridge for every tool call. Normal
-`session_shutdown` stops that process, `/macuse-stop` stops it manually while
-leaving lazy restart available, and `/macuse-restart` performs the same stop
-before the next tool call restarts app-server. On macOS the extension writes a
-PID record under `/tmp/macuse-appserver`, starts a small watchdog that monitors
-the originating pi process, and reaps only matching macuse-owned orphaned
-`codex app-server` processes on startup. It intentionally does not kill the
-Codex-managed `SkyComputerUseService`, which may remain resident after macuse
-exits.
+`session_shutdown` stops that process, `/macuse-stop` stops only app-server while
+leaving lazy restart available. Read-only `list_apps` / `get_app_state` calls
+recover stopped-session or transport-closed failures once by restarting only the
+macuse-owned app-server session. `/macuse-restart` / `restart_computer_use`
+explicitly restart Computer Use helper processes plus app-server when that
+broader reset is intended. On macOS the extension writes a PID record under
+`/tmp/macuse-appserver`, starts a small watchdog that monitors the originating pi
+process, and reaps only matching macuse-owned orphaned `codex app-server`
+processes on startup.
 `macuse` actions `get_app_state` and `sequence` default to
 `approval: "inherit"`, which auto-accepts Computer Use app-approval elicitations
 to match Codex's Any App setting. For mutating `macuse` sequence steps, the
@@ -586,8 +588,9 @@ Pointer-based `click` steps additionally require
 Prefer `perform_secondary_action` with `action: "Press"`, `press_key`,
 `set_value`, or element-targeted `scroll` when possible to preserve the user's
 mouse/system focus. `press_key` uses xdotool-style key names, such as `5`,
-`Return`, `Escape`, `plus`, `minus`, `equal`, and `ctrl+c`; prefer `type_text`
-for literal text entry. `select_text` selects by matching a text string; upstream
+`Return`, `Escape`, `plus`, `minus`, `equal`, `ctrl+c`, and `super+comma`
+for Command-,; `key:",", modifiers:["COMMAND"]` normalizes to `super+comma`.
+Prefer `type_text` for literal text entry. `select_text` selects by matching a text string; upstream
 Computer Use does not currently support start/end offset selection. `set_value`
 accepts `value` inside `arguments`, and pi sequences also normalize top-level
 step `value` into `arguments.value`. Search fields normalize
@@ -631,10 +634,15 @@ to better catch transient popovers/editors.
 `includeImage` is model/host dependent; use `saveImagePath` when screenshot
 artifacts must be reliable. In sequences, `saveImagePath` defaults to the first
 step for compatibility; use `screenshotStep: "final"` to save the final visual
-state. When upstream Computer Use returns timeout errors
-such as `-10005 timeoutReached`, macuse now annotates the result with a clear
-blocker: filtering modes only reduce output after upstream responds and cannot
-make a hung browser accessibility snapshot safe. For Chrome/web tasks, use
+state. When upstream Computer Use returns its “application session stopped” sentinel
+or a transport-closed error, macuse restarts only its app-server session and
+retries read-only calls once automatically; the sentinel is sanitized into a
+normal tool error instead of passing through an agent-stop instruction. Use
+`restart_computer_use` or `/macuse-restart` for an explicit Computer Use helper
+restart. When upstream Computer Use returns timeout errors such as `-10005
+timeoutReached`, macuse annotates the result with a clear blocker: filtering
+modes only reduce output after upstream responds and cannot make a hung browser
+accessibility snapshot safe. For Chrome/web tasks, use
 `agent_browser` when browser automation is acceptable, or retry Computer Use
 after `/macuse-restart`, increasing `toolTimeoutMs`, or reducing heavy browser
 windows/tabs.

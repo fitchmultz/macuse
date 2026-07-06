@@ -150,14 +150,16 @@ const mod = jiti('./extensions/codex-computer-use.ts');
 const factory = mod.default || mod;
 const tools = [];
 factory({
-  registerTool(def) { tools.push(def.name); },
+  registerTool(def) { tools.push(def); },
   registerCommand() {},
   on() {},
 });
-if (tools.length !== 1 || tools[0] !== 'macuse') {
-  throw new Error('expected only macuse extension tool; saw ' + tools.join(','));
+if (tools.length !== 1 || tools[0].name !== 'macuse') {
+  throw new Error('expected only macuse extension tool; saw ' + tools.map((tool) => tool.name).join(','));
 }
-console.log(tools.join(','));
+const actions = tools[0].parameters?.properties?.action?.enum || [];
+if (!actions.includes('restart_computer_use')) throw new Error('macuse tool schema is missing restart_computer_use action');
+console.log(tools.map((tool) => tool.name).join(','));
 `;
   const nodePath = [
     '/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules',
@@ -177,8 +179,27 @@ function runListAppsErrorPreservationSmoke(verbose) {
 const { createJiti } = require('jiti');
 const jiti = createJiti(process.cwd() + '/validate-list-apps-error.js', { interopDefault: true });
 const { filterAppListContent, listAppsDisplayContent } = jiti('./extensions/codex-computer-use-modules/apps.ts');
+const { filterToolResult } = jiti('./extensions/codex-computer-use-modules/content.ts');
+const { sanitizeRecoverableComputerUseText } = jiti('./extensions/codex-computer-use-modules/computer-use-recovery.ts');
+const { appServerSessionRecoverySummary, filterToolResult: filterCliToolResult, sanitizeRecoverableComputerUseText: sanitizeCliRecoverableComputerUseText, shouldAutoRecoverComputerUse } = jiti('./tools/cu-helpers.mjs');
 const { computerUseDiagnostic } = jiti('./extensions/codex-computer-use-modules/diagnostics.ts');
+const { normalizePressKeyValue, normalizeToolArguments } = jiti('./extensions/codex-computer-use-modules/elements-state.ts');
 const errorContent = [{ type: 'text', text: 'NSOSStatusErrorDomain Code=-609 connectionInvalid' }];
+if (normalizePressKeyValue(',', ['COMMAND']) !== 'super+comma') throw new Error('Command-comma key normalization failed');
+if (normalizePressKeyValue('Command+,') !== 'super+comma') throw new Error('Command+, key normalization failed');
+const normalizedArgs = normalizeToolArguments({ app: 'CueboxItem24', key: 'Comma', modifiers: ['COMMAND'] });
+if (normalizedArgs.key !== 'super+comma' || 'modifiers' in normalizedArgs) throw new Error('press_key modifiers were not normalized away');
+const stopSentinelResult = { content: [{ type: 'text', text: 'This application session has been explicitly stopped by the user for this turn. Stop your work and send a final message noting they stopped the session and you\'re ready to continue if they want you to. Computer Use can be used again in the next assistant turn.' }] };
+const stopped = filterToolResult(stopSentinelResult, { maxTextChars: 1000 });
+const stoppedText = stopped.content[0]?.text || '';
+if (!stopped.isError || stoppedText.includes('Stop your work') || !stoppedText.includes('normal tool error')) throw new Error('app-session stop sentinel was not sanitized into a normal tool error');
+const sanitizedError = sanitizeRecoverableComputerUseText('mcpServer/tool/call failed: This application session has been explicitly stopped by the user for this turn. Stop your work now.');
+if (!sanitizedError.forcedError || sanitizedError.text.includes('Stop your work')) throw new Error('recoverable extension error text sanitizer leaked stop instructions');
+const cliStopped = filterCliToolResult(stopSentinelResult, { maxTextChars: 1000 });
+const cliStoppedText = cliStopped.content[0]?.text || '';
+if (!cliStopped.isError || cliStoppedText.includes('Stop your work') || !cliStoppedText.includes('normal tool error')) throw new Error('CLI helper app-session stop sentinel was not sanitized into a normal tool error');
+const sanitizedCliError = sanitizeCliRecoverableComputerUseText('mcpServer/tool/call failed: This application session has been explicitly stopped by the user for this turn. Stop your work now.');
+if (!sanitizedCliError.forcedError || sanitizedCliError.text.includes('Stop your work')) throw new Error('recoverable CLI error text sanitizer leaked stop instructions');
 const displayed = listAppsDisplayContent({ content: errorContent, isError: true }, { filter: 'nope', maxTextChars: 1000 });
 if (displayed[0].text.includes('No apps matched')) throw new Error('list_apps error was masked as empty filter result');
 const filtered = filterAppListContent(errorContent, { filter: 'nope', maxTextChars: 1000 });
@@ -187,6 +208,16 @@ const accessDeniedState = { content: [{ type: 'text', text: 'Visible page text: 
 if (computerUseDiagnostic(accessDeniedState, 'get_app_state', { app: 'Browser' })) throw new Error('non-error app text produced a TCC diagnostic');
 const tccError = { content: errorContent, isError: true };
 if (!computerUseDiagnostic(tccError, 'list_apps', {})) throw new Error('TCC list_apps error did not produce a diagnostic');
+const keyErrorDiagnostic = computerUseDiagnostic({ content: [{ type: 'text', text: 'Computer Use server error -10005: keyNotFound(",")' }], isError: true }, 'press_key', { app: 'CueboxItem24' });
+if (!keyErrorDiagnostic?.includes('press_key') || keyErrorDiagnostic.includes('timed out')) throw new Error('keyNotFound diagnostic was not key-specific');
+const noWindowDiagnostic = computerUseDiagnostic({ content: [{ type: 'text', text: 'Computer Use server error -10005: noWindowsAvailable' }], isError: true }, 'click', { app: 'CueboxItem24' });
+if (!noWindowDiagnostic?.includes('pointer click') || noWindowDiagnostic.includes('timed out')) throw new Error('noWindowsAvailable diagnostic was not pointer-specific');
+const timeoutDiagnostic = computerUseDiagnostic({ content: [{ type: 'text', text: 'Computer Use server error -10005: timeoutReached' }], isError: true }, 'get_app_state', { app: 'Chrome' });
+if (!timeoutDiagnostic?.includes('timed out')) throw new Error('timeoutReached diagnostic stopped reporting timeouts');
+if (!shouldAutoRecoverComputerUse('get_app_state', 'Transport closed')) throw new Error('read-only recovery classifier missed transport failures');
+if (shouldAutoRecoverComputerUse('click', 'Transport closed')) throw new Error('mutating recovery classifier allowed auto-recovery');
+const cliRecovery = appServerSessionRecoverySummary('test');
+if (cliRecovery.scope !== 'app-server-session' || cliRecovery.targets.length !== 0) throw new Error('automatic CLI recovery is not scoped to app-server session only');
 console.log('list-apps-error-preserved');
 `;
   const nodePath = [
@@ -237,8 +268,9 @@ factory({
   const firstThread = first.details.computerUse.threadId;
   const secondThread = second.details.computerUse.threadId;
   if (!firstThread || firstThread !== secondThread) throw new Error('pi extension did not reuse persistent app-server thread');
-  if (second.details.computerUse.isError) throw new Error('pi extension default inherit returned isError for Finder');
-  if (second.details.computerUse.elicitationCount < 1 || second.details.computerUse.acceptedElicitations < 1) throw new Error('pi extension did not auto-accept Finder app approval via inherit');
+  const stoppedSession = second.details.computerUse.isError && second.content[0]?.text?.includes('Computer Use application session is stopped');
+  if (second.details.computerUse.isError && !stoppedSession) throw new Error('pi extension default inherit returned isError for Finder');
+  if (!stoppedSession && (second.details.computerUse.elicitationCount < 1 || second.details.computerUse.acceptedElicitations < 1)) throw new Error('pi extension did not auto-accept Finder app approval via inherit');
   await commands.get('macuse-status').handler('', commandCtx);
   const runningStatus = notifications.at(-1)?.message || '';
   if (!runningStatus.includes('running') || !/pid=\d+/.test(runningStatus) || !/watchdog=\d+/.test(runningStatus)) throw new Error('pi extension /macuse-status did not report pid/watchdog while running: ' + runningStatus);

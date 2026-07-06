@@ -442,18 +442,48 @@ export function targetStateChanged(before: StateSummary | null, after: StateSumm
 	return beforeTarget.value !== afterTarget.value || beforeTarget.disabled !== afterTarget.disabled || beforeTarget.name !== afterTarget.name;
 }
 
-export function normalizePressKeyValue(value: string): string {
-	const aliases = new Map<string, string>([
-		["esc", "Escape"],
-		["escape", "Escape"],
-		["return", "Return"],
-		["enter", "Return"],
-		["tab", "Tab"],
-		["space", "space"],
-		["period", "period"],
-		[".", "period"],
-	]);
-	return value.split("+").map((part) => aliases.get(part.trim().toLowerCase()) ?? part.trim()).join("+");
+const PRESS_KEY_ALIASES = new Map<string, string>([
+	["cmd", "super"],
+	["command", "super"],
+	["meta", "super"],
+	["control", "ctrl"],
+	["option", "alt"],
+	["esc", "Escape"],
+	["escape", "Escape"],
+	["return", "Return"],
+	["enter", "Return"],
+	["tab", "Tab"],
+	["space", "space"],
+	["comma", "comma"],
+	[",", "comma"],
+	["period", "period"],
+	[".", "period"],
+]);
+
+const PRESS_KEY_MODIFIERS = new Set(["super", "ctrl", "alt", "shift"]);
+
+function normalizePressKeyPart(value: string): string {
+	const part = value.trim();
+	return PRESS_KEY_ALIASES.get(part.toLowerCase()) ?? part;
+}
+
+function normalizePressKeyModifiers(value: JsonValue | undefined): string[] {
+	if (value === undefined) return [];
+	const raw = typeof value === "string" ? [value] : value;
+	if (!Array.isArray(raw) || !raw.every((item) => typeof item === "string")) throw new Error("press_key modifiers must be a string or array of strings.");
+	return raw.map(normalizePressKeyPart);
+}
+
+export function normalizePressKeyValue(value: string, modifiers?: JsonValue): string {
+	const parts = [...normalizePressKeyModifiers(modifiers), ...value.split("+").map(normalizePressKeyPart)].filter(Boolean);
+	const seenModifiers = new Set<string>();
+	return parts.filter((part) => {
+		const normalized = part.toLowerCase();
+		if (!PRESS_KEY_MODIFIERS.has(normalized)) return true;
+		if (seenModifiers.has(normalized)) return false;
+		seenModifiers.add(normalized);
+		return true;
+	}).join("+");
 }
 
 export function normalizeToolArguments(args: Record<string, JsonValue>): Record<string, JsonValue> {
@@ -463,7 +493,10 @@ export function normalizeToolArguments(args: Record<string, JsonValue>): Record<
 		delete normalized.element;
 	}
 	if (normalized.element_index !== undefined && normalized.element_index !== null) normalized.element_index = String(normalized.element_index);
-	if (typeof normalized.key === "string") normalized.key = normalizePressKeyValue(normalized.key);
+	if (typeof normalized.key === "string") {
+		normalized.key = normalizePressKeyValue(normalized.key, normalized.modifiers);
+		delete normalized.modifiers;
+	}
 	return normalized;
 }
 
