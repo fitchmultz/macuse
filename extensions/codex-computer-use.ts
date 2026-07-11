@@ -293,7 +293,8 @@ export default function (pi: ExtensionAPI) {
 			sequence: Type.Optional(sequencePayloadParam),
 			restartComputerUse: Type.Optional(restartComputerUsePayloadParam),
 		}),
-		async execute(_toolCallId, params, signal, onUpdate) {
+		executionMode: "sequential",
+		async execute(_toolCallId, params, signal, onUpdate, _ctx) {
 			const input = params as MacuseParams;
 			if (input.action === "restart_computer_use") {
 				const payload = actionPayload<RestartComputerUseParams>(input);

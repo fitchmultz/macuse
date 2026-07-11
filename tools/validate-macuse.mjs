@@ -159,6 +159,7 @@ if (tools.length !== 1 || tools[0].name !== 'macuse') {
 }
 const actions = tools[0].parameters?.properties?.action?.enum || [];
 if (!actions.includes('restart_computer_use')) throw new Error('macuse tool schema is missing restart_computer_use action');
+if (tools[0].executionMode !== 'sequential') throw new Error('macuse tool must serialize calls that share one app-server thread and element cache');
 console.log(tools.map((tool) => tool.name).join(','));
 `;
   const nodePath = [
