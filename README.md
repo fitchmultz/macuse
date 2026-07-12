@@ -68,7 +68,7 @@ npm run validate:mcp
 
 ## Working path
 
-Use Codex app-server as the compatibility bridge for Computer Use calls. `status` now prints a compact Computer Use-only projection; pass `--full` when you need every app-server MCP server:
+Use the Codex app-server bundled inside `/Applications/ChatGPT.app` as the compatibility bridge for Computer Use calls. macuse injects that app's bundled Computer Use MCP transport into its private thread so stale or disabled global `computer-use` config cannot shadow it. `status` prints a compact Computer Use-only projection; pass `--full` when you need every app-server MCP server:
 
 ```bash
 node tools/codex-computer-use-appserver.mjs status --quiet --pretty

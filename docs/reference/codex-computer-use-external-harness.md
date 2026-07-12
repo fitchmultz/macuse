@@ -4,9 +4,9 @@ Source: Local Codex Computer Use app/plugin files and direct MCP probes against 
 Author: [OpenAI](https://openai.com/) for the installed app/plugin; local investigation notes captured in this repository
 Posted: Not applicable; local installed app and plugin cache
 Scraped: May 22, 2026
-Refreshed: May 22, 2026 09:35 MDT; spot-checked again June 8, 2026 after Codex updates; active validation now uses Activity Monitor instead of Calculator
+Refreshed: May 22, 2026 09:35 MDT; spot-checked again June 8, 2026 after Codex updates; updated July 12, 2026 after Codex merged into ChatGPT. Active validation uses Activity Monitor instead of Calculator.
 Observed metadata at May 22 refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin `1.0.799`; MCP server name `Computer Use`; MCP server version `d10a51766bb4d162ef1eed308e86a0f8f3816fb860896cb92c18e6de998142af`
-Current June 8 spot-check: Codex host app `26.602.40724` build `3593`; Codex CLI `0.137.0-alpha.4`; Computer Use plugin cache `1.0.809`; Computer Use app state reports CUA App Version `809`; the app-server-mediated pi path still works.
+Current July 12 spot-check: ChatGPT host app `26.707.51957` build `5175` (bundle ID `com.openai.codex`); Codex CLI `0.144.0-alpha.4`; bundled Computer Use plugin `1.0.1000387`; the app-server-mediated pi path works with an explicit thread-scoped Computer Use MCP transport. Historical `/Applications/Codex.app` references below describe the pre-merge install.
 
 ## Bottom line
 
@@ -28,10 +28,12 @@ What is proven:
   both a Repo Prompt-hosted Apple Events/TCC rejection and later iTerm-hosted
   Apple Events acceptance that still did not make direct raw-MCP `list_apps`
   return.
-- Starting `/Applications/Codex.app/Contents/Resources/codex app-server` with
+- Starting `/Applications/ChatGPT.app/Contents/Resources/codex app-server` with
   `--enable computer_use --enable plugins --enable tool_call_mcp_elicitation`,
-  then creating an ephemeral `thread/start`, makes the app-server-mediated
-  `mcpServer/tool/call` path work.
+  then creating an ephemeral `thread/start` whose config explicitly points
+  `mcp_servers.computer-use` at ChatGPT's bundled Computer Use client, makes the
+  app-server-mediated `mcpServer/tool/call` path work even when global config
+  contains a stale or disabled server with the same name.
 - Through app-server, read-only `computer-use/list_apps` completed successfully.
 - Through app-server, read-only `computer-use/get_app_state` for Activity Monitor
   completed successfully and returned both accessibility-tree text and a JPEG
@@ -77,10 +79,10 @@ Bundled plugin copy used for MCP `cwd` in the plugin manifest:
 /Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799
 ```
 
-Codex host-app bundled copy:
+Current ChatGPT host-app bundled copy:
 
 ```text
-/Applications/Codex.app/Contents/Resources/plugins/openai-bundled/plugins/computer-use
+/Applications/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins/computer-use
 ```
 
 The installed app, cache copy, and host-app bundled copy had matching executable
@@ -285,7 +287,7 @@ The successful path is to use Codex app-server as the compatibility shim around
 Computer Use MCP:
 
 ```bash
-/Applications/Codex.app/Contents/Resources/codex app-server \
+/Applications/ChatGPT.app/Contents/Resources/codex app-server \
   --enable computer_use \
   --enable plugins \
   --enable tool_call_mcp_elicitation
@@ -295,8 +297,8 @@ The host client must then:
 
 1. Send app-server `initialize` with current camelCase capability fields, for example `capabilities: { experimentalApi: true, requestAttestation: false }`.
 2. Send `notifications/initialized`.
-3. Optionally send `mcpServerStatus/list` with `detail: "toolsAndAuthOnly"` to verify the `computer-use` MCP server and expected tool inventory before starting work.
-4. Send `thread/start` to create an ephemeral thread with `approvalPolicy: "on-request"` so app-server can forward MCP app-approval elicitations instead of auto-denying them.
+3. Send `thread/start` to create an ephemeral thread with `approvalPolicy: "on-request"` and an explicit `config.mcp_servers.computer-use` command/cwd pointing at the bundled client under `/Applications/ChatGPT.app`.
+4. Send thread-scoped `mcpServerStatus/list` with that `threadId` and `detail: "toolsAndAuthOnly"` to verify the `computer-use` server and expected tool inventory.
 5. Send `mcpServer/tool/call` with `threadId`, `server: "computer-use"`, the tool
    name, and tool arguments.
 6. Answer any app-server `mcpServer/elicitation/request` server-to-client
@@ -884,12 +886,12 @@ Still needed before broad mutating GUI operation:
 
 ## Commands to refresh volatile facts
 
-Run these after Codex or Computer Use updates.
+Run these after ChatGPT or Computer Use updates.
 
-### Find Codex host app version
+### Find ChatGPT host app version
 
 ```bash
-for app in '/Applications/Codex.app' '/Applications/CodexBar.app'; do
+for app in '/Applications/ChatGPT.app'; do
   echo "--- $app"
   if [ -d "$app" ]; then
     /usr/libexec/PlistBuddy \
@@ -911,7 +913,7 @@ find /Users/yourname/.codex -maxdepth 5 \
   \( -iname '*computer*use*' -o -iname '*cua*' -o -iname '*skycomputeruse*' -o -iname '*appshot*' \) \
   -print 2>/dev/null | sort
 
-find '/Applications/Codex.app/Contents/Resources/plugins/openai-bundled/plugins' -maxdepth 2 \
+find '/Applications/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins' -maxdepth 2 \
   -iname '*computer*use*' -print 2>/dev/null | sort
 ```
 
@@ -922,7 +924,7 @@ python3 - <<'PY'
 import json, pathlib
 paths = [
   pathlib.Path('/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799/.codex-plugin/plugin.json'),
-  pathlib.Path('/Applications/Codex.app/Contents/Resources/plugins/openai-bundled/plugins/computer-use/.codex-plugin/plugin.json'),
+  pathlib.Path('/Applications/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins/computer-use/.codex-plugin/plugin.json'),
 ]
 for path in paths:
     if path.exists():
@@ -971,10 +973,10 @@ spctl --assess --type execute --verbose=4 '/Users/yourname/.codex/computer-use/C
 shasum -a 256 \
 '/Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService' \
 '/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService' \
-'/Applications/Codex.app/Contents/Resources/plugins/openai-bundled/plugins/computer-use/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService' \
+'/Applications/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins/computer-use/Codex Computer Use.app/Contents/MacOS/SkyComputerUseService' \
 '/Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient' \
 '/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient' \
-'/Applications/Codex.app/Contents/Resources/plugins/openai-bundled/plugins/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient'
+'/Applications/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient'
 ```
 
 ### Locate skills and app instructions
@@ -982,7 +984,7 @@ shasum -a 256 \
 ```bash
 grep -RIl 'Control local Mac apps through Computer Use\|Computer Use Confirmations Policy' \
   /Users/yourname/.codex/plugins/cache/openai-bundled \
-  '/Applications/Codex.app/Contents/Resources/plugins/openai-bundled/plugins' \
+  '/Applications/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins' \
   2>/dev/null | sort
 
 find '/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799/Codex Computer Use.app/Contents/Resources/Package_ComputerUseClient.bundle/Contents/Resources/AppInstructions' \
@@ -991,15 +993,15 @@ find '/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799/C
 
 ### Probe Codex app-server auth plumbing
 
-Computer Use binaries contain `CodexAppServerJSONRPCConnection`,
-`X-OpenAI-Authorization`, and `/Applications/Codex.app/Contents/Resources/codex`
-strings. The direct app-server can be probed safely over stdio. Use camelCase
+Computer Use binaries contain `CodexAppServerJSONRPCConnection` and
+`X-OpenAI-Authorization` strings; the current Codex binary is bundled at
+`/Applications/ChatGPT.app/Contents/Resources/codex`. The direct app-server can be probed safely over stdio. Use camelCase
 parameter names; snake_case fields are silently ignored by this protocol layer.
 
 ```bash
 python3 - <<'PY'
 import json, subprocess, select, time
-cmd = ['/Applications/Codex.app/Contents/Resources/codex', 'app-server']
+cmd = ['/Applications/ChatGPT.app/Contents/Resources/codex', 'app-server']
 proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 def send(obj):
     proc.stdin.write(json.dumps(obj, separators=(',', ':')) + '\n')
@@ -1036,7 +1038,7 @@ Use tool execution.
 The managed daemon path was not available on this machine at refresh time:
 
 ```bash
-/Applications/Codex.app/Contents/Resources/codex app-server daemon version
+/Applications/ChatGPT.app/Contents/Resources/codex app-server daemon version
 ```
 
 returned a missing control socket, and `app-server daemon start` reported that a
@@ -1114,7 +1116,7 @@ await client.close();
 
 These facts are likely to change with Codex updates:
 
-- `/Applications/Codex.app` version and bundled plugin contents.
+- `/Applications/ChatGPT.app` version and bundled Codex/Computer Use contents.
 - Versioned plugin-cache path under
   `/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/`.
 - MCP server version hash returned by `initialize`.

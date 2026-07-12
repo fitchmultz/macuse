@@ -17,7 +17,10 @@ export const VERSION = (() => {
   }
   throw new Error(`macuse: could not read version from ${resolve(REPO_ROOT, 'package.json')}`);
 })();
-export const DEFAULT_CODEX_BIN = '/Applications/Codex.app/Contents/Resources/codex';
+export const DEFAULT_CHATGPT_RESOURCES = '/Applications/ChatGPT.app/Contents/Resources';
+export const DEFAULT_CODEX_BIN = resolve(DEFAULT_CHATGPT_RESOURCES, 'codex');
+export const DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR = resolve(DEFAULT_CHATGPT_RESOURCES, 'plugins/openai-bundled/plugins/computer-use');
+export const DEFAULT_BUNDLED_COMPUTER_USE_CLIENT = resolve(DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, 'Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient');
 export const DEFAULT_COMPUTER_USE_PLUGIN_ROOT = '/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use';
 export const DEFAULT_COMPUTER_USE_PLUGIN_DIR = discoverComputerUsePluginDir();
 export const DEFAULT_COMPUTER_USE_APP = '/Users/yourname/.codex/computer-use/Codex Computer Use.app';
@@ -31,6 +34,15 @@ function compareVersionLike(a, b) {
     if (delta !== 0) return delta;
   }
   return a.localeCompare(b);
+}
+
+export function computerUseMcpServerConfig() {
+  return {
+    command: DEFAULT_BUNDLED_COMPUTER_USE_CLIENT,
+    args: ['mcp'],
+    cwd: DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR,
+    enabled: true,
+  };
 }
 
 export function discoverComputerUsePluginDir(root = DEFAULT_COMPUTER_USE_PLUGIN_ROOT, opts = {}) {

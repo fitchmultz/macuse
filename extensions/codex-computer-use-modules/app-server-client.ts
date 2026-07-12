@@ -10,6 +10,7 @@ import {
 	PROCESS_REGISTRY_PREFIX,
 	UPSTREAM_COMPUTER_USE_TOOLS,
 	VERSION,
+	computerUseMcpServerConfig,
 	errorMessage,
 	isRecord,
 	type ApprovalMode,
@@ -421,7 +422,6 @@ export class AppServerClient {
 			capabilities: { experimentalApi: true, requestAttestation: false },
 		}, Math.min(timeoutMs, 15_000), signal);
 		this.notify("notifications/initialized");
-		await this.verifyComputerUseInventory(Math.min(Math.max(timeoutMs, 10_000), 30_000), signal);
 		const threadStart = await this.request("thread/start", {
 			cwd: this.cwd,
 			ephemeral: true,
@@ -433,21 +433,23 @@ export class AppServerClient {
 					plugins: true,
 					tool_call_mcp_elicitation: true,
 				},
+				mcp_servers: { "computer-use": computerUseMcpServerConfig() },
 			},
 		}, Math.min(Math.max(timeoutMs, 45_000), 120_000), signal);
 		const thread = isRecord(threadStart) && isRecord(threadStart.thread) ? threadStart.thread : null;
 		if (typeof thread?.id !== "string") throw new ComputerUseError("thread/start response did not include thread.id", threadStart);
 		this.thread = thread as AppServerThread;
+		await this.verifyComputerUseInventory(thread.id, Math.min(Math.max(timeoutMs, 10_000), 30_000), signal);
 	}
 
-	private async verifyComputerUseInventory(timeoutMs: number, signal?: AbortSignal): Promise<void> {
+	private async verifyComputerUseInventory(threadId: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {
 		const deadline = Date.now() + timeoutMs;
 		let cursor: string | null = null;
 		let inventory: ComputerUseInventory = { present: false, authStatus: null, toolNames: [], toolCount: 0, missingTools: [...UPSTREAM_COMPUTER_USE_TOOLS], checkedAt: null };
 		for (let page = 0; page < 10; page += 1) {
 			const remaining = Math.max(1_000, deadline - Date.now());
 			if (remaining <= 1_000 && page > 0) break;
-			const params: Record<string, unknown> = { detail: "toolsAndAuthOnly", limit: 100 };
+			const params: Record<string, unknown> = { threadId, detail: "toolsAndAuthOnly", limit: 100 };
 			if (cursor) params.cursor = cursor;
 			const status = await this.request("mcpServerStatus/list", params, Math.min(remaining, 30_000), signal);
 			inventory = mergeComputerUseInventories(inventory, summarizeComputerUseInventory(status));

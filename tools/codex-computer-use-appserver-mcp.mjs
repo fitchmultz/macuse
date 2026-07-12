@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import process from 'node:process';
-import { DEFAULT_CODEX_BIN, VERSION } from './macuse-utils.mjs';
+import { DEFAULT_CODEX_BIN, VERSION, computerUseMcpServerConfig } from './macuse-utils.mjs';
 import {
   appServerSessionRecoverySummary,
   getMousePosition,
@@ -172,7 +172,10 @@ class AppServerClient {
       ephemeral: true,
       approvalPolicy: 'on-request',
       sandbox: 'workspace-write',
-      config: { features: { computer_use: true, plugins: true, tool_call_mcp_elicitation: true } },
+      config: {
+        features: { computer_use: true, plugins: true, tool_call_mcp_elicitation: true },
+        mcp_servers: { 'computer-use': computerUseMcpServerConfig() },
+      },
     }, 45_000);
     this.threadId = start?.thread?.id;
     if (!this.threadId) throw new Error('thread/start response missing thread.id');

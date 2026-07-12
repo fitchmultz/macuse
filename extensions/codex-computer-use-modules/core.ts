@@ -3,7 +3,19 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 export const VERSION = resolveMacuseVersion();
-export const DEFAULT_CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex";
+export const DEFAULT_CHATGPT_RESOURCES = "/Applications/ChatGPT.app/Contents/Resources";
+export const DEFAULT_CODEX_BIN = path.join(DEFAULT_CHATGPT_RESOURCES, "codex");
+export const DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR = path.join(DEFAULT_CHATGPT_RESOURCES, "plugins/openai-bundled/plugins/computer-use");
+export const DEFAULT_BUNDLED_COMPUTER_USE_CLIENT = path.join(DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, "Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient");
+
+export function computerUseMcpServerConfig() {
+	return {
+		command: DEFAULT_BUNDLED_COMPUTER_USE_CLIENT,
+		args: ["mcp"],
+		cwd: DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR,
+		enabled: true,
+	};
+}
 
 /**
  * Resolve the canonical package version from package.json via import.meta.url.

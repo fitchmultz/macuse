@@ -3,7 +3,7 @@
  * Responsibilities: Manage one persistent app-server session, register read-only and guarded mutating Computer Use tools, normalize stable element targets, and clean up session resources on reload/shutdown.
  * Scope: Pi extension runtime only; CLI smoke tests and install helpers live under tools/.
  * Usage: Loaded by pi through package.json#pi.extensions for global/local package installs.
- * Invariants/Assumptions: Codex.app is installed locally, Computer Use is macOS-only, mutating actions remain explicitly gated, and the persistent app-server thread is extension-owned.
+ * Invariants/Assumptions: ChatGPT.app is installed locally with the bundled Codex app-server and Computer Use plugin, Computer Use is macOS-only, mutating actions remain explicitly gated, and the persistent app-server thread is extension-owned.
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";

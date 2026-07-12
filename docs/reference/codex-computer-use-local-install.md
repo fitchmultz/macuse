@@ -1,32 +1,29 @@
 # Codex Computer Use Local Install
 
-Source: Local filesystem paths under `/Users/yourname/.codex/computer-use`, `/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use`, and `/Applications/Codex.app`
+Source: Local filesystem paths under `/Users/yourname/.codex/computer-use`, `/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use`, and `/Applications/ChatGPT.app`
 Author: [OpenAI](https://openai.com/)
 Posted: Not applicable; local installed app and plugin cache
 Scraped: May 22, 2026
-Refreshed: May 22, 2026 09:35 MDT after the Codex host app update, external-harness TCC probes, app-server bridge validation, and guarded Calculator click/key validation. Spot-checked again June 8, 2026 after subsequent Codex updates. Current validation uses Activity Monitor instead of Calculator.
+Refreshed: May 22, 2026 09:35 MDT after the Codex host app update, external-harness TCC probes, app-server bridge validation, and guarded Calculator click/key validation. Spot-checked again June 8, 2026 after subsequent Codex updates. Current validation uses Activity Monitor instead of Calculator. Updated July 12, 2026 after Codex merged into ChatGPT.
 Observed install metadata at May 22 refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin still `1.0.799`; app bundle `com.openai.sky.CUAService`; notarized Developer ID app from OpenAI
-Current June 8 spot-check: Codex host app `26.602.40724` build `3593`; Codex CLI `0.137.0-alpha.4`; Computer Use plugin cache `1.0.809`; Computer Use app state reports CUA App Version `809`.
+Current July 12 spot-check: ChatGPT host app `26.707.51957` build `5175` (bundle ID remains `com.openai.codex`); Codex CLI `0.144.0-alpha.4`; bundled Computer Use plugin `1.0.1000387`.
 
-This system has the Codex Computer Use macOS app installed under the Codex home
-folder, with a matching bundled plugin cache copy and a host-app bundled copy
-inside `/Applications/Codex.app`. After the Codex host app updated, the host app
-version changed, but the local Computer Use app and bundled Computer Use plugin
-still reported build `799` / version `1.0.799`.
+The host app, Codex CLI, and bundled Computer Use plugin now live inside
+`/Applications/ChatGPT.app`. The separate Computer Use service also remains
+installed under the Codex home folder. May/June version and hash observations
+below are retained as historical snapshots where explicitly dated.
 
 For external-harness findings, probes, and refresh commands, see
 [`codex-computer-use-external-harness.md`](./codex-computer-use-external-harness.md).
 
-## Host Codex app found
+## Current host app
 
 | Purpose | Path / value |
 | --- | --- |
-| Host app | `/Applications/Codex.app` |
+| Host app | `/Applications/ChatGPT.app` |
 | Bundle ID | `com.openai.codex` |
-| App version | `26.519.31651` |
-| Build version | `3017` |
-| App bundle mtime | May 22, 2026 07:28:58 MDT |
-| `Info.plist` mtime | May 22, 2026 07:28:57 MDT |
+| App version | `26.707.51957` |
+| Build version | `5175` |
 
 Related local host-app state found:
 
@@ -100,10 +97,10 @@ A matching cached Computer Use plugin copy exists at:
 /Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799
 ```
 
-The updated Codex host app also contains a bundled copy at:
+The ChatGPT host app contains the bundled copy used by macuse at:
 
 ```text
-/Applications/Codex.app/Contents/Resources/plugins/openai-bundled/plugins/computer-use
+/Applications/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins/computer-use
 ```
 
 Relevant files in that cache:
@@ -246,14 +243,17 @@ node tools/validate-macuse.mjs mutating
 The bridge starts:
 
 ```bash
-/Applications/Codex.app/Contents/Resources/codex app-server \
+/Applications/ChatGPT.app/Contents/Resources/codex app-server \
   --enable computer_use \
   --enable plugins \
   --enable tool_call_mcp_elicitation
 ```
 
-It then creates an ephemeral app-server thread and calls Computer Use through
-`mcpServer/tool/call`.
+It then creates an ephemeral app-server thread, explicitly configures that
+thread's `computer-use` MCP transport from the ChatGPT-bundled plugin, verifies
+the thread-scoped tool inventory, and calls Computer Use through
+`mcpServer/tool/call`. The explicit transport prevents stale or disabled global
+Codex MCP config from shadowing the bundled server.
 
 Practical limits:
 

@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import { accessSync, constants, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { DEFAULT_CODEX_BIN, DEFAULT_COMPUTER_USE_PLUGIN_ROOT, VERSION, discoverComputerUsePluginDir } from './macuse-utils.mjs';
+import { DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, DEFAULT_CODEX_BIN, VERSION, computerUseMcpServerConfig } from './macuse-utils.mjs';
 import {
   contentText,
   appServerSessionRecoverySummary,
@@ -525,6 +525,7 @@ function threadStartParams(opts) {
         plugins: true,
         tool_call_mcp_elicitation: true,
       },
+      mcp_servers: { 'computer-use': computerUseMcpServerConfig() },
     },
   };
 }
@@ -563,13 +564,8 @@ function validateStepResult(step, filtered) {
   }
 }
 
-function discoverAppServerComputerUsePluginDir(root = DEFAULT_COMPUTER_USE_PLUGIN_ROOT) {
-  return discoverComputerUsePluginDir(root, { fallback: false });
-}
-
 function computerUsePluginStatus() {
-  const pluginDir = discoverAppServerComputerUsePluginDir();
-  if (!pluginDir) return { pluginDir: null, metadata: null };
+  const pluginDir = DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR;
   const pluginJsonPath = resolve(pluginDir, '.codex-plugin/plugin.json');
   try {
     const plugin = JSON.parse(readFileSync(pluginJsonPath, 'utf8'));
@@ -641,40 +637,15 @@ async function runWithThread(opts, fn) {
 }
 
 async function runStatus(opts) {
-  const client = new AppServerJsonRpc(opts);
-  try {
-    client.start();
-    const initialized = await client.request('initialize', {
-      clientInfo: { name: 'macuse-codex-computer-use-bridge', version: VERSION },
-      capabilities: { experimentalApi: true, requestAttestation: false },
-    }, opts.startupTimeoutMs);
-    client.notify('notifications/initialized');
-    const status = await client.request('mcpServerStatus/list', { detail: 'toolsAndAuthOnly', limit: 100 }, opts.toolTimeoutMs);
-    const notifications = opts.quiet ? [] : client.notifications.map((n) => ({ method: n.method, params: n.params })).slice(-20);
-    if (opts.statusFull) {
-      return {
-        ok: true,
-        mode: opts.mode,
-        codexBin: opts.codexBin,
-        cwd: opts.cwd,
-        initialized,
-        status: summarizeStatus(status),
-        notifications,
-      };
-    }
+  return runWithThread(opts, async (client, { initialized, threadId }) => {
+    const status = await client.request('mcpServerStatus/list', { threadId, detail: 'toolsAndAuthOnly', limit: 100 }, opts.toolTimeoutMs);
+    if (opts.statusFull) return { initialized, status: summarizeStatus(status) };
     return {
-      ok: true,
-      mode: opts.mode,
-      codexBin: opts.codexBin,
-      cwd: opts.cwd,
       computerUse: summarizeComputerUseStatus(status),
       plugin: computerUsePluginStatus(),
-      appServer: { initialized: Boolean(initialized), threadStarted: false },
-      notifications,
+      appServer: { initialized: Boolean(initialized), threadStarted: true },
     };
-  } finally {
-    await client.stop();
-  }
+  });
 }
 
 async function refreshElementCache(client, threadId, args, cache, opts) {
