@@ -8,13 +8,20 @@ export const DEFAULT_CODEX_BIN = path.join(DEFAULT_CHATGPT_RESOURCES, "codex");
 export const DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR = path.join(DEFAULT_CHATGPT_RESOURCES, "plugins/openai-bundled/plugins/computer-use");
 export const DEFAULT_BUNDLED_COMPUTER_USE_CLIENT = path.join(DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, "Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient");
 
-export function computerUseMcpServerConfig() {
-	return {
+export const MCP_SERVERS = {
+	"computer-use": { args: ["mcp"], tools: ["click", "drag", "get_app_state", "list_apps", "perform_secondary_action", "press_key", "scroll", "select_text", "set_value", "type_text"] },
+	"event-stream": { args: ["event-stream", "mcp"], tools: ["event_stream_start", "event_stream_status", "event_stream_stop"] },
+	skysight: { args: ["skysight", "mcp"], tools: ["skysight_list_exclusions", "skysight_start", "skysight_status", "skysight_stop", "skysight_update_exclusion"] },
+} as const;
+export type McpServerName = keyof typeof MCP_SERVERS;
+
+export function mcpServerConfigs() {
+	return Object.fromEntries(Object.entries(MCP_SERVERS).map(([name, server]) => [name, {
 		command: DEFAULT_BUNDLED_COMPUTER_USE_CLIENT,
-		args: ["mcp"],
+		args: [...server.args],
 		cwd: DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR,
 		enabled: true,
-	};
+	}]));
 }
 
 /**
@@ -42,7 +49,7 @@ function resolveMacuseVersion(): string {
 export const DEFAULT_TOOL_TIMEOUT_MS = 90_000;
 export const DEFAULT_MAX_TEXT_CHARS = 20_000;
 export const WAIT_TOOLS = new Set(["waitForText", "waitForURL", "waitForTitle", "waitForElement", "waitUntilElementEnabled", "waitUntilElementDisabled"]);
-export const UPSTREAM_COMPUTER_USE_TOOLS = ["click", "drag", "get_app_state", "list_apps", "perform_secondary_action", "press_key", "scroll", "select_text", "set_value", "type_text"] as const;
+export const UPSTREAM_COMPUTER_USE_TOOLS = MCP_SERVERS["computer-use"].tools;
 export const READ_ONLY_TOOLS = new Set(["list_apps", "get_app_state", ...WAIT_TOOLS]);
 export const APP_SCOPED_TOOLS = new Set([
 	"get_app_state",
@@ -75,6 +82,7 @@ export type ComputerUseToolResult = {
 };
 
 export type ComputerUseInventory = {
+	server: string;
 	present: boolean;
 	authStatus: string | null;
 	toolNames: string[];

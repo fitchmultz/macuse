@@ -44,15 +44,16 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
    - raw `element_index` only with `expectedRole`/`expectedName` guards.
 4. For dynamic controls, prefer `arguments.targets` fallback objects that include both stable IDs and visible descriptions when available.
 5. Prefer non-pointer actions: `perform_secondary_action`, `set_value`, `press_key`, `type_text`, `select_text`, and wait helpers. For text entry, prefer `set_value` only on a verified settable target; use `type_text` only after verified focus. `select_text` selects by text string, not offsets. Use pointer `click`/`drag` only when necessary and only with the explicit pointer allow flag.
-6. For mutations, use `macuse({ action: "sequence", sequence: ... })` with:
+6. Use `action:"event_stream"` for Record & Replay and `action:"skysight"` for Skysight. Starts require `allowRecording:true` and a non-empty `safetyNote`; exclusion updates require `allowPrivacyChange:true`, a safety note, and scope-specific arguments. Stops need no allow flag. Status/list are read-only but expose activity/artifact/privacy metadata. Never use these calls as a prerequisite for ordinary app control.
+7. For mutations, use `macuse({ action: "sequence", sequence: ... })` with:
    - `allowMutating: true`
    - a narrow `safetyNote`
    - before/after `get_app_state`
    - assertions such as `expectText`, `expectAbsentText`, or `expectVisibleText`
    - `requireStateChange: true` on steps where a no-op should fail closed
    - cleanup/restore steps when practical.
-7. Read the run summary first. Check apps touched, actions, target method, safety tags, final visible text, focus, and anomaly hints before inspecting verbose step details.
-8. If a sequence fails, use `failedStepIndex`, `completedStepCount`, and `resumeFromStepIndex`; do not blindly replay prior mutating steps. If a failed step has no app-state readback, macuse suppresses changed-state summaries to avoid false deltas; re-read state before concluding the UI changed.
+8. Read the run summary first. Check apps touched, actions, target method, safety tags, final visible text, focus, and anomaly hints before inspecting verbose step details.
+9. If a sequence fails, use `failedStepIndex`, `completedStepCount`, and `resumeFromStepIndex`; do not blindly replay prior mutating steps. If a failed step has no app-state readback, macuse suppresses changed-state summaries to avoid false deltas; re-read state before concluding the UI changed.
 
 ## Safety rules
 
@@ -66,6 +67,8 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
 - Do not use `Raise` to restore focus. If focus matters, verify the native focus summary and report any change honestly.
 - Finder sidebar/file rows and Calendar toolbar/popover controls are known to have sparse or unstable AX actions. If `Press` is invalid, switch target strategy or stop before pointer fallback unless explicitly approved.
 - For repeated `cgWindowNotFound`, `frontmost=<none>`, service timeouts, `connectionInvalid`, `errAETimeout`, `Computer Use server error -1743`, or suspected macOS TCC/Automation failures, run `node tools/macuse-doctor.mjs --out .scratch/doctor` when you are in this repo. Use `node tools/macuse-repair.mjs --repair-tcc --responsible auto` for a dry-run responsible-launcher preview. Apply repairs only with explicit user approval because `--apply`, `--unlock-with-env`, and `--repair-tcc` mutate broader local GUI/process/privacy state; applying TCC repair requires a host with Full Disk Access. Restarting Computer Use for the current session is allowed through `macuse` action `restart_computer_use`.
+
+Do not expose or attempt `turn-ended` (no published payload contract) or the private `@oai/sky` Node REPL adapter (not MCP).
 
 ## Evidence to report
 

@@ -66,6 +66,24 @@ function run(name, command, args, opts = {}) {
   return result.stdout;
 }
 
+function runCliAuxiliaryGuardSmoke() {
+  for (const [tool, args, flag] of [
+    ['event_stream_start', {}, 'allow-recording'],
+    ['skysight_start', {}, 'allow-recording'],
+    ['skysight_update_exclusion', { operation: 'add', scope: 'app' }, 'allow-privacy-change'],
+  ]) {
+    const server = tool.startsWith('event_') ? 'event-stream' : 'skysight';
+    const result = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', 'call', '--server', server, '--tool', tool, '--arguments-json', JSON.stringify(args), '--quiet'], { cwd: process.cwd(), encoding: 'utf8', timeout: 10_000 });
+    if (result.status !== 2 || !result.stdout.includes(flag)) throw new Error(`CLI ${tool} guard did not fail closed before app-server startup`);
+  }
+  const statusResult = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', 'call', '--server', 'event-stream', '--tool', 'event_stream_status', '--arguments-json', '{}', '--quiet'], { cwd: process.cwd(), encoding: 'utf8', timeout: 120_000 });
+  if (statusResult.status !== 0) throw new Error(`CLI event_stream_status failed: ${statusResult.stderr || statusResult.stdout}`);
+  const status = parseJsonOutput('CLI event_stream_status', statusResult.stdout);
+  const eventStream = JSON.parse(status.result?.content?.find((block) => block.type === 'text')?.text || '{}');
+  if (status.result?.isError || eventStream.isRecording !== false) throw new Error('CLI event_stream_status did not prove recording is inactive');
+  return 'recording/privacy guards fail closed; event_stream_status routed safely';
+}
+
 function runMcpServerSmoke(verbose) {
   const script = String.raw`
 const { spawn } = require('node:child_process');
@@ -114,8 +132,17 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
   send({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
   const listed = await request('tools/list', {}, 5000);
   const names = listed.tools.map((tool) => tool.name);
-  for (const expected of ['list_apps', 'get_app_state', 'perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag']) {
+  for (const expected of ['list_apps', 'get_app_state', 'perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag', 'event_stream_start', 'event_stream_status', 'event_stream_stop', 'skysight_start', 'skysight_stop', 'skysight_status', 'skysight_update_exclusion', 'skysight_list_exclusions']) {
     if (!names.includes(expected)) throw new Error('missing MCP tool: ' + expected);
+  }
+  const annotationExpectations = {
+    event_stream_start: [false, false], event_stream_status: [true, true], event_stream_stop: [false, true],
+    skysight_start: [false, false], skysight_stop: [false, true], skysight_status: [true, true],
+    skysight_update_exclusion: [false, true], skysight_list_exclusions: [true, true],
+  };
+  for (const [name, [readOnly, idempotent]] of Object.entries(annotationExpectations)) {
+    const annotations = listed.tools.find((tool) => tool.name === name)?.annotations;
+    if (annotations?.readOnlyHint !== readOnly || annotations?.destructiveHint !== false || annotations?.idempotentHint !== idempotent || annotations?.openWorldHint !== false) throw new Error(name + ' annotations do not match upstream');
   }
   const finder = await request('tools/call', { name: 'get_app_state', arguments: { app: 'Finder', approval: 'ask' } }, 120000);
   if (!sawElicitation || finder.isError !== true) throw new Error('MCP elicitation proxy did not decline Finder as expected');
@@ -131,6 +158,18 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
     pointerGuarded = /allowPointer/.test(error.message || '');
   }
   if (!pointerGuarded) throw new Error('MCP wrapper did not guard pointer click without allowPointer:true');
+  const eventStatus = await request('tools/call', { name: 'event_stream_status', arguments: {} }, 120000);
+  if (eventStatus.isError || JSON.parse(text(eventStatus)).isRecording !== false) throw new Error('MCP event_stream_status did not prove recording is inactive');
+  for (const [name, arguments, expected] of [
+    ['event_stream_start', {}, /allowRecording/],
+    ['skysight_start', { allowRecording: true }, /safetyNote/],
+    ['skysight_update_exclusion', { operation: 'add', scope: 'app', bundleID: 'com.example' }, /allowPrivacyChange/],
+    ['skysight_update_exclusion', { allowPrivacyChange: true, safetyNote: 'test guard only', operation: 'add', scope: 'app' }, /bundleID/],
+  ]) {
+    let guarded = false;
+    try { await request('tools/call', { name, arguments }, 5000); } catch (error) { guarded = expected.test(error.message || ''); }
+    if (!guarded) throw new Error(name + ' guard did not fail closed');
+  }
   console.log(names.join(','));
 })().then(() => { proc.kill('SIGTERM'); }).catch((error) => { proc.kill('SIGTERM'); console.error(error.stack || error.message); process.exitCode = 1; });
 `;
@@ -158,9 +197,22 @@ if (tools.length !== 1 || tools[0].name !== 'macuse') {
   throw new Error('expected only macuse extension tool; saw ' + tools.map((tool) => tool.name).join(','));
 }
 const actions = tools[0].parameters?.properties?.action?.enum || [];
-if (!actions.includes('restart_computer_use')) throw new Error('macuse tool schema is missing restart_computer_use action');
+for (const action of ['restart_computer_use', 'event_stream', 'skysight']) if (!actions.includes(action)) throw new Error('macuse tool schema is missing ' + action + ' action');
 if (tools[0].executionMode !== 'sequential') throw new Error('macuse tool must serialize calls that share one app-server thread and element cache');
-console.log(tools.map((tool) => tool.name).join(','));
+const macuse = tools[0];
+(async () => {
+  const signal = new AbortController().signal;
+  for (const [params, expected] of [
+    [{ action: 'event_stream', eventStream: { operation: 'start' } }, /allowRecording/],
+    [{ action: 'skysight', skysight: { operation: 'start', allowRecording: true } }, /safetyNote/],
+    [{ action: 'skysight', skysight: { operation: 'update_exclusion', allowPrivacyChange: true, safetyNote: 'guard test', arguments: { operation: 'add', scope: 'app' } } }, /bundleID/],
+  ]) {
+    let guarded = false;
+    try { await macuse.execute('guard', params, signal); } catch (error) { guarded = expected.test(error.message || ''); }
+    if (!guarded) throw new Error('macuse auxiliary guard did not fail closed');
+  }
+  console.log(tools.map((tool) => tool.name).join(','));
+})().catch((error) => { console.error(error.stack || error.message); process.exitCode = 1; });
 `;
   const nodePath = [
     '/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules',
@@ -216,6 +268,8 @@ if (!noWindowDiagnostic?.includes('pointer click') || noWindowDiagnostic.include
 const timeoutDiagnostic = computerUseDiagnostic({ content: [{ type: 'text', text: 'Computer Use server error -10005: timeoutReached' }], isError: true }, 'get_app_state', { app: 'Chrome' });
 if (!timeoutDiagnostic?.includes('timed out')) throw new Error('timeoutReached diagnostic stopped reporting timeouts');
 if (!shouldAutoRecoverComputerUse('get_app_state', 'Transport closed')) throw new Error('read-only recovery classifier missed transport failures');
+if (!shouldAutoRecoverComputerUse('event_stream_status', 'Transport closed')) throw new Error('auxiliary read-only recovery classifier missed transport failures');
+if (shouldAutoRecoverComputerUse('event_stream_start', 'Transport closed')) throw new Error('recording start recovery classifier allowed auto-recovery');
 if (shouldAutoRecoverComputerUse('click', 'Transport closed')) throw new Error('mutating recovery classifier allowed auto-recovery');
 const cliRecovery = appServerSessionRecoverySummary('test');
 if (cliRecovery.scope !== 'app-server-session' || cliRecovery.targets.length !== 0) throw new Error('automatic CLI recovery is not scoped to app-server session only');
@@ -260,6 +314,8 @@ factory({
   const macuse = tools.get('macuse');
   if (!macuse) throw new Error('missing extension tool: macuse');
   if ([...tools.keys()].some((name) => name.startsWith('codex' + '_cu_'))) throw new Error('legacy prefixed tools are still registered: ' + [...tools.keys()].join(','));
+  const eventStatus = await macuse.execute('event-status', { action: 'event_stream', eventStream: { operation: 'status', toolTimeoutMs: 90000 } }, signal, () => {});
+  if (eventStatus.details.computerUse.isError || JSON.parse(eventStatus.content[0]?.text || '{}').isRecording !== false) throw new Error('pi event_stream_status did not prove recording is inactive');
   const running = await macuse.execute('running', { action: 'list_apps', listApps: { runningOnly: true, maxTextChars: 5000, toolTimeoutMs: 90000 } }, signal, () => {});
   if (!running.content[0].text.includes('running')) throw new Error('pi extension runningOnly list_apps returned no running apps');
   const nonRunningLines = running.content[0].text.split('\n').filter((line) => line.trim() && !line.includes('running'));
@@ -429,6 +485,8 @@ async function main() {
   const listAppsErrorSmoke = runListAppsErrorPreservationSmoke(opts.verbose);
   printPass('list_apps error preservation smoke', listAppsErrorSmoke);
 
+  printPass('CLI auxiliary safety guards', runCliAuxiliaryGuardSmoke());
+
   const piPersistentSmoke = runPiExtensionPersistentSmoke(opts.verbose);
   printPass('pi extension persistent app-server smoke', `thread=${piPersistentSmoke}`);
 
@@ -442,10 +500,12 @@ async function main() {
 
   const status = parseJsonOutput('app-server status', run('app-server status', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'status', '--quiet'], { timeoutMs: 180_000, verbose: opts.verbose }));
   requireOk('app-server status', status);
-  const computerUse = status.computerUse ?? status.status?.servers?.find((server) => server.name === 'computer-use');
-  if (!computerUse?.present && !computerUse?.toolNames) throw new Error('app-server status did not include computer-use');
-  if (Array.isArray(computerUse.missingTools) && computerUse.missingTools.length > 0) throw new Error(`app-server status missing Computer Use tools: ${computerUse.missingTools.join(', ')}`);
-  printPass('app-server status', `${computerUse.toolCount ?? computerUse.toolNames?.length ?? 0} tools`);
+  const expectedInventories = { 'computer-use': 10, 'event-stream': 3, skysight: 5 };
+  for (const [name, count] of Object.entries(expectedInventories)) {
+    const inventory = status.inventories?.[name] ?? status.status?.servers?.find((server) => server.name === name);
+    if (!inventory?.toolNames || inventory.toolNames.length !== count) throw new Error(`app-server status expected ${count} ${name} tools, saw ${inventory?.toolNames?.length ?? 0}`);
+  }
+  printPass('app-server status', 'all 18 tools across computer-use=10, event-stream=3, skysight=5');
 
   if (opts.mode === 'read-only' || opts.mode === 'mutating' || opts.mode === 'focus') {
     if (opts.mode === 'focus') {

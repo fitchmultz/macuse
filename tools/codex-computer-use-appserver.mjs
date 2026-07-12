@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import { accessSync, constants, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, DEFAULT_CODEX_BIN, VERSION, computerUseMcpServerConfig } from './macuse-utils.mjs';
+import { DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, DEFAULT_CODEX_BIN, MCP_SERVERS, VERSION, mcpServerConfigs } from './macuse-utils.mjs';
 import {
   contentText,
   appServerSessionRecoverySummary,
@@ -25,7 +25,7 @@ const DEFAULT_THREAD_TIMEOUT_MS = 45000;
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 3000;
 const DEFAULT_MAX_TEXT_CHARS = 20000;
 const FEATURE_FLAGS = ['computer_use', 'plugins', 'tool_call_mcp_elicitation'];
-const EXPECTED_COMPUTER_USE_TOOLS = ['click', 'drag', 'get_app_state', 'list_apps', 'perform_secondary_action', 'press_key', 'scroll', 'select_text', 'set_value', 'type_text'];
+const EXPECTED_COMPUTER_USE_TOOLS = MCP_SERVERS['computer-use'].tools;
 
 const EXIT = Object.freeze({
   OK: 0,
@@ -42,6 +42,7 @@ const JSON_RPC_ERROR = Object.freeze({
 });
 
 const READ_ONLY_TOOLS = new Set(['list_apps', 'get_app_state']);
+const AUTO_RECOVERY_TOOLS = new Set([...READ_ONLY_TOOLS, 'event_stream_status', 'skysight_status', 'skysight_list_exclusions']);
 
 process.stdout.on('error', (error) => {
   if (error.code === 'EPIPE') process.exit(0);
@@ -82,7 +83,11 @@ class ChildExitError extends CliError {
 }
 
 function printHelp() {
-  process.stdout.write(`Codex Computer Use app-server bridge ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver.mjs status [--full] [options]\n  node tools/codex-computer-use-appserver.mjs list-apps [options]\n  node tools/codex-computer-use-appserver.mjs get-state --app <app> [--approval inherit|accept-all|accept-once|deny] [options]\n  node tools/codex-computer-use-appserver.mjs call --tool <tool> --arguments-json <json> [options]\n  node tools/codex-computer-use-appserver.mjs sequence --steps-json <json-array> [options]\n\nModes:\n  status\n      Start Codex app-server and print compact Computer Use status. This proves\n      the app-server can discover the Computer Use MCP server and its tools.\n      Pass --full to print every app-server MCP server for diagnostics.\n\n  list-apps\n      Call the read-only Computer Use list_apps tool through Codex app-server.\n      This is the safest positive service-backed regression probe.\n\n  get-state --app <app> [--approval inherit|accept-all|accept-once|deny]\n      Call the read-only get_app_state tool through Codex app-server.\n      Default approval=inherit auto-accepts Computer Use app-approval\n      elicitations, matching Codex's Any App setting for this external bridge.\n\n  call --tool <tool> --arguments-json <json>\n      Generic app-server-backed tool call. By default only read-only Computer\n      Use tools are allowed. Pass --allow-mutating to call click/type/scroll/etc.\n      Do not use mutating tools without an explicit task-level safety policy.\n\n  sequence --steps-json <json-array>\n      Run multiple Computer Use tool calls in one app-server thread. Each step\n      is {\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Activity Monitor\"}}.\n      Steps may include label, expectText, expectAbsentText, and allowError.\n      Element-targeted tools accept element_index as a string or number,\n      element as an alias, stable elementId / element_id values, or exact\n      elementDescription / element_description matches. press_key accepts\n      xdotool-style combos or key plus modifiers, e.g. key=\",\" with COMMAND\n      normalizes to super+comma. The bridge refreshes app state before\n      resolving stable targets and coerces indexes to strings.\n      Use this for get_app_state -> action -> get_app_state validation.\n\nOptions:\n  --codex <path>                 Codex CLI/app-server binary.\n                                 Default: ${DEFAULT_CODEX_BIN}\n                                 Env: CODEX_BIN\n  --cwd <path>                   Thread cwd. Default: current directory.\n  --app <name|bundle|path>       App for get-state.\n  --tool <name>                  Computer Use tool for call mode.\n  --arguments-json <json>        JSON object arguments for call mode.\n  --steps-json <json-array>      JSON array of sequence steps.\n  --approval <mode>              inherit, accept-all, accept-once, or deny. Default: inherit.\n  --running-only                 For list-apps, return only currently running apps.\n  --filter <text>                For list-apps, substring-filter app name/path/bundle lines.\n  --include-image                Keep image blocks in JSON output. Default: omit.\n  --save-image <path>            Save the first returned image block to a file.\n  --max-text-chars <n>           Truncate each text block in output. Default: ${DEFAULT_MAX_TEXT_CHARS}\n  --tool-timeout-ms <ms>         Tool call timeout. Default: ${DEFAULT_TOOL_TIMEOUT_MS}\n  --startup-timeout-ms <ms>      initialize timeout. Default: ${DEFAULT_STARTUP_TIMEOUT_MS}\n  --thread-timeout-ms <ms>       thread/start timeout. Default: ${DEFAULT_THREAD_TIMEOUT_MS}\n  --shutdown-timeout-ms <ms>     app-server shutdown grace period. Default: ${DEFAULT_SHUTDOWN_TIMEOUT_MS}\n  --allow-mutating               Permit call/sequence mode to invoke non-read-only tools.\n  --preserve-mouse               Restore mouse cursor position after the call/sequence.\n  --no-auto-restart-computer-use Disable one-shot app-server session restart/retry for read-only stopped-session/transport failures.\n  --full                         For status mode, include every app-server MCP server.\n  --pretty                       Pretty-print JSON output.\n  --quiet                        Suppress stderr event logs.\n  -h, --help                     Show this help.\n\nExit codes:\n  0  success\n  1  bridge/app-server failure\n  2  usage error\n  3  missing Codex app-server binary\n  4  timeout\n  5  child process exited unexpectedly\n\nSafety:\n  list-apps and get-state are read-only Computer Use tools, though get-state can\n  reveal screen/app contents and may launch or foreground an app. Mutating tools\n  are blocked unless --allow-mutating is explicitly passed.\n\nExamples:\n  node tools/codex-computer-use-appserver.mjs status --pretty\n  node tools/codex-computer-use-appserver.mjs status --full --pretty\n  node tools/codex-computer-use-appserver.mjs list-apps --running-only --filter "Activity Monitor" --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app "Activity Monitor" --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app "Activity Monitor" --include-image --save-image .scratch/activity-monitor.jpg\n  node tools/codex-computer-use-appserver.mjs call --tool list_apps --arguments-json '{}' --pretty\n  node tools/codex-computer-use-appserver.mjs sequence --allow-mutating --steps-json '[{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Activity Monitor\"}},{\"tool\":\"perform_secondary_action\",\"arguments\":{\"app\":\"Activity Monitor\",\"elementDescription\":\"Memory\",\"action\":\"Press\"}},{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Activity Monitor\"}}]'\n`);
+  process.stdout.write(`Codex Computer Use app-server bridge ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver.mjs status [--full] [options]\n  node tools/codex-computer-use-appserver.mjs list-apps [options]\n  node tools/codex-computer-use-appserver.mjs get-state --app <app> [--approval inherit|accept-all|accept-once|deny] [options]\n  node tools/codex-computer-use-appserver.mjs call --server <server> --tool <tool> --arguments-json <json> [options]\n  node tools/codex-computer-use-appserver.mjs sequence --steps-json <json-array> [options]\n\nModes:\n  status\n      Start Codex app-server and print all three public MCP inventories:\n      computer-use (10), event-stream (3), and skysight (5).\n      Pass --full to print every app-server MCP server for diagnostics.\n\n  list-apps\n      Call the read-only Computer Use list_apps tool through Codex app-server.\n      This is the safest positive service-backed regression probe.\n\n  get-state --app <app> [--approval inherit|accept-all|accept-once|deny]\n      Call the read-only get_app_state tool through Codex app-server.\n      Default approval=inherit auto-accepts Computer Use app-approval\n      elicitations, matching Codex's Any App setting for this external bridge.\n\n  call --server <server> --tool <tool> --arguments-json <json>\n      Call any of the 18 public tools. App mutation, recording starts, and\n      exclusion changes have separate guards. Status/list calls may expose\n      activity, artifact, or privacy metadata.\n\n  sequence --steps-json <json-array>\n      Run multiple Computer Use tool calls in one app-server thread. Each step\n      is {\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Activity Monitor\"}}.\n      Steps may include label, expectText, expectAbsentText, and allowError.\n      Element-targeted tools accept element_index as a string or number,\n      element as an alias, stable elementId / element_id values, or exact\n      elementDescription / element_description matches. press_key accepts\n      xdotool-style combos or key plus modifiers, e.g. key=\",\" with COMMAND\n      normalizes to super+comma. The bridge refreshes app state before\n      resolving stable targets and coerces indexes to strings.\n      Use this for get_app_state -> action -> get_app_state validation.\n\nOptions:\n  --codex <path>                 Codex CLI/app-server binary.\n                                 Default: ${DEFAULT_CODEX_BIN}\n                                 Env: CODEX_BIN\n  --cwd <path>                   Thread cwd. Default: current directory.\n  --app <name|bundle|path>       App for get-state.\n  --server <name>                computer-use (default), event-stream, or skysight.
+  --tool <name>                  Tool for call mode.\n  --arguments-json <json>        JSON object arguments for call mode.\n  --steps-json <json-array>      JSON array of sequence steps.\n  --approval <mode>              inherit, accept-all, accept-once, or deny. Default: inherit.\n  --running-only                 For list-apps, return only currently running apps.\n  --filter <text>                For list-apps, substring-filter app name/path/bundle lines.\n  --include-image                Keep image blocks in JSON output. Default: omit.\n  --save-image <path>            Save the first returned image block to a file.\n  --max-text-chars <n>           Truncate each text block in output. Default: ${DEFAULT_MAX_TEXT_CHARS}\n  --tool-timeout-ms <ms>         Tool call timeout. Default: ${DEFAULT_TOOL_TIMEOUT_MS}\n  --startup-timeout-ms <ms>      initialize timeout. Default: ${DEFAULT_STARTUP_TIMEOUT_MS}\n  --thread-timeout-ms <ms>       thread/start timeout. Default: ${DEFAULT_THREAD_TIMEOUT_MS}\n  --shutdown-timeout-ms <ms>     app-server shutdown grace period. Default: ${DEFAULT_SHUTDOWN_TIMEOUT_MS}\n  --allow-mutating               Permit app-control mutation.
+  --allow-recording              Required for event_stream_start or skysight_start.
+  --allow-privacy-change         Required for skysight_update_exclusion.
+  --safety-note <text>           Required with recording/privacy allow flags.\n  --preserve-mouse               Restore mouse cursor position after the call/sequence.\n  --no-auto-restart-computer-use Disable one-shot app-server session restart/retry for read-only stopped-session/transport failures.\n  --full                         For status mode, include every app-server MCP server.\n  --pretty                       Pretty-print JSON output.\n  --quiet                        Suppress stderr event logs.\n  -h, --help                     Show this help.\n\nExit codes:\n  0  success\n  1  bridge/app-server failure\n  2  usage error\n  3  missing Codex app-server binary\n  4  timeout\n  5  child process exited unexpectedly\n\nSafety:\n  list-apps and get-state are read-only Computer Use tools, though get-state can\n  reveal screen/app contents and may launch or foreground an app. Mutating tools\n  are blocked unless --allow-mutating is explicitly passed.\n\nExamples:\n  node tools/codex-computer-use-appserver.mjs status --pretty\n  node tools/codex-computer-use-appserver.mjs status --full --pretty\n  node tools/codex-computer-use-appserver.mjs list-apps --running-only --filter "Activity Monitor" --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app "Activity Monitor" --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app "Activity Monitor" --include-image --save-image .scratch/activity-monitor.jpg\n  node tools/codex-computer-use-appserver.mjs call --tool list_apps --arguments-json '{}' --pretty\n  node tools/codex-computer-use-appserver.mjs sequence --allow-mutating --steps-json '[{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Activity Monitor\"}},{\"tool\":\"perform_secondary_action\",\"arguments\":{\"app\":\"Activity Monitor\",\"elementDescription\":\"Memory\",\"action\":\"Press\"}},{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Activity Monitor\"}}]'\n`);
 }
 function normalizeArgTokens(argv) {
   const tokens = [];
@@ -229,6 +234,17 @@ function normalizeStringList(value, name) {
   throw new UsageError(`${name} must be a string or array of strings`);
 }
 
+function validateAuxiliaryGuard(tool, args, opts) {
+  if (tool === 'event_stream_start' || tool === 'skysight_start') {
+    if (!opts.allowRecording || !opts.safetyNote.trim()) throw new UsageError(`${tool} requires --allow-recording and a non-empty --safety-note`);
+  }
+  if (tool !== 'skysight_update_exclusion') return;
+  if (!opts.allowPrivacyChange || !opts.safetyNote.trim()) throw new UsageError('skysight_update_exclusion requires --allow-privacy-change and a non-empty --safety-note');
+  if (!['add', 'remove'].includes(args.operation) || !['app', 'url', 'private_browsing'].includes(args.scope)) throw new UsageError('skysight_update_exclusion requires operation add|remove and scope app|url|private_browsing');
+  if (args.scope === 'app' && !String(args.bundleID || '').trim()) throw new UsageError('app exclusions require bundleID');
+  if (args.scope === 'url' && !String(args.urlDomain || '').trim()) throw new UsageError('url exclusions require urlDomain');
+}
+
 function parseArgs(argv) {
   const tokens = normalizeArgTokens(argv);
   if (tokens.includes('-h') || tokens.includes('--help')) return { help: true };
@@ -243,6 +259,7 @@ function parseArgs(argv) {
     codexBin: process.env.CODEX_BIN || DEFAULT_CODEX_BIN,
     cwd: process.cwd(),
     app: undefined,
+    server: 'computer-use',
     tool: undefined,
     arguments: {},
     steps: [],
@@ -255,6 +272,9 @@ function parseArgs(argv) {
     toolTimeoutMs: DEFAULT_TOOL_TIMEOUT_MS,
     shutdownTimeoutMs: DEFAULT_SHUTDOWN_TIMEOUT_MS,
     allowMutating: false,
+    allowRecording: false,
+    allowPrivacyChange: false,
+    safetyNote: '',
     preserveMouse: false,
     autoRestartComputerUse: true,
     runningOnly: false,
@@ -275,6 +295,7 @@ function parseArgs(argv) {
       case '--codex': opts.codexBin = next(); break;
       case '--cwd': opts.cwd = next(); break;
       case '--app': opts.app = next(); break;
+      case '--server': opts.server = next(); break;
       case '--tool': opts.tool = next(); break;
       case '--arguments-json': opts.arguments = normalizeToolArguments(parseJsonObject('--arguments-json', next())); break;
       case '--steps-json': opts.steps = normalizeSequenceSteps(parseJsonArray('--steps-json', next())); break;
@@ -289,6 +310,9 @@ function parseArgs(argv) {
       case '--tool-timeout-ms': opts.toolTimeoutMs = parsePositiveInt('--tool-timeout-ms', next()); break;
       case '--shutdown-timeout-ms': opts.shutdownTimeoutMs = parsePositiveInt('--shutdown-timeout-ms', next()); break;
       case '--allow-mutating': opts.allowMutating = true; break;
+      case '--allow-recording': opts.allowRecording = true; break;
+      case '--allow-privacy-change': opts.allowPrivacyChange = true; break;
+      case '--safety-note': opts.safetyNote = next(); break;
       case '--preserve-mouse': opts.preserveMouse = true; break;
       case '--no-auto-restart-computer-use': opts.autoRestartComputerUse = false; break;
       case '--full': opts.statusFull = true; break;
@@ -317,10 +341,13 @@ function parseArgs(argv) {
     if (opts.steps.length === 0) throw new UsageError('sequence requires --steps-json <json-array>');
     opts.approval ??= 'inherit';
   }
+  if (!MCP_SERVERS[opts.server]) throw new UsageError('--server must be computer-use, event-stream, or skysight');
+  if (opts.tool && !MCP_SERVERS[opts.server].tools.includes(opts.tool)) throw new UsageError(`tool ${opts.tool} is not exposed by ${opts.server}`);
+  validateAuxiliaryGuard(opts.tool, opts.arguments, opts);
   if (opts.approval && !['inherit', 'accept-all', 'accept-once', 'deny'].includes(opts.approval)) {
     throw new UsageError('--approval must be inherit, accept-all, accept-once, or deny');
   }
-  if (opts.tool && !READ_ONLY_TOOLS.has(opts.tool) && !opts.allowMutating) {
+  if (opts.server === 'computer-use' && opts.tool && !READ_ONLY_TOOLS.has(opts.tool) && !opts.allowMutating) {
     throw new UsageError(`tool ${opts.tool} is not read-only; pass --allow-mutating to acknowledge GUI mutation`);
   }
   for (const [index, step] of opts.steps.entries()) {
@@ -525,7 +552,7 @@ function threadStartParams(opts) {
         plugins: true,
         tool_call_mcp_elicitation: true,
       },
-      mcp_servers: { 'computer-use': computerUseMcpServerConfig() },
+      mcp_servers: mcpServerConfigs(),
     },
   };
 }
@@ -636,11 +663,26 @@ async function runWithThread(opts, fn) {
   }
 }
 
+async function listMcpServerStatus(client, threadId, timeoutMs) {
+  const data = [];
+  let cursor = null;
+  for (let page = 0; page < 10; page += 1) {
+    const params = { threadId, detail: 'toolsAndAuthOnly', limit: 100 };
+    if (cursor) params.cursor = cursor;
+    const status = await client.request('mcpServerStatus/list', params, timeoutMs);
+    data.push(...(status.data || []));
+    cursor = typeof status.nextCursor === 'string' ? status.nextCursor : null;
+    if (!cursor) break;
+  }
+  return { data, nextCursor: cursor };
+}
+
 async function runStatus(opts) {
   return runWithThread(opts, async (client, { initialized, threadId }) => {
-    const status = await client.request('mcpServerStatus/list', { threadId, detail: 'toolsAndAuthOnly', limit: 100 }, opts.toolTimeoutMs);
+    const status = await listMcpServerStatus(client, threadId, opts.toolTimeoutMs);
     if (opts.statusFull) return { initialized, status: summarizeStatus(status) };
     return {
+      inventories: Object.fromEntries((status.data || []).filter((server) => MCP_SERVERS[server.name]).map((server) => [server.name, summarizeServer(server)])),
       computerUse: summarizeComputerUseStatus(status),
       plugin: computerUsePluginStatus(),
       appServer: { initialized: Boolean(initialized), threadStarted: true },
@@ -668,7 +710,7 @@ async function runTool(opts) {
     const callArgs = opts.tool === 'list_apps' ? stripListAppsHostArguments(args) : args;
     const result = await client.request('mcpServer/tool/call', {
       threadId,
-      server: 'computer-use',
+      server: opts.server,
       tool: opts.tool,
       arguments: callArgs,
     }, opts.toolTimeoutMs);
@@ -776,7 +818,7 @@ function writeJson(value, pretty = false) {
 
 function canAutoRecoverComputerUse(opts) {
   if (!opts.autoRestartComputerUse || opts.mode === 'status' || opts.mode === 'sequence') return false;
-  return opts.tool && READ_ONLY_TOOLS.has(opts.tool);
+  return opts.tool && AUTO_RECOVERY_TOOLS.has(opts.tool);
 }
 
 async function runSelectedMode(opts) {

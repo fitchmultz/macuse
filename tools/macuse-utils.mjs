@@ -24,7 +24,12 @@ export const DEFAULT_BUNDLED_COMPUTER_USE_CLIENT = resolve(DEFAULT_BUNDLED_COMPU
 export const DEFAULT_COMPUTER_USE_PLUGIN_ROOT = '/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use';
 export const DEFAULT_COMPUTER_USE_PLUGIN_DIR = discoverComputerUsePluginDir();
 export const DEFAULT_COMPUTER_USE_APP = '/Users/yourname/.codex/computer-use/Codex Computer Use.app';
-export const COMPUTER_USE_TOOL_NAMES = ['click', 'drag', 'get_app_state', 'list_apps', 'perform_secondary_action', 'press_key', 'scroll', 'select_text', 'set_value', 'type_text'];
+export const MCP_SERVERS = Object.freeze({
+  'computer-use': { args: ['mcp'], tools: ['click', 'drag', 'get_app_state', 'list_apps', 'perform_secondary_action', 'press_key', 'scroll', 'select_text', 'set_value', 'type_text'] },
+  'event-stream': { args: ['event-stream', 'mcp'], tools: ['event_stream_start', 'event_stream_status', 'event_stream_stop'] },
+  skysight: { args: ['skysight', 'mcp'], tools: ['skysight_list_exclusions', 'skysight_start', 'skysight_status', 'skysight_stop', 'skysight_update_exclusion'] },
+});
+export const COMPUTER_USE_TOOL_NAMES = MCP_SERVERS['computer-use'].tools;
 
 function compareVersionLike(a, b) {
   const aa = a.split(/[^0-9]+/).filter(Boolean).map(Number);
@@ -36,13 +41,13 @@ function compareVersionLike(a, b) {
   return a.localeCompare(b);
 }
 
-export function computerUseMcpServerConfig() {
-  return {
+export function mcpServerConfigs() {
+  return Object.fromEntries(Object.entries(MCP_SERVERS).map(([name, server]) => [name, {
     command: DEFAULT_BUNDLED_COMPUTER_USE_CLIENT,
-    args: ['mcp'],
+    args: server.args,
     cwd: DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR,
     enabled: true,
-  };
+  }]));
 }
 
 export function discoverComputerUsePluginDir(root = DEFAULT_COMPUTER_USE_PLUGIN_ROOT, opts = {}) {
@@ -57,7 +62,7 @@ export function discoverComputerUsePluginDir(root = DEFAULT_COMPUTER_USE_PLUGIN_
   } catch {
     // Fall back to latest path observed when this helper was updated.
   }
-  return opts.fallback === false ? null : resolve(root, '1.0.809');
+  return opts.fallback === false ? null : DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR;
 }
 
 export function nowIsoForPath(date = new Date()) {

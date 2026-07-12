@@ -8,9 +8,10 @@ import {
 	FEATURE_FLAGS,
 	PROCESS_REGISTRY_DIR,
 	PROCESS_REGISTRY_PREFIX,
-	UPSTREAM_COMPUTER_USE_TOOLS,
+	MCP_SERVERS,
 	VERSION,
-	computerUseMcpServerConfig,
+	mcpServerConfigs,
+	type McpServerName,
 	errorMessage,
 	isRecord,
 	type ApprovalMode,
@@ -308,26 +309,13 @@ function computerUseToolResultText(result: ComputerUseToolResult): string {
 		.join("\n");
 }
 
-function summarizeComputerUseInventory(statusResult: unknown): ComputerUseInventory {
+function summarizeInventories(statusResult: unknown): Record<McpServerName, ComputerUseInventory> {
 	const servers = isRecord(statusResult) && Array.isArray(statusResult.data) ? statusResult.data : [];
-	const server = servers.find((candidate) => isRecord(candidate) && candidate.name === "computer-use");
-	if (!isRecord(server)) {
-		return { present: false, authStatus: null, toolNames: [], toolCount: 0, missingTools: [...UPSTREAM_COMPUTER_USE_TOOLS], checkedAt: new Date().toISOString() };
-	}
-	const tools = isRecord(server.tools) ? Object.keys(server.tools).sort() : [];
-	return {
-		present: true,
-		authStatus: typeof server.authStatus === "string" ? server.authStatus : null,
-		toolNames: tools,
-		toolCount: tools.length,
-		missingTools: UPSTREAM_COMPUTER_USE_TOOLS.filter((tool) => !tools.includes(tool)),
-		checkedAt: new Date().toISOString(),
-	};
-}
-
-function mergeComputerUseInventories(current: ComputerUseInventory, next: ComputerUseInventory): ComputerUseInventory {
-	if (current.present) return current;
-	return next;
+	return Object.fromEntries(Object.entries(MCP_SERVERS).map(([name, expected]) => {
+		const server = servers.find((candidate) => isRecord(candidate) && candidate.name === name);
+		const tools = isRecord(server) && isRecord(server.tools) ? Object.keys(server.tools).sort() : [];
+		return [name, { server: name, present: isRecord(server), authStatus: isRecord(server) && typeof server.authStatus === "string" ? server.authStatus : null, toolNames: tools, toolCount: tools.length, missingTools: expected.tools.filter((tool) => !tools.includes(tool)), checkedAt: new Date().toISOString() }];
+	})) as Record<McpServerName, ComputerUseInventory>;
 }
 
 export class AppServerClient {
@@ -348,7 +336,7 @@ export class AppServerClient {
 	private processRecord: ProcessRecord | null = null;
 	private watchdog: ChildProcess | null = null;
 	private staleReapSummary: ReapSummary[] = [];
-	private computerUseInventory: ComputerUseInventory | null = null;
+	private inventories: Record<McpServerName, ComputerUseInventory> | null = null;
 	private computerUseRecoveryEvents: ComputerUseRestartSummary[] = [];
 
 	constructor(private readonly codexBin = process.env.CODEX_BIN || DEFAULT_CODEX_BIN, private readonly cwd = process.cwd()) {
@@ -367,7 +355,8 @@ export class AppServerClient {
 			registryDir: PROCESS_REGISTRY_DIR,
 			staleReapSummary: this.staleReapSummary,
 			threadId: this.thread?.id ?? null,
-			computerUse: this.computerUseInventory,
+			computerUse: this.inventories?.["computer-use"] ?? null,
+			inventories: this.inventories,
 			computerUseRecoveryEvents: this.computerUseRecoveryEvents.slice(-10),
 			acceptedElicitations: this.acceptedElicitations,
 			elicitationCount: this.elicitationCount,
@@ -433,7 +422,7 @@ export class AppServerClient {
 					plugins: true,
 					tool_call_mcp_elicitation: true,
 				},
-				mcp_servers: { "computer-use": computerUseMcpServerConfig() },
+				mcp_servers: mcpServerConfigs(),
 			},
 		}, Math.min(Math.max(timeoutMs, 45_000), 120_000), signal);
 		const thread = isRecord(threadStart) && isRecord(threadStart.thread) ? threadStart.thread : null;
@@ -444,22 +433,25 @@ export class AppServerClient {
 
 	private async verifyComputerUseInventory(threadId: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {
 		const deadline = Date.now() + timeoutMs;
+		const inventories = summarizeInventories(null);
 		let cursor: string | null = null;
-		let inventory: ComputerUseInventory = { present: false, authStatus: null, toolNames: [], toolCount: 0, missingTools: [...UPSTREAM_COMPUTER_USE_TOOLS], checkedAt: null };
 		for (let page = 0; page < 10; page += 1) {
-			const remaining = Math.max(1_000, deadline - Date.now());
-			if (remaining <= 1_000 && page > 0) break;
 			const params: Record<string, unknown> = { threadId, detail: "toolsAndAuthOnly", limit: 100 };
 			if (cursor) params.cursor = cursor;
-			const status = await this.request("mcpServerStatus/list", params, Math.min(remaining, 30_000), signal);
-			inventory = mergeComputerUseInventories(inventory, summarizeComputerUseInventory(status));
-			const nextCursor = isRecord(status) && typeof status.nextCursor === "string" ? status.nextCursor : null;
-			if (inventory.present || !nextCursor) break;
-			cursor = nextCursor;
+			const status = await this.request("mcpServerStatus/list", params, Math.min(Math.max(1_000, deadline - Date.now()), 30_000), signal);
+			const pageInventories = summarizeInventories(status);
+			for (const name of Object.keys(MCP_SERVERS) as McpServerName[]) {
+				if (pageInventories[name].present) inventories[name] = pageInventories[name];
+			}
+			if (Object.values(inventories).every((inventory) => inventory.present)) break;
+			cursor = isRecord(status) && typeof status.nextCursor === "string" ? status.nextCursor : null;
+			if (!cursor) break;
 		}
-		this.computerUseInventory = inventory;
-		if (!inventory.present) throw new ComputerUseError("Codex app-server did not list the computer-use MCP server.", inventory);
-		if (inventory.missingTools.length > 0) throw new ComputerUseError(`Computer Use MCP server is missing required tools: ${inventory.missingTools.join(", ")}`, inventory);
+		this.inventories = inventories;
+		for (const inventory of Object.values(inventories)) {
+			if (!inventory.present) throw new ComputerUseError(`Codex app-server did not list the ${inventory.server} MCP server.`, inventory);
+			if (inventory.missingTools.length) throw new ComputerUseError(`${inventory.server} MCP server is missing required tools: ${inventory.missingTools.join(", ")}`, inventory);
+		}
 	}
 
 	private onStdout(chunk: string): void {
@@ -535,7 +527,7 @@ export class AppServerClient {
 		this.proc = null;
 		this.thread = null;
 		this.initialized = null;
-		this.computerUseInventory = null;
+		this.inventories = null;
 		if (this.processRecord) safeUnlink(this.processRecord.pidFile);
 		this.processRecord = null;
 		this.watchdog = null;
@@ -606,11 +598,12 @@ export class AppServerClient {
 		return recovery;
 	}
 
-	async callTool(tool: string, args: Record<string, JsonValue>, opts: { approval: ApprovalMode; timeoutMs: number; signal?: AbortSignal }): Promise<{ result: ComputerUseToolResult; durationMs: number; acceptedElicitations: number; elicitationCount: number }> {
+	async callTool(tool: string, args: Record<string, JsonValue>, opts: { approval: ApprovalMode; timeoutMs: number; signal?: AbortSignal; server?: McpServerName }): Promise<{ result: ComputerUseToolResult; durationMs: number; acceptedElicitations: number; elicitationCount: number }> {
 		return this.runExclusive(async () => {
 			const acceptedBefore = this.acceptedElicitations;
 			const elicitationBefore = this.elicitationCount;
 			const started = Date.now();
+			const server = opts.server ?? "computer-use";
 			const result = await withReadOnlyComputerUseRecovery({
 				tool,
 				resultText: computerUseToolResultText,
@@ -626,7 +619,7 @@ export class AppServerClient {
 						if (!threadId) throw new ComputerUseError("Codex app-server thread is not ready.");
 						return await this.request("mcpServer/tool/call", {
 							threadId,
-							server: "computer-use",
+							server,
 							tool,
 							arguments: args,
 						}, opts.timeoutMs, opts.signal) as ComputerUseToolResult;
@@ -651,7 +644,7 @@ export class AppServerClient {
 		this.proc = null;
 		this.thread = null;
 		this.initialized = null;
-		this.computerUseInventory = null;
+		this.inventories = null;
 		this.processRecord = null;
 		this.watchdog = null;
 		if (record) safeUnlink(record.pidFile);

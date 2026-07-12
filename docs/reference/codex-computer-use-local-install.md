@@ -6,7 +6,7 @@ Posted: Not applicable; local installed app and plugin cache
 Scraped: May 22, 2026
 Refreshed: May 22, 2026 09:35 MDT after the Codex host app update, external-harness TCC probes, app-server bridge validation, and guarded Calculator click/key validation. Spot-checked again June 8, 2026 after subsequent Codex updates. Current validation uses Activity Monitor instead of Calculator. Updated July 12, 2026 after Codex merged into ChatGPT.
 Observed install metadata at May 22 refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin still `1.0.799`; app bundle `com.openai.sky.CUAService`; notarized Developer ID app from OpenAI
-Current July 12 spot-check: ChatGPT host app `26.707.51957` build `5175` (bundle ID remains `com.openai.codex`); Codex CLI `0.144.0-alpha.4`; bundled Computer Use plugin `1.0.1000387`.
+Current July 12 spot-check: ChatGPT host app `26.707.51957` build `5175` (bundle ID remains `com.openai.codex`); Codex CLI `0.144.0-alpha.4`; bundled Computer Use plugin `1.0.1000387`. Its public MCP inventory is `computer-use`/`mcp` (10 tools), `event-stream`/`event-stream mcp` (3), and `skysight`/`skysight mcp` (5). Discover the cache version at runtime rather than using historical `1.0.799`/`1.0.809` fallback paths.
 
 The host app, Codex CLI, and bundled Computer Use plugin now live inside
 `/Applications/ChatGPT.app`. The separate Computer Use service also remains
@@ -230,8 +230,9 @@ The MCP `serverInfo` returned:
 ```
 
 For positive operation, use the Codex app-server bridge instead of calling
-`SkyComputerUseClient mcp` directly. `status` prints compact Computer Use
-status by default; pass `--full` to inspect every app-server MCP server:
+`SkyComputerUseClient mcp` directly. `status` prints compact inventories for
+`computer-use`, `event-stream`, and `skysight`; pass `--full` to inspect every
+configured app-server MCP server:
 
 ```bash
 node tools/codex-computer-use-appserver.mjs status --quiet --pretty
@@ -249,11 +250,11 @@ The bridge starts:
   --enable tool_call_mcp_elicitation
 ```
 
-It then creates an ephemeral app-server thread, explicitly configures that
-thread's `computer-use` MCP transport from the ChatGPT-bundled plugin, verifies
-the thread-scoped tool inventory, and calls Computer Use through
-`mcpServer/tool/call`. The explicit transport prevents stale or disabled global
-Codex MCP config from shadowing the bundled server.
+It then creates an ephemeral app-server thread, explicitly configures the
+`computer-use`, `event-stream`, and `skysight` transports from the
+ChatGPT-bundled plugin, verifies their paginated thread-scoped inventories, and
+calls the selected server through `mcpServer/tool/call`. The explicit transports
+prevent stale or disabled global Codex MCP config from shadowing them.
 
 Practical limits:
 

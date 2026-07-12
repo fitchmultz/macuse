@@ -42,12 +42,14 @@ node tools/macuse-config.mjs cursor --pretty --out configs/cursor-mcp.local.json
 The wrapper:
 
 - starts Codex app-server with Computer Use feature flags,
-- creates an ephemeral app-server thread,
-- exposes the Computer Use tool family over standard MCP,
+- creates an ephemeral app-server thread with `computer-use`, `event-stream`, and `skysight`,
+- exposes all 18 verified public tools over standard MCP,
 - defaults to `approval: "inherit"`, auto-accepting Computer Use app approvals
   to match Codex's Any App setting,
 - routes tool execution through app-server `mcpServer/tool/call`,
-- sanitizes stopped-session sentinels and restarts only its app-server session before retrying read-only Computer Use calls once, and
+- sanitizes stopped-session sentinels and restarts only its app-server session before retrying read-only app/status/list calls once,
+- requires `allowRecording:true` plus `safetyNote` for Record & Replay/Skysight starts,
+- requires `allowPrivacyChange:true`, `safetyNote`, and scope-specific fields for Skysight exclusion updates, and
 - restores mouse position after pointer `click` / `drag` calls.
 
 ## Tool use rules
@@ -59,7 +61,8 @@ The wrapper:
 4. App approval defaults to `approval: "inherit"`. Use `approval: "ask"` only
    when a client should surface MCP elicitation prompts, or `approval: "deny"`
    for denial-path tests.
-5. Stop before purchases, sends, deletes, credential/account/security/privacy
+5. Use `event_stream_status`, `skysight_status`, and `skysight_list_exclusions` only when activity/artifact/privacy metadata is relevant. Recording starts require explicit user intent, `allowRecording:true`, and `safetyNote`; exclusion changes require fresh exact approval, `allowPrivacyChange:true`, and scope-specific arguments.
+6. Stop before purchases, sends, deletes, credential/account/security/privacy
    changes, installs, or ambiguous wrong-window actions unless the user gives
    fresh explicit approval for that exact operation.
 
@@ -73,8 +76,9 @@ This validates:
 
 - wrapper syntax,
 - MCP initialize,
-- `tools/list` with all expected Computer Use tools,
+- `tools/list` with all 18 expected tools and upstream-matching auxiliary annotations,
 - MCP elicitation proxying on a Finder denial path,
 - `get_app_state` for Activity Monitor,
-- pointer guard for `click`, and
+- safe `event_stream_status` routing without starting recording,
+- pointer, recording-start, and privacy-change guards, and
 - default-inherit app approval behavior.
