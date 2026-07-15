@@ -60,8 +60,8 @@
     "node": ">=22.19.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "^0.80.6",
-    "@earendil-works/pi-coding-agent": "^0.80.6",
+    "@earendil-works/pi-ai": "^0.80.7",
+    "@earendil-works/pi-coding-agent": "^0.80.7",
     "@types/node": "^22.0.0",
     "jiti": "^2.7.0",
     "typebox": "^1.1.38",
