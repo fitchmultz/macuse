@@ -44,7 +44,7 @@ node tools/macuse-config.mjs cursor --pretty
 
 ## Validation
 
-The current local Pi extension baseline is Pi 0.80.7; Pi runtime packages remain wildcard peers supplied by the host.
+The current local Pi extension baseline is Pi 0.80.9; Pi runtime packages remain wildcard peers supplied by the host.
 
 Run the reusable smoke suite (add `--json` to `validate-macuse.mjs` for machine-readable pass/warn/fail summaries):
 
