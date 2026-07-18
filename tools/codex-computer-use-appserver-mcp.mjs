@@ -26,13 +26,32 @@ const ELEMENT_ID_SCHEMA = { type: 'string', description: 'Stable element ID from
 const ELEMENT_DESCRIPTION_SCHEMA = { type: 'string', description: 'Exact case-insensitive element description from get_app_state, resolved to the current element_index before calling upstream.' };
 
 if (process.argv.includes('-h') || process.argv.includes('--help')) {
-  process.stdout.write(`macuse Codex Computer Use MCP wrapper ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver-mcp.mjs\n\nThis is a stdio MCP server exposing all 18 verified app-control, Record & Replay,\nand Skysight tools with local pointer/recording/privacy guards. Configure it in\nCursor or another MCP client; do not run it directly except for --help or syntax\nchecks.\n\nEnvironment:\n  CODEX_BIN          Codex app-server binary. Default: ${DEFAULT_CODEX_BIN}\n  CODEX_CU_MCP_CWD  Thread cwd. Default: current working directory.\n\nGenerate client config:\n  node tools/macuse-config.mjs cursor --pretty\n\nValidate:\n  node tools/validate-macuse.mjs mcp\n`);
+  process.stdout.write(`macuse Codex Computer Use MCP wrapper ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver-mcp.mjs\n\nThis is a stdio MCP server exposing all 20 verified app-control, Record & Replay,\nand Computer History tools with local pointer/recording/privacy guards. Configure it in\nCursor or another MCP client; do not run it directly except for --help or syntax\nchecks.\n\nEnvironment:\n  CODEX_BIN          Codex app-server binary. Default: ${DEFAULT_CODEX_BIN}\n  CODEX_CU_MCP_CWD  Thread cwd. Default: current working directory.\n\nGenerate client config:\n  node tools/macuse-config.mjs cursor --pretty\n\nValidate:\n  node tools/validate-macuse.mjs mcp\n`);
   process.exit(0);
 }
 
 function auxiliarySchema(name, description, readOnly, properties = {}, required = [], idempotent = readOnly) {
   return { name, description, inputSchema: { type: 'object', additionalProperties: false, properties, ...(required.length ? { required } : {}) }, annotations: { readOnlyHint: readOnly, destructiveHint: false, idempotentHint: idempotent, openWorldHint: false } };
 }
+
+const OBSERVATION_ENTRY_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: { scope: { type: 'string', enum: ['app', 'url'] }, bundleID: { type: 'string', description: 'Required for app rules.' }, urlDomain: { type: 'string', description: 'Required for URL rules. Use a domain without a scheme or path.' } },
+  required: ['scope'],
+};
+const OBSERVATION_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    defaultApplicationBehavior: { type: 'string', enum: ['observe', 'do_not_observe'] },
+    defaultURLBehavior: { type: 'string', enum: ['observe', 'do_not_observe'] },
+    allowlist: { type: 'array', items: OBSERVATION_ENTRY_SCHEMA },
+    blocklist: { type: 'array', items: OBSERVATION_ENTRY_SCHEMA },
+    observePrivateBrowsing: { type: 'boolean' },
+  },
+  required: ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist', 'observePrivateBrowsing'],
+};
 
 const TOOL_SCHEMAS = {
   list_apps: {
@@ -106,11 +125,13 @@ const TOOL_SCHEMAS = {
   event_stream_start: auxiliarySchema('event_stream_start', 'Start Record & Replay activity recording. Requires allowRecording:true and a non-empty safetyNote.', false, { allowRecording: { type: 'boolean' }, safetyNote: { type: 'string' } }, ['allowRecording', 'safetyNote']),
   event_stream_status: auxiliarySchema('event_stream_status', 'Read Record & Replay status. Read-only, but exposes activity/artifact metadata.', true),
   event_stream_stop: auxiliarySchema('event_stream_stop', 'Stop Record & Replay. Does not require allowRecording.', false, {}, [], true),
-  skysight_start: auxiliarySchema('skysight_start', 'Start Skysight activity capture. Requires allowRecording:true and a non-empty safetyNote.', false, { allowRecording: { type: 'boolean' }, safetyNote: { type: 'string' } }, ['allowRecording', 'safetyNote']),
-  skysight_stop: auxiliarySchema('skysight_stop', 'Stop Skysight. Does not require allowRecording.', false, {}, [], true),
-  skysight_status: auxiliarySchema('skysight_status', 'Read Skysight status. Read-only, but exposes activity/artifact metadata.', true),
-  skysight_list_exclusions: auxiliarySchema('skysight_list_exclusions', 'List Skysight exclusions. Read-only, but exposes privacy and activity metadata.', true),
-  skysight_update_exclusion: auxiliarySchema('skysight_update_exclusion', 'Add/remove a Skysight privacy exclusion. Requires allowPrivacyChange:true, safetyNote, and scope-specific arguments.', false, { operation: { type: 'string', enum: ['add', 'remove'] }, scope: { type: 'string', enum: ['app', 'url', 'private_browsing'] }, bundleID: { type: 'string' }, urlDomain: { type: 'string' }, allowPrivacyChange: { type: 'boolean' }, safetyNote: { type: 'string' } }, ['operation', 'scope', 'allowPrivacyChange', 'safetyNote'], true),
+  computer_history_start: auxiliarySchema('computer_history_start', 'Start Computer History recording. Requires allowRecording:true and a non-empty safetyNote.', false, { allowRecording: { type: 'boolean' }, safetyNote: { type: 'string' } }, ['allowRecording', 'safetyNote'], true),
+  computer_history_stop: auxiliarySchema('computer_history_stop', 'Stop Computer History. Does not require allowRecording.', false, {}, [], true),
+  computer_history_pause: auxiliarySchema('computer_history_pause', 'Pause Computer History. Does not require allowRecording.', false, {}, [], true),
+  computer_history_resume: auxiliarySchema('computer_history_resume', 'Resume Computer History recording. Requires allowRecording:true and a non-empty safetyNote.', false, { allowRecording: { type: 'boolean' }, safetyNote: { type: 'string' } }, ['allowRecording', 'safetyNote'], true),
+  computer_history_status: auxiliarySchema('computer_history_status', 'Read Computer History status. Read-only, but exposes activity metadata.', true),
+  computer_history_get_settings: auxiliarySchema('computer_history_get_settings', 'Read Computer History settings. Read-only, but exposes privacy metadata.', true),
+  computer_history_update_settings: auxiliarySchema('computer_history_update_settings', 'Replace all Computer History observation settings. Call computer_history_get_settings immediately first and preserve unchanged fields. Requires allowPrivacyChange:true and a non-empty safetyNote.', false, { observation: OBSERVATION_SCHEMA, allowPrivacyChange: { type: 'boolean' }, safetyNote: { type: 'string' } }, ['observation', 'allowPrivacyChange', 'safetyNote'], true),
   drag: {
     name: 'drag',
     description: 'Pointer drag using screenshot coordinates. Requires allowPointer:true and prior get_app_state for the same app. Mouse position is restored after the call.',
@@ -264,7 +285,7 @@ class AppServerClient {
         this.currentApproval = args.approval || 'inherit';
         this.acceptedElicitations = 0;
         try {
-          const server = MCP_SERVERS['event-stream'].tools.includes(tool) ? 'event-stream' : MCP_SERVERS.skysight.tools.includes(tool) ? 'skysight' : 'computer-use';
+          const server = MCP_SERVERS['event-stream'].tools.includes(tool) ? 'event-stream' : MCP_SERVERS['computer-history'].tools.includes(tool) ? 'computer-history' : 'computer-use';
           return sanitizeComputerUseResult(await this.request('mcpServer/tool/call', { threadId, server, tool, arguments: stripWrapperArgs(args) }, REQUEST_TIMEOUT_MS));
         } finally {
           this.currentApproval = 'deny';
@@ -290,14 +311,21 @@ class AppServerClient {
 }
 
 function validateAuxiliaryGuard(tool, args) {
-  if (tool === 'event_stream_start' || tool === 'skysight_start') {
+  if (tool === 'event_stream_start' || tool === 'computer_history_start' || tool === 'computer_history_resume') {
     if (args.allowRecording !== true || !String(args.safetyNote || '').trim()) throw new Error(`${tool} requires allowRecording:true and a non-empty safetyNote`);
   }
-  if (tool !== 'skysight_update_exclusion') return;
+  if (tool !== 'computer_history_update_settings') return;
   if (args.allowPrivacyChange !== true || !String(args.safetyNote || '').trim()) throw new Error(`${tool} requires allowPrivacyChange:true and a non-empty safetyNote`);
-  if (!['add', 'remove'].includes(args.operation) || !['app', 'url', 'private_browsing'].includes(args.scope)) throw new Error(`${tool} requires operation add|remove and scope app|url|private_browsing`);
-  if (args.scope === 'app' && !String(args.bundleID || '').trim()) throw new Error(`${tool} app scope requires bundleID`);
-  if (args.scope === 'url' && !String(args.urlDomain || '').trim()) throw new Error(`${tool} url scope requires urlDomain`);
+  const observation = args.observation;
+  const validEntries = (value) => Array.isArray(value) && value.every((entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
+    && ((entry.scope === 'app' && typeof entry.bundleID === 'string' && entry.bundleID.trim())
+      || (entry.scope === 'url' && typeof entry.urlDomain === 'string' && entry.urlDomain.trim() && !entry.urlDomain.includes('://') && !entry.urlDomain.includes('/'))));
+  if (!observation || !['observe', 'do_not_observe'].includes(observation.defaultApplicationBehavior)
+    || !['observe', 'do_not_observe'].includes(observation.defaultURLBehavior)
+    || !validEntries(observation.allowlist) || !validEntries(observation.blocklist)
+    || typeof observation.observePrivateBrowsing !== 'boolean') {
+    throw new Error(`${tool} requires all Computer History settings fields and valid scope-specific allowlist/blocklist entries`);
+  }
 }
 
 function stripWrapperArgs(args) {

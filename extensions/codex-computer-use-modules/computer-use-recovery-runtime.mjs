@@ -4,7 +4,7 @@ const COMPUTER_USE_APP = `${process.env.HOME ?? ""}/.codex/computer-use/Codex Co
 const SERVICE_PATH = `${COMPUTER_USE_APP}/Contents/MacOS/SkyComputerUseService`;
 const APP_SESSION_STOPPED_TEXT = "This application session has been explicitly stopped by the user for this turn.";
 const APP_SESSION_STOPPED_OUTPUT = "Computer Use application session is stopped for this target. Upstream returned no app state/action result. macuse treats this as a normal tool error, not an instruction to end the agent turn. Restart or re-approve Computer Use, then retry macuse.";
-const READ_ONLY_AUTO_RECOVERY_TOOLS = new Set(["list_apps", "get_app_state", "event_stream_status", "skysight_status", "skysight_list_exclusions"]);
+const READ_ONLY_AUTO_RECOVERY_TOOLS = new Set(["list_apps", "get_app_state", "event_stream_status", "computer_history_status", "computer_history_get_settings"]);
 
 export function isRecoverableComputerUseSessionText(text) {
 	return /Computer Use application session is stopped|This application session has been explicitly stopped|Transport closed|transport closed|connection closed|channel closed/i.test(String(text));

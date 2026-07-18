@@ -171,16 +171,24 @@ const eventStreamPayloadParam = Type.Object({
 	allowRecording: Type.Optional(Type.Boolean({ description: "Required for start. Explicitly acknowledges activity recording." })),
 	...auxiliaryCommon,
 });
-const skysightPayloadParam = Type.Object({
-	operation: StringEnum(["start", "stop", "status", "update_exclusion", "list_exclusions"] as const, { description: "Skysight operation. status/list expose activity, artifact, and privacy-exclusion metadata." }),
+const computerHistoryObservationEntryParam = Type.Object({
+	scope: StringEnum(["app", "url"] as const),
+	bundleID: Type.Optional(Type.String({ description: "Required for app rules." })),
+	urlDomain: Type.Optional(Type.String({ description: "Required for URL rules. Use a domain without a scheme or path." })),
+}, { additionalProperties: false });
+const computerHistoryPayloadParam = Type.Object({
+	operation: StringEnum(["start", "stop", "pause", "resume", "status", "get_settings", "update_settings"] as const, { description: "Computer History operation. status/get_settings expose activity and privacy metadata; update_settings replaces all settings, so call get_settings immediately first and preserve unchanged fields." }),
 	arguments: Type.Optional(Type.Object({
-		operation: Type.Optional(StringEnum(["add", "remove"] as const)),
-		scope: Type.Optional(StringEnum(["app", "url", "private_browsing"] as const)),
-		bundleID: Type.Optional(Type.String()),
-		urlDomain: Type.Optional(Type.String()),
+		observation: Type.Object({
+			defaultApplicationBehavior: StringEnum(["observe", "do_not_observe"] as const),
+			defaultURLBehavior: StringEnum(["observe", "do_not_observe"] as const),
+			allowlist: Type.Array(computerHistoryObservationEntryParam),
+			blocklist: Type.Array(computerHistoryObservationEntryParam),
+			observePrivateBrowsing: Type.Boolean(),
+		}, { additionalProperties: false }),
 	}, { additionalProperties: false })),
-	allowRecording: Type.Optional(Type.Boolean({ description: "Required for start. Explicitly acknowledges activity recording." })),
-	allowPrivacyChange: Type.Optional(Type.Boolean({ description: "Required for exclusion updates." })),
+	allowRecording: Type.Optional(Type.Boolean({ description: "Required for start and resume. Explicitly acknowledges activity recording." })),
+	allowPrivacyChange: Type.Optional(Type.Boolean({ description: "Required for update_settings." })),
 	...auxiliaryCommon,
 });
 
@@ -212,7 +220,7 @@ type RestartComputerUseParams = {
 };
 
 type AuxiliaryParams = { operation: string; arguments?: Record<string, JsonValue>; allowRecording?: boolean; allowPrivacyChange?: boolean; safetyNote?: string; toolTimeoutMs?: number };
-type MacuseAction = "list_apps" | "get_app_state" | "sequence" | "restart_computer_use" | "event_stream" | "skysight";
+type MacuseAction = "list_apps" | "get_app_state" | "sequence" | "restart_computer_use" | "event_stream" | "computer_history";
 type MacuseParams = {
 	action: MacuseAction;
 	listApps?: ListAppsParams;
@@ -220,26 +228,41 @@ type MacuseParams = {
 	sequence?: SequenceParams;
 	restartComputerUse?: RestartComputerUseParams;
 	eventStream?: AuxiliaryParams;
-	skysight?: AuxiliaryParams;
+	computerHistory?: AuxiliaryParams;
 };
 
-const actionPayloadKey: Record<MacuseAction, "listApps" | "getAppState" | "sequence" | "restartComputerUse" | "eventStream" | "skysight"> = {
+const actionPayloadKey: Record<MacuseAction, "listApps" | "getAppState" | "sequence" | "restartComputerUse" | "eventStream" | "computerHistory"> = {
 	list_apps: "listApps",
 	get_app_state: "getAppState",
 	sequence: "sequence",
 	restart_computer_use: "restartComputerUse",
 	event_stream: "eventStream",
-	skysight: "skysight",
+	computer_history: "computerHistory",
 };
 
 function actionPayload<T>(input: MacuseParams): T {
 	const key = actionPayloadKey[input.action];
 	if (!key) throw new Error("Unknown macuse action.");
-	const payloadKeys = (["listApps", "getAppState", "sequence", "restartComputerUse", "eventStream", "skysight"] as const).filter((item) => (input as Record<string, unknown>)[item] !== undefined);
+	const payloadKeys = (["listApps", "getAppState", "sequence", "restartComputerUse", "eventStream", "computerHistory"] as const).filter((item) => (input as Record<string, unknown>)[item] !== undefined);
 	if (payloadKeys.length !== 1 || payloadKeys[0] !== key) throw new Error(`macuse action=${input.action} requires exactly one ${key} payload object and no other action payloads.`);
 	const payload = input[key];
 	if (!isRecord(payload)) throw new Error(`macuse action=${input.action} requires ${key} to be an object.`);
 	return payload as T;
+}
+
+function validateComputerHistoryObservation(args: Record<string, JsonValue>, tool: string): void {
+	const observation = args.observation;
+	const validEntries = (value: unknown): boolean => Array.isArray(value) && value.every((entry) => isRecord(entry)
+		&& ((entry.scope === "app" && typeof entry.bundleID === "string" && entry.bundleID.trim())
+			|| (entry.scope === "url" && typeof entry.urlDomain === "string" && entry.urlDomain.trim() && !entry.urlDomain.includes("://") && !entry.urlDomain.includes("/"))));
+	if (!isRecord(observation)
+		|| (observation.defaultApplicationBehavior !== "observe" && observation.defaultApplicationBehavior !== "do_not_observe")
+		|| (observation.defaultURLBehavior !== "observe" && observation.defaultURLBehavior !== "do_not_observe")
+		|| !validEntries(observation.allowlist)
+		|| !validEntries(observation.blocklist)
+		|| typeof observation.observePrivateBrowsing !== "boolean") {
+		throw new Error(`${tool} requires all Computer History settings fields and valid scope-specific allowlist/blocklist entries.`);
+	}
 }
 
 let client: AppServerClient | null = null;
@@ -301,7 +324,7 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "macuse",
 		label: "macuse",
-		description: "Use macuse, backed by OpenAI Codex Computer Use, to inspect/control macOS apps and access guarded Record & Replay or Skysight operations through one persistent app-server session. Recording starts require allowRecording:true plus safetyNote; exclusion updates require allowPrivacyChange:true plus safetyNote. Status/list calls expose activity/artifact metadata.",
+		description: "Use macuse, backed by OpenAI Codex Computer Use, to inspect/control macOS apps and access guarded Record & Replay or Computer History operations through one persistent app-server session. Recording starts/resumes require allowRecording:true plus safetyNote; settings updates require allowPrivacyChange:true plus safetyNote. Status/get_settings calls expose activity/privacy metadata.",
 		promptSnippet: "Inspect or safely operate local macOS apps with macuse",
 		promptGuidelines: [
 			"Use macuse action=list_apps to discover the exact app name, bundle ID, or path before app-state inspection when the target app is uncertain.",
@@ -311,34 +334,31 @@ export default function (pi: ExtensionAPI) {
 			"For mutating macuse sequences, keep the flow narrow, include a concrete safetyNote, set allowMutating=true, and stop before purchases, sends, deletes, credential changes, account/security/privacy changes, or ambiguous windows.",
 			"Prefer macuse sequence steps using perform_secondary_action with action=Press, press_key, set_value, select_text, or element-targeted scroll over pointer click when possible to preserve mouse/system focus.",
 			"For macuse element targeting, prefer stable elementId values from get_app_state when present, then exact elementDescription, then unique role/name, then guarded element_index.",
-			"Use event_stream/skysight only when requested; starts require allowRecording and safetyNote, exclusion updates require allowPrivacyChange and safetyNote, while status/list expose sensitive metadata.",
+			"Use event_stream/computer_history only when requested; starts and Computer History resume require allowRecording and safetyNote. Before update_settings, call get_settings immediately and preserve every unchanged field; update_settings also requires allowPrivacyChange and safetyNote. Status/get_settings expose sensitive metadata.",
 		],
 		parameters: Type.Object({
-			action: StringEnum(["list_apps", "get_app_state", "sequence", "restart_computer_use", "event_stream", "skysight"] as const, { description: "macuse operation to run." }),
+			action: StringEnum(["list_apps", "get_app_state", "sequence", "restart_computer_use", "event_stream", "computer_history"] as const, { description: "macuse operation to run." }),
 			listApps: Type.Optional(listAppsPayloadParam),
 			getAppState: Type.Optional(getAppStatePayloadParam),
 			sequence: Type.Optional(sequencePayloadParam),
 			restartComputerUse: Type.Optional(restartComputerUsePayloadParam),
 			eventStream: Type.Optional(eventStreamPayloadParam),
-			skysight: Type.Optional(skysightPayloadParam),
+			computerHistory: Type.Optional(computerHistoryPayloadParam),
 		}),
 		executionMode: "sequential",
 		async execute(_toolCallId, params, signal, onUpdate, _ctx) {
 			const input = params as MacuseParams;
-			if (input.action === "event_stream" || input.action === "skysight") {
+			if (input.action === "event_stream" || input.action === "computer_history") {
 				const payload = actionPayload<AuxiliaryParams>(input);
-				const prefix = input.action === "event_stream" ? "event_stream" : "skysight";
+				const prefix = input.action === "event_stream" ? "event_stream" : "computer_history";
 				const tool = `${prefix}_${payload.operation}`;
 				const note = payload.safetyNote?.trim() ?? "";
-				if ((payload.operation === "start") && (payload.allowRecording !== true || !note)) throw new Error(`${tool} requires allowRecording:true and a non-empty safetyNote.`);
-				if (tool === "skysight_update_exclusion") {
+				if ((payload.operation === "start" || payload.operation === "resume") && (payload.allowRecording !== true || !note)) throw new Error(`${tool} requires allowRecording:true and a non-empty safetyNote.`);
+				if (tool === "computer_history_update_settings") {
 					if (payload.allowPrivacyChange !== true || !note) throw new Error(`${tool} requires allowPrivacyChange:true and a non-empty safetyNote.`);
-					const args = payload.arguments ?? {};
-					if ((args.operation !== "add" && args.operation !== "remove") || (args.scope !== "app" && args.scope !== "url" && args.scope !== "private_browsing")) throw new Error(`${tool} requires operation add|remove and scope app|url|private_browsing.`);
-					if (args.scope === "app" && (typeof args.bundleID !== "string" || !args.bundleID.trim())) throw new Error(`${tool} app scope requires bundleID.`);
-					if (args.scope === "url" && (typeof args.urlDomain !== "string" || !args.urlDomain.trim())) throw new Error(`${tool} url scope requires urlDomain.`);
+					validateComputerHistoryObservation(payload.arguments ?? {}, tool);
 				}
-				const call = await getClient().callTool(tool, payload.arguments ?? {}, { approval: "inherit", timeoutMs: asInt(payload.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS), signal, server: input.action === "event_stream" ? "event-stream" : "skysight" });
+				const call = await getClient().callTool(tool, payload.arguments ?? {}, { approval: "inherit", timeoutMs: asInt(payload.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS), signal, server: input.action === "event_stream" ? "event-stream" : "computer-history" });
 				const result = filterToolResult(call.result, { maxTextChars: DEFAULT_MAX_TEXT_CHARS });
 				return { content: result.content as (TextContentBlock | ImageContentBlock)[], details: bridgeDetails({ tool: "macuse", action: input.action, auxiliaryTool: tool, threadId: getClient().status().threadId, isError: result.isError, durationMs: call.durationMs }, getClient().status().stderrTail) };
 			}

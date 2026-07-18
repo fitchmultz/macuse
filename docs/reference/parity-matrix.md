@@ -37,7 +37,7 @@ The app-server-backed path provides:
 | Pointer drag | `drag` | guarded sequence only; `allowPointerDrag` required | guarded; `allowPointer` required | TextEdit drag returned success; mouse restore validated |
 | App approval behavior | Codex Any App setting | pi defaults to `approval: "inherit"`, auto-accepting app approvals; explicit `deny` remains available for tests | MCP wrapper also defaults to `inherit`; `ask` remains available for clients that want elicitation prompts | inherit/default, deny, and MCP elicitation proxy probes |
 | Record & Replay | `event-stream` MCP: start/status/stop | `macuse` `event_stream`; start guarded | 3 tools; start guarded | inventory, schemas, guards; status allowed |
-| Skysight | `skysight` MCP: start/stop/status/update/list | `macuse` `skysight`; recording/privacy guards | 5 tools with equivalent guards | inventory, schemas, guards; status/list allowed |
+| Computer History | `computer-history` MCP: start/stop/pause/resume/status/get_settings/update_settings | `macuse` `computer_history`; recording/privacy guards | 7 tools with equivalent guards | inventory, schemas, guards; status/get_settings allowed |
 | Direct raw MCP positive execution | internal/unknown | not used | not used | still times out, even with a live app-server thread ID |
 
 ## User-experience coverage
@@ -63,7 +63,7 @@ The app-server-backed path provides:
 | Partial sequence failures | Implemented | failed `macuse` with `action: "sequence"` calls return completed step rows plus the failed-step diagnostic and resume hint; per-step `allowError:true` continues through resolution/tool errors |
 | Running app filtering | Implemented | `macuse` with `action: "list_apps"` supports `runningOnly:true` and substring `filter` |
 
-All 18 verified public tools are configured from the ChatGPT-bundled SkyComputerUseClient and inventory-checked in the persistent app-server thread. Ordinary app control does not call recording or privacy-mutating tools. `turn-ended` is intentionally absent because it has no published payload contract; the private `@oai/sky` Node REPL adapter is not MCP and remains unexposed.
+All 20 verified public tools are configured from the ChatGPT-bundled SkyComputerUseClient and inventory-checked in the persistent app-server thread. Ordinary app control does not call recording or privacy-mutating tools. `turn-ended` is intentionally absent because it has no published payload contract; the private `@oai/sky` Node REPL adapter is not MCP and remains unexposed.
 
 ## Known gaps
 

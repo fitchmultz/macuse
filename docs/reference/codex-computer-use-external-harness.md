@@ -4,9 +4,9 @@ Source: Local Codex Computer Use app/plugin files and direct MCP probes against 
 Author: [OpenAI](https://openai.com/) for the installed app/plugin; local investigation notes captured in this repository
 Posted: Not applicable; local installed app and plugin cache
 Scraped: May 22, 2026
-Refreshed: May 22, 2026 09:35 MDT; spot-checked again June 8, 2026 after Codex updates; updated July 12, 2026 after Codex merged into ChatGPT. Active validation uses Activity Monitor instead of Calculator.
+Refreshed: May 22, 2026 09:35 MDT; spot-checked again June 8, 2026 after Codex updates; updated July 17, 2026 for the Computer History protocol. Active validation uses Activity Monitor instead of Calculator.
 Observed metadata at May 22 refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin `1.0.799`; MCP server name `Computer Use`; MCP server version `d10a51766bb4d162ef1eed308e86a0f8f3816fb860896cb92c18e6de998142af`
-Current July 12 spot-check: ChatGPT host app `26.707.51957` build `5175` (bundle ID `com.openai.codex`); Codex CLI `0.144.0-alpha.4`; bundled Computer Use plugin `1.0.1000387`; the app-server-mediated pi path configures and inventory-checks `computer-use` (10 tools), `event-stream` (3), and `skysight` (5) in one explicit thread. Historical `/Applications/Codex.app` references below describe the pre-merge install. `turn-ended` remains unexposed because it has no published payload contract; the private `@oai/sky` Node REPL adapter is not MCP.
+Current July 17 spot-check: ChatGPT host app `26.715.31251` build `5538` (bundle ID `com.openai.codex`); Codex CLI `0.145.0-alpha.18`; bundled Computer Use plugin `1.0.1000451`. The app-server-mediated pi path configures and inventory-checks `computer-use` (10 tools), `event-stream` (3), and `computer-history` (7) in one explicit thread. Historical `/Applications/Codex.app` references below describe the pre-merge install. `turn-ended` remains unexposed because it has no published payload contract; the private `@oai/sky` Node REPL adapter is not MCP.
 
 ## Bottom line
 
@@ -297,11 +297,11 @@ The host client must then:
 
 1. Send app-server `initialize` with current camelCase capability fields, for example `capabilities: { experimentalApi: true, requestAttestation: false }`.
 2. Send `notifications/initialized`.
-3. Send `thread/start` to create an ephemeral thread with `approvalPolicy: "on-request"` and explicit `config.mcp_servers` entries for `computer-use` (`mcp`), `event-stream` (`event-stream mcp`), and `skysight` (`skysight mcp`) using the bundled client under `/Applications/ChatGPT.app`.
-4. Follow `nextCursor` across thread-scoped `mcpServerStatus/list` pages with `detail: "toolsAndAuthOnly"` to verify all 18 expected tools.
+3. Send `thread/start` to create an ephemeral thread with `approvalPolicy: "on-request"` and explicit `config.mcp_servers` entries for `computer-use` (`mcp`), `event-stream` (`event-stream mcp`), and `computer-history` (`computer-history mcp`) using the bundled client under `/Applications/ChatGPT.app`.
+4. Follow `nextCursor` across thread-scoped `mcpServerStatus/list` pages with `detail: "toolsAndAuthOnly"` to verify all 20 expected tools.
 5. Send `mcpServer/tool/call` with `threadId`, the matching `server`, tool name,
-   and tool arguments. Recording starts and exclusion changes require the local
-   guards documented in the safety policy.
+   and tool arguments. Recording starts/resume and settings changes require the
+   local guards documented in the safety policy.
 6. Answer any app-server `mcpServer/elicitation/request` server-to-client
    requests with an explicit `accept`, `decline`, or `cancel` response.
 
@@ -320,7 +320,7 @@ node tools/validate-macuse.mjs focus
 Observed results:
 
 - `status` printed compact inventories for `computer-use`, `event-stream`, and
-  `skysight`, finding all 18 expected tools. Use `status --full` when every
+  `computer-history`, finding all 20 expected tools. Use `status --full` when every
   configured app-server MCP server is needed for diagnostics.
 - `list-apps` returned a normal text result with running/recent apps and no
   elicitation.
@@ -456,11 +456,11 @@ The same binary also exposes separate subcommands:
 
 ```bash
 SkyComputerUseClient event-stream mcp
-SkyComputerUseClient skysight mcp
+SkyComputerUseClient computer-history mcp
 SkyComputerUseClient turn-ended <payload>
 ```
 
-`event-stream mcp` exposes `event_stream_start`, `event_stream_status`, and `event_stream_stop` for Record & Replay. `skysight mcp` exposes `skysight_start`, `skysight_stop`, `skysight_status`, `skysight_update_exclusion`, and `skysight_list_exclusions` for recent-activity context and exclusions. These are native upstream features, but they are separate privacy-sensitive recording surfaces and are not part of the default app-server `computer-use` server.
+`event-stream mcp` exposes `event_stream_start`, `event_stream_status`, and `event_stream_stop` for Record & Replay. `computer-history mcp` exposes `computer_history_start`, `computer_history_stop`, `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, and `computer_history_update_settings` for activity context and observation settings. `computer_history_update_settings` requires an `observation` object containing `defaultApplicationBehavior`, `defaultURLBehavior`, `allowlist`, `blocklist`, and `observePrivateBrowsing`; behavior values are `observe` or `do_not_observe`, and each list entry uses `scope: "app"` with `bundleID` or `scope: "url"` with a bare-domain `urlDomain` (no scheme or path); the other six upstream Computer History tools accept `{}`. These are native upstream features, but they are separate privacy-sensitive recording surfaces and are not part of the default app-server `computer-use` server.
 
 Binary-string evidence shows private upstream internals such as `virtualCursor`, `focusEnforcer`, `focusRestoreTarget`, `ComputerUseIPCFrontmostWindow`, `ComputerUseIPCScreenshot`, `ComputerUseIPCSkyshot`, `ActivateCodingKeys`, and `DeactivateCodingKeys`. Treat those as upstream-owned implementation details unless OpenAI exposes stable MCP/app-server schemas.
 
@@ -544,13 +544,13 @@ It is declared through `package.json#pi.extensions` and registers one `macuse` p
 - `action: "get_app_state"`
 - `action: "sequence"`
 - `action: "event_stream"`
-- `action: "skysight"`
+- `action: "computer_history"`
 - `action: "restart_computer_use"`
 
 The pi extension keeps a persistent Codex app-server process and thread for the
 session instead of shelling out to the CLI bridge for every tool call. Normal
 `session_shutdown` stops that process, `/macuse-stop` stops only app-server while
-leaving lazy restart available. Read-only app state plus Record & Replay/Skysight status/list calls recover
+leaving lazy restart available. Read-only app state plus Record & Replay/Computer History status/settings calls recover
 stopped-session or transport-closed failures once by restarting only the
 macuse-owned app-server session. `/macuse-restart` / `restart_computer_use`
 explicitly restart Computer Use helper processes plus app-server when that
@@ -777,7 +777,7 @@ The important regression signals are:
    `{ "action": "decline" }`, and receives a normal MCP tool error instead of
    hanging.
 3. App-server `status` still discovers `computer-use`, `event-stream`, and
-   `skysight` with all 18 expected tools.
+   `computer-history` with all 20 expected tools.
 4. App-server filtered/running `list-apps --running-only --filter Calculator`
    still returns a normal read-only tool result. If only broad unfiltered
    `list_apps` reports `procNotFound`, treat that as degraded enumeration and
@@ -852,7 +852,7 @@ Reusable now for broad pi operation:
 - Codex app-server supplies the thread/session/lifecycle wrapper that direct raw
   MCP was missing in these probes.
 - The Codex skill and app-specific instruction files are available locally.
-- pi can load `extensions/codex-computer-use.ts` through the package manifest and expose the single `macuse` tool with app control plus guarded Record & Replay and Skysight actions backed by one live Codex app-server thread.
+- pi can load `extensions/codex-computer-use.ts` through the package manifest and expose the single `macuse` tool with app control plus guarded Record & Replay and Computer History actions backed by one live Codex app-server thread.
 - A harmless Activity Monitor search/filter/clear and CPU/Memory restore smoke
   test has passed through the app-server sequence path.
 

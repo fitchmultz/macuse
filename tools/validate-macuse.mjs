@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { frontmostApp, mousePosition, parseJsonOutput, VERSION } from './macuse-utils.mjs';
+import { DEFAULT_BUNDLED_COMPUTER_USE_CLIENT, DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, frontmostApp, mousePosition, parseJsonOutput, VERSION } from './macuse-utils.mjs';
 
 const DEFAULT_APP = 'Activity Monitor';
 const DEFAULT_TIMEOUT_MS = 90_000;
@@ -66,22 +66,60 @@ function run(name, command, args, opts = {}) {
   return result.stdout;
 }
 
+function runRawComputerHistoryContractSmoke() {
+  const input = [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'macuse-validation', version: VERSION } } },
+    { jsonrpc: '2.0', method: 'notifications/initialized', params: {} },
+    { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
+  ].map((message) => JSON.stringify(message)).join('\n') + '\n';
+  const result = spawnSync(DEFAULT_BUNDLED_COMPUTER_USE_CLIENT, ['computer-history', 'mcp'], { cwd: DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, input, encoding: 'utf8', timeout: 10_000 });
+  if (result.error || result.status !== 0) throw new Error(`raw Computer History discovery failed: ${result.error?.message || result.stderr || `exit ${result.status}`}`);
+  const listed = result.stdout.split('\n').filter(Boolean).map((line) => JSON.parse(line)).find((message) => message.id === 2)?.result;
+  const tools = listed?.tools;
+  const expected = ['computer_history_start', 'computer_history_stop', 'computer_history_pause', 'computer_history_resume', 'computer_history_status', 'computer_history_get_settings', 'computer_history_update_settings'];
+  if (!Array.isArray(tools) || JSON.stringify(tools.map((tool) => tool.name)) !== JSON.stringify(expected)) throw new Error('raw Computer History tool inventory changed');
+  for (const tool of tools) {
+    const readOnly = tool.name === 'computer_history_status' || tool.name === 'computer_history_get_settings';
+    if (tool.annotations?.readOnlyHint !== readOnly || tool.annotations?.destructiveHint !== false || tool.annotations?.idempotentHint !== true || tool.annotations?.openWorldHint !== false) throw new Error(`raw ${tool.name} annotations changed`);
+  }
+  const observation = tools.find((tool) => tool.name === 'computer_history_update_settings')?.inputSchema?.properties?.observation;
+  const required = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist', 'observePrivateBrowsing'];
+  const entry = observation?.properties?.allowlist?.items;
+  if (!required.every((field) => observation?.required?.includes(field)) || !entry?.required?.includes('scope') || !entry?.properties?.urlDomain?.description?.includes('without a scheme or path')) throw new Error('raw computer_history_update_settings schema changed');
+  return '7 live tools; schemas and annotations match';
+}
+
 function runCliAuxiliaryGuardSmoke() {
+  const invalidObservation = { observation: { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [], observePrivateBrowsing: false } };
+  const invalidUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url' }] } };
+  const schemeUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'https://example.com' }] } };
+  const pathUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'example.com/path' }] } };
   for (const [tool, args, flag] of [
     ['event_stream_start', {}, 'allow-recording'],
-    ['skysight_start', {}, 'allow-recording'],
-    ['skysight_update_exclusion', { operation: 'add', scope: 'app' }, 'allow-privacy-change'],
+    ['computer_history_start', {}, 'allow-recording'],
+    ['computer_history_resume', {}, 'allow-recording'],
+    ['computer_history_update_settings', {}, 'allow-privacy-change'],
   ]) {
-    const server = tool.startsWith('event_') ? 'event-stream' : 'skysight';
+    const server = tool.startsWith('event_') ? 'event-stream' : 'computer-history';
     const result = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', 'call', '--server', server, '--tool', tool, '--arguments-json', JSON.stringify(args), '--quiet'], { cwd: process.cwd(), encoding: 'utf8', timeout: 10_000 });
     if (result.status !== 2 || !result.stdout.includes(flag)) throw new Error(`CLI ${tool} guard did not fail closed before app-server startup`);
+  }
+  for (const [args, failure] of [
+    [invalidObservation, 'an app rule without bundleID'],
+    [invalidUrlObservation, 'a URL rule without urlDomain'],
+    [schemeUrlObservation, 'a URL rule with a scheme'],
+    [pathUrlObservation, 'a URL rule with a path'],
+  ]) {
+    const result = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', 'call', '--server', 'computer-history', '--tool', 'computer_history_update_settings', '--arguments-json', JSON.stringify(args), '--allow-privacy-change', '--safety-note', 'guard test only', '--quiet'], { cwd: process.cwd(), encoding: 'utf8', timeout: 10_000 });
+    if (result.status !== 2 || !result.stdout.includes('scope-specific')) throw new Error(`CLI computer_history_update_settings accepted ${failure}`);
   }
   const statusResult = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', 'call', '--server', 'event-stream', '--tool', 'event_stream_status', '--arguments-json', '{}', '--quiet'], { cwd: process.cwd(), encoding: 'utf8', timeout: 120_000 });
   if (statusResult.status !== 0) throw new Error(`CLI event_stream_status failed: ${statusResult.stderr || statusResult.stdout}`);
   const status = parseJsonOutput('CLI event_stream_status', statusResult.stdout);
-  const eventStream = JSON.parse(status.result?.content?.find((block) => block.type === 'text')?.text || '{}');
-  if (status.result?.isError || eventStream.isRecording !== false) throw new Error('CLI event_stream_status did not prove recording is inactive');
-  return 'recording/privacy guards fail closed; event_stream_status routed safely';
+  const statusText = status.result?.content?.find((block) => block.type === 'text')?.text || '';
+  const inactive = status.result?.isError ? statusText.includes('Record & Replay is not enabled') : JSON.parse(statusText || '{}').isRecording === false;
+  if (!inactive) throw new Error('CLI event_stream_status did not prove recording is inactive or unavailable');
+  return 'recording/privacy guards fail closed; event_stream_status routed without recording';
 }
 
 function runMcpServerSmoke(verbose) {
@@ -132,13 +170,19 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
   send({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
   const listed = await request('tools/list', {}, 5000);
   const names = listed.tools.map((tool) => tool.name);
-  for (const expected of ['list_apps', 'get_app_state', 'perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag', 'event_stream_start', 'event_stream_status', 'event_stream_stop', 'skysight_start', 'skysight_stop', 'skysight_status', 'skysight_update_exclusion', 'skysight_list_exclusions']) {
+  for (const expected of ['list_apps', 'get_app_state', 'perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag', 'event_stream_start', 'event_stream_status', 'event_stream_stop', 'computer_history_start', 'computer_history_stop', 'computer_history_pause', 'computer_history_resume', 'computer_history_status', 'computer_history_get_settings', 'computer_history_update_settings']) {
     if (!names.includes(expected)) throw new Error('missing MCP tool: ' + expected);
   }
+  if (names.length !== 20) throw new Error('expected exactly 20 MCP tools, saw ' + names.length);
+  const settingsSchema = listed.tools.find((tool) => tool.name === 'computer_history_update_settings')?.inputSchema?.properties?.observation;
+  const requiredSettings = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist', 'observePrivateBrowsing'];
+  if (!requiredSettings.every((field) => settingsSchema?.required?.includes(field))) throw new Error('computer_history_update_settings schema does not require all observation fields');
+  if (!settingsSchema?.properties?.allowlist?.items?.properties?.urlDomain?.description?.includes('without a scheme or path')) throw new Error('computer_history_update_settings schema omits URL domain guidance');
   const annotationExpectations = {
     event_stream_start: [false, false], event_stream_status: [true, true], event_stream_stop: [false, true],
-    skysight_start: [false, false], skysight_stop: [false, true], skysight_status: [true, true],
-    skysight_update_exclusion: [false, true], skysight_list_exclusions: [true, true],
+    computer_history_start: [false, true], computer_history_stop: [false, true], computer_history_pause: [false, true],
+    computer_history_resume: [false, true], computer_history_status: [true, true], computer_history_get_settings: [true, true],
+    computer_history_update_settings: [false, true],
   };
   for (const [name, [readOnly, idempotent]] of Object.entries(annotationExpectations)) {
     const annotations = listed.tools.find((tool) => tool.name === name)?.annotations;
@@ -159,12 +203,23 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
   }
   if (!pointerGuarded) throw new Error('MCP wrapper did not guard pointer click without allowPointer:true');
   const eventStatus = await request('tools/call', { name: 'event_stream_status', arguments: {} }, 120000);
-  if (eventStatus.isError || JSON.parse(text(eventStatus)).isRecording !== false) throw new Error('MCP event_stream_status did not prove recording is inactive');
+  const eventStatusText = text(eventStatus);
+  const eventInactive = eventStatus.isError ? eventStatusText.includes('Record & Replay is not enabled') : JSON.parse(eventStatusText).isRecording === false;
+  if (!eventInactive) throw new Error('MCP event_stream_status did not prove recording is inactive or unavailable');
+  const invalidObservation = { observation: { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [], observePrivateBrowsing: false } };
+  const invalidUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url' }] } };
+  const schemeUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'https://example.com' }] } };
+  const pathUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'example.com/path' }] } };
   for (const [name, arguments, expected] of [
     ['event_stream_start', {}, /allowRecording/],
-    ['skysight_start', { allowRecording: true }, /safetyNote/],
-    ['skysight_update_exclusion', { operation: 'add', scope: 'app', bundleID: 'com.example' }, /allowPrivacyChange/],
-    ['skysight_update_exclusion', { allowPrivacyChange: true, safetyNote: 'test guard only', operation: 'add', scope: 'app' }, /bundleID/],
+    ['computer_history_start', { allowRecording: true }, /safetyNote/],
+    ['computer_history_resume', { allowRecording: true }, /safetyNote/],
+    ['computer_history_update_settings', {}, /allowPrivacyChange/],
+    ['computer_history_update_settings', { allowPrivacyChange: true, safetyNote: 'test guard only' }, /all Computer History settings fields/],
+    ['computer_history_update_settings', { ...invalidObservation, allowPrivacyChange: true, safetyNote: 'test guard only' }, /scope-specific/],
+    ['computer_history_update_settings', { ...invalidUrlObservation, allowPrivacyChange: true, safetyNote: 'test guard only' }, /scope-specific/],
+    ['computer_history_update_settings', { ...schemeUrlObservation, allowPrivacyChange: true, safetyNote: 'test guard only' }, /scope-specific/],
+    ['computer_history_update_settings', { ...pathUrlObservation, allowPrivacyChange: true, safetyNote: 'test guard only' }, /scope-specific/],
   ]) {
     let guarded = false;
     try { await request('tools/call', { name, arguments }, 5000); } catch (error) { guarded = expected.test(error.message || ''); }
@@ -197,15 +252,31 @@ if (tools.length !== 1 || tools[0].name !== 'macuse') {
   throw new Error('expected only macuse extension tool; saw ' + tools.map((tool) => tool.name).join(','));
 }
 const actions = tools[0].parameters?.properties?.action?.enum || [];
-for (const action of ['restart_computer_use', 'event_stream', 'skysight']) if (!actions.includes(action)) throw new Error('macuse tool schema is missing ' + action + ' action');
+for (const action of ['restart_computer_use', 'event_stream', 'computer_history']) if (!actions.includes(action)) throw new Error('macuse tool schema is missing ' + action + ' action');
+const historySchema = tools[0].parameters?.properties?.computerHistory;
+const expectedOperations = ['start', 'stop', 'pause', 'resume', 'status', 'get_settings', 'update_settings'];
+if (JSON.stringify(historySchema?.properties?.operation?.enum) !== JSON.stringify(expectedOperations)) throw new Error('macuse Computer History operations do not match current protocol');
+const historyObservation = historySchema?.properties?.arguments?.properties?.observation;
+const requiredSettings = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist', 'observePrivateBrowsing'];
+if (!requiredSettings.every((field) => historyObservation?.required?.includes(field))) throw new Error('macuse Computer History schema does not require all observation fields');
+if (!historyObservation?.properties?.allowlist?.items?.properties?.urlDomain?.description?.includes('without a scheme or path')) throw new Error('macuse Computer History schema omits URL domain guidance');
 if (tools[0].executionMode !== 'sequential') throw new Error('macuse tool must serialize calls that share one app-server thread and element cache');
 const macuse = tools[0];
 (async () => {
   const signal = new AbortController().signal;
+  const invalidObservation = { observation: { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [], observePrivateBrowsing: false } };
+  const invalidUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url' }] } };
+  const schemeUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'https://example.com' }] } };
+  const pathUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'example.com/path' }] } };
   for (const [params, expected] of [
     [{ action: 'event_stream', eventStream: { operation: 'start' } }, /allowRecording/],
-    [{ action: 'skysight', skysight: { operation: 'start', allowRecording: true } }, /safetyNote/],
-    [{ action: 'skysight', skysight: { operation: 'update_exclusion', allowPrivacyChange: true, safetyNote: 'guard test', arguments: { operation: 'add', scope: 'app' } } }, /bundleID/],
+    [{ action: 'computer_history', computerHistory: { operation: 'start', allowRecording: true } }, /safetyNote/],
+    [{ action: 'computer_history', computerHistory: { operation: 'resume', allowRecording: true } }, /safetyNote/],
+    [{ action: 'computer_history', computerHistory: { operation: 'update_settings', allowPrivacyChange: true, safetyNote: 'guard test' } }, /all Computer History settings fields/],
+    [{ action: 'computer_history', computerHistory: { operation: 'update_settings', arguments: invalidObservation, allowPrivacyChange: true, safetyNote: 'guard test' } }, /scope-specific/],
+    [{ action: 'computer_history', computerHistory: { operation: 'update_settings', arguments: invalidUrlObservation, allowPrivacyChange: true, safetyNote: 'guard test' } }, /scope-specific/],
+    [{ action: 'computer_history', computerHistory: { operation: 'update_settings', arguments: schemeUrlObservation, allowPrivacyChange: true, safetyNote: 'guard test' } }, /scope-specific/],
+    [{ action: 'computer_history', computerHistory: { operation: 'update_settings', arguments: pathUrlObservation, allowPrivacyChange: true, safetyNote: 'guard test' } }, /scope-specific/],
   ]) {
     let guarded = false;
     try { await macuse.execute('guard', params, signal); } catch (error) { guarded = expected.test(error.message || ''); }
@@ -269,7 +340,10 @@ const timeoutDiagnostic = computerUseDiagnostic({ content: [{ type: 'text', text
 if (!timeoutDiagnostic?.includes('timed out')) throw new Error('timeoutReached diagnostic stopped reporting timeouts');
 if (!shouldAutoRecoverComputerUse('get_app_state', 'Transport closed')) throw new Error('read-only recovery classifier missed transport failures');
 if (!shouldAutoRecoverComputerUse('event_stream_status', 'Transport closed')) throw new Error('auxiliary read-only recovery classifier missed transport failures');
+if (!shouldAutoRecoverComputerUse('computer_history_status', 'Transport closed')) throw new Error('Computer History status recovery classifier missed transport failures');
+if (!shouldAutoRecoverComputerUse('computer_history_get_settings', 'Transport closed')) throw new Error('Computer History settings recovery classifier missed transport failures');
 if (shouldAutoRecoverComputerUse('event_stream_start', 'Transport closed')) throw new Error('recording start recovery classifier allowed auto-recovery');
+if (shouldAutoRecoverComputerUse('computer_history_resume', 'Transport closed')) throw new Error('recording resume recovery classifier allowed auto-recovery');
 if (shouldAutoRecoverComputerUse('click', 'Transport closed')) throw new Error('mutating recovery classifier allowed auto-recovery');
 const cliRecovery = appServerSessionRecoverySummary('test');
 if (cliRecovery.scope !== 'app-server-session' || cliRecovery.targets.length !== 0) throw new Error('automatic CLI recovery is not scoped to app-server session only');
@@ -315,7 +389,9 @@ factory({
   if (!macuse) throw new Error('missing extension tool: macuse');
   if ([...tools.keys()].some((name) => name.startsWith('codex' + '_cu_'))) throw new Error('legacy prefixed tools are still registered: ' + [...tools.keys()].join(','));
   const eventStatus = await macuse.execute('event-status', { action: 'event_stream', eventStream: { operation: 'status', toolTimeoutMs: 90000 } }, signal, () => {});
-  if (eventStatus.details.computerUse.isError || JSON.parse(eventStatus.content[0]?.text || '{}').isRecording !== false) throw new Error('pi event_stream_status did not prove recording is inactive');
+  const eventStatusText = eventStatus.content[0]?.text || '';
+  const eventInactive = eventStatus.details.computerUse.isError ? eventStatusText.includes('Record & Replay is not enabled') : JSON.parse(eventStatusText).isRecording === false;
+  if (!eventInactive) throw new Error('pi event_stream_status did not prove recording is inactive or unavailable');
   const running = await macuse.execute('running', { action: 'list_apps', listApps: { runningOnly: true, maxTextChars: 5000, toolTimeoutMs: 90000 } }, signal, () => {});
   if (!running.content[0].text.includes('running')) throw new Error('pi extension runningOnly list_apps returned no running apps');
   const nonRunningLines = running.content[0].text.split('\n').filter((line) => line.trim() && !line.includes('running'));
@@ -496,16 +572,17 @@ async function main() {
     const directDiscover = run('direct raw-MCP discover', process.execPath, ['tools/probe-codex-computer-use-mcp.mjs', 'discover'], { timeoutMs: 120_000, verbose: opts.verbose });
     if (!directDiscover.includes('Tools (10):') || !directDiscover.includes('list_apps')) throw new Error('direct discover did not show expected tools');
     printPass('direct raw-MCP discover', 'expected tool family found');
+    printPass('direct raw Computer History contract', runRawComputerHistoryContractSmoke());
   }
 
   const status = parseJsonOutput('app-server status', run('app-server status', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'status', '--quiet'], { timeoutMs: 180_000, verbose: opts.verbose }));
   requireOk('app-server status', status);
-  const expectedInventories = { 'computer-use': 10, 'event-stream': 3, skysight: 5 };
+  const expectedInventories = { 'computer-use': 10, 'event-stream': 3, 'computer-history': 7 };
   for (const [name, count] of Object.entries(expectedInventories)) {
     const inventory = status.inventories?.[name] ?? status.status?.servers?.find((server) => server.name === name);
     if (!inventory?.toolNames || inventory.toolNames.length !== count) throw new Error(`app-server status expected ${count} ${name} tools, saw ${inventory?.toolNames?.length ?? 0}`);
   }
-  printPass('app-server status', 'all 18 tools across computer-use=10, event-stream=3, skysight=5');
+  printPass('app-server status', 'all 20 tools across computer-use=10, event-stream=3, computer-history=7');
 
   if (opts.mode === 'read-only' || opts.mode === 'mutating' || opts.mode === 'focus') {
     if (opts.mode === 'focus') {

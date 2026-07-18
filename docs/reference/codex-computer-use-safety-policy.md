@@ -3,7 +3,7 @@
 Source: Local policy for this `macuse` investigation, based on the installed Codex Computer Use skill, OpenAI's Computer Use docs snapshot, and local bridge behavior.
 Author: Local investigation notes
 Created: May 22, 2026
-Status: Active guardrails for the packaged pi extension; one `macuse` tool exposes app control plus guarded Record & Replay and Skysight actions
+Status: Active guardrails for the packaged pi extension; one `macuse` tool exposes app control plus guarded Record & Replay and Computer History actions
 
 ## Current allowed scope
 
@@ -12,11 +12,11 @@ Allowed today:
 - `list_apps`
 - `get_app_state`
 - app-approval denial probes
-- app-server status/discovery probes for all 18 public tools
-- read-only `event_stream_status`, `skysight_status`, and `skysight_list_exclusions` (these expose activity/artifact/privacy metadata)
-- guarded Record & Replay/Skysight stop operations
-- Record & Replay or Skysight start only when the user requested recording, with explicit `allowRecording: true` and a non-empty safety note
-- Skysight exclusion updates only with fresh exact user approval, explicit `allowPrivacyChange: true`, a non-empty safety note, and valid scope-specific arguments
+- app-server status/discovery probes for all 20 public tools
+- read-only `event_stream_status`, `computer_history_status`, and `computer_history_get_settings` (these expose activity/artifact/privacy metadata)
+- guarded Record & Replay stop and Computer History stop/pause operations
+- Record & Replay start or Computer History start/resume only when the user requested recording, with explicit `allowRecording: true` and a non-empty safety note
+- `computer_history_update_settings` only with fresh exact user approval, explicit `allowPrivacyChange: true`, a non-empty safety note, and the complete `observation` settings object copied from an immediately preceding `computer_history_get_settings` result with only the approved fields changed
 - `macuse` calls with `action: "sequence"`, explicit `allowMutating: true`, and a concrete
   `safetyNote` for mutating steps
 
@@ -31,7 +31,7 @@ Not allowed as always-on standalone tools:
 - `select_text`
 - `perform_secondary_action`
 
-The packaged pi extension exposes one `macuse` tool with read-only actions, one guarded persistent-session sequence action, and guarded `event_stream` / `skysight` actions. It does not expose standalone app-control mutating tools. `turn-ended` remains excluded because no payload contract is published, and the private `@oai/sky` Node REPL adapter is not MCP and is not exposed.
+The packaged pi extension exposes one `macuse` tool with read-only actions, one guarded persistent-session sequence action, and guarded `event_stream` / `computer_history` actions. It does not expose standalone app-control mutating tools. `turn-ended` remains excluded because no payload contract is published, and the private `@oai/sky` Node REPL adapter is not MCP and is not exposed.
 
 ## Preconditions before any mutating action
 

@@ -11,7 +11,7 @@ export const DEFAULT_BUNDLED_COMPUTER_USE_CLIENT = path.join(DEFAULT_BUNDLED_COM
 export const MCP_SERVERS = {
 	"computer-use": { args: ["mcp"], tools: ["click", "drag", "get_app_state", "list_apps", "perform_secondary_action", "press_key", "scroll", "select_text", "set_value", "type_text"] },
 	"event-stream": { args: ["event-stream", "mcp"], tools: ["event_stream_start", "event_stream_status", "event_stream_stop"] },
-	skysight: { args: ["skysight", "mcp"], tools: ["skysight_list_exclusions", "skysight_start", "skysight_status", "skysight_stop", "skysight_update_exclusion"] },
+	"computer-history": { args: ["computer-history", "mcp"], tools: ["computer_history_get_settings", "computer_history_pause", "computer_history_resume", "computer_history_start", "computer_history_status", "computer_history_stop", "computer_history_update_settings"] },
 } as const;
 export type McpServerName = keyof typeof MCP_SERVERS;
 
