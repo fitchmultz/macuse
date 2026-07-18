@@ -4,9 +4,9 @@ Source: Local Codex Computer Use app/plugin files and direct MCP probes against 
 Author: [OpenAI](https://openai.com/) for the installed app/plugin; local investigation notes captured in this repository
 Posted: Not applicable; local installed app and plugin cache
 Scraped: May 22, 2026
-Refreshed: May 22, 2026 09:35 MDT; spot-checked again June 8, 2026 after Codex updates; updated July 17, 2026 for the Computer History protocol. Active validation uses Activity Monitor instead of Calculator.
+Refreshed: May 22, 2026 09:35 MDT; spot-checked again June 8, 2026 after Codex updates; updated July 17, 2026 for the Computer History protocol; spot-checked July 18, 2026 after the next ChatGPT update. Active validation uses Activity Monitor instead of Calculator.
 Observed metadata at May 22 refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin `1.0.799`; MCP server name `Computer Use`; MCP server version `d10a51766bb4d162ef1eed308e86a0f8f3816fb860896cb92c18e6de998142af`
-Current July 17 spot-check: ChatGPT host app `26.715.31251` build `5538` (bundle ID `com.openai.codex`); Codex CLI `0.145.0-alpha.18`; bundled Computer Use plugin `1.0.1000451`. The app-server-mediated pi path configures and inventory-checks `computer-use` (10 tools), `event-stream` (3), and `computer-history` (7) in one explicit thread. Historical `/Applications/Codex.app` references below describe the pre-merge install. `turn-ended` remains unexposed because it has no published payload contract; the private `@oai/sky` Node REPL adapter is not MCP.
+Current July 18 spot-check: ChatGPT host app `26.715.31925` build `5551` (bundle ID `com.openai.codex`); Codex CLI `0.145.0-alpha.18`; bundled Computer Use plugin `1.0.1000451`. The app-server-mediated pi path configures and inventory-checks `computer-use` (10 tools), `event-stream` (3), and `computer-history` (7) in one explicit thread. Historical `/Applications/Codex.app` references below describe the pre-merge install. `turn-ended` remains unexposed because it has no published payload contract; the private `@oai/sky` Node REPL adapter is not MCP.
 
 ## Bottom line
 

@@ -4,9 +4,9 @@ Source: Local filesystem paths under `/Users/yourname/.codex/computer-use`, `/Us
 Author: [OpenAI](https://openai.com/)
 Posted: Not applicable; local installed app and plugin cache
 Scraped: May 22, 2026
-Refreshed: May 22, 2026 09:35 MDT after the Codex host app update, external-harness TCC probes, app-server bridge validation, and guarded Calculator click/key validation. Spot-checked again June 8, 2026 after subsequent Codex updates. Current validation uses Activity Monitor instead of Calculator. Updated July 17, 2026 for the Computer History protocol.
+Refreshed: May 22, 2026 09:35 MDT after the Codex host app update, external-harness TCC probes, app-server bridge validation, and guarded Calculator click/key validation. Spot-checked again June 8, 2026 after subsequent Codex updates. Current validation uses Activity Monitor instead of Calculator. Updated July 17, 2026 for the Computer History protocol; spot-checked July 18, 2026 after the next ChatGPT update.
 Observed install metadata at May 22 refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin still `1.0.799`; app bundle `com.openai.sky.CUAService`; notarized Developer ID app from OpenAI
-Current July 17 spot-check: ChatGPT host app `26.715.31251` build `5538` (bundle ID remains `com.openai.codex`); Codex CLI `0.145.0-alpha.18`; bundled Computer Use plugin `1.0.1000451`. Its public MCP inventory is `computer-use`/`mcp` (10 tools), `event-stream`/`event-stream mcp` (3), and `computer-history`/`computer-history mcp` (7). Discover the cache version at runtime rather than using historical fallback paths.
+Current July 18 spot-check: ChatGPT host app `26.715.31925` build `5551` (bundle ID remains `com.openai.codex`); Codex CLI `0.145.0-alpha.18`; bundled Computer Use plugin `1.0.1000451`. Its public MCP inventory is `computer-use`/`mcp` (10 tools), `event-stream`/`event-stream mcp` (3), and `computer-history`/`computer-history mcp` (7). Discover the cache version at runtime rather than using historical fallback paths.
 
 The host app, Codex CLI, and bundled Computer Use plugin now live inside
 `/Applications/ChatGPT.app`. The separate Computer Use service also remains
@@ -22,8 +22,8 @@ For external-harness findings, probes, and refresh commands, see
 | --- | --- |
 | Host app | `/Applications/ChatGPT.app` |
 | Bundle ID | `com.openai.codex` |
-| App version | `26.715.31251` |
-| Build version | `5538` |
+| App version | `26.715.31925` |
+| Build version | `5551` |
 
 Related local host-app state found:
 
