@@ -17,7 +17,7 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
 
 - Tool schemas and runtime behavior: `extensions/codex-computer-use.ts` and `extensions/codex-computer-use-modules/`.
 - Hard-stop safety policy: `docs/reference/codex-computer-use-safety-policy.md`.
-- Validation modes and current smoke scope: `node tools/validate-macuse.mjs --help`.
+- Package validation (load only when changing or dogfooding this package): `node tools/validate-macuse.mjs --help`; pick the smallest mode for the touched path.
 
 ## Use when
 
@@ -80,18 +80,3 @@ Include only the facts needed for audit:
 - focus before/after
 - saved screenshot artifact path if used; for sequences use `screenshotStep: "final"` when the final visual state matters
 - failures, anomaly hints, and whether cleanup restored the app state
-
-## Local checks
-
-When changing or dogfooding this package, use the smallest check that proves the touched path:
-
-```bash
-node tools/validate-macuse.mjs quick
-node tools/validate-macuse.mjs read-only
-node tools/validate-macuse.mjs mutating
-node tools/validate-macuse.mjs focus
-node tools/validate-macuse.mjs mcp
-node tools/macuse-doctor.mjs --out .scratch/doctor
-node tools/macuse-repair.mjs --repair-tcc --responsible auto
-node tools/codex-computer-use-appserver.mjs list-apps --running-only --filter "Activity Monitor" --quiet --pretty
-```
