@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { DEFAULT_BUNDLED_COMPUTER_USE_CLIENT, DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, frontmostApp, mousePosition, parseJsonOutput, VERSION } from './macuse-utils.mjs';
+import { DEFAULT_BUNDLED_COMPUTER_USE_CLIENT, DEFAULT_COMPUTER_USE_CLIENT_CWD, frontmostApp, mousePosition, parseJsonOutput, VERSION } from './macuse-utils.mjs';
 
 const DEFAULT_APP = 'Activity Monitor';
 const DEFAULT_TIMEOUT_MS = 90_000;
@@ -72,31 +72,30 @@ function runRawComputerHistoryContractSmoke() {
     { jsonrpc: '2.0', method: 'notifications/initialized', params: {} },
     { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
   ].map((message) => JSON.stringify(message)).join('\n') + '\n';
-  const result = spawnSync(DEFAULT_BUNDLED_COMPUTER_USE_CLIENT, ['computer-history', 'mcp'], { cwd: DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, input, encoding: 'utf8', timeout: 10_000 });
+  const result = spawnSync(DEFAULT_BUNDLED_COMPUTER_USE_CLIENT, ['computer-history', 'mcp'], { cwd: DEFAULT_COMPUTER_USE_CLIENT_CWD, input, encoding: 'utf8', timeout: 10_000 });
   if (result.error || result.status !== 0) throw new Error(`raw Computer History discovery failed: ${result.error?.message || result.stderr || `exit ${result.status}`}`);
   const listed = result.stdout.split('\n').filter(Boolean).map((line) => JSON.parse(line)).find((message) => message.id === 2)?.result;
   const tools = listed?.tools;
-  const expected = ['computer_history_start', 'computer_history_stop', 'computer_history_pause', 'computer_history_resume', 'computer_history_status', 'computer_history_get_settings', 'computer_history_update_settings'];
+  const expected = ['computer_history_pause', 'computer_history_resume', 'computer_history_status', 'computer_history_get_settings', 'computer_history_update_settings'];
   if (!Array.isArray(tools) || JSON.stringify(tools.map((tool) => tool.name)) !== JSON.stringify(expected)) throw new Error('raw Computer History tool inventory changed');
   for (const tool of tools) {
     const readOnly = tool.name === 'computer_history_status' || tool.name === 'computer_history_get_settings';
     if (tool.annotations?.readOnlyHint !== readOnly || tool.annotations?.destructiveHint !== false || tool.annotations?.idempotentHint !== true || tool.annotations?.openWorldHint !== false) throw new Error(`raw ${tool.name} annotations changed`);
   }
   const observation = tools.find((tool) => tool.name === 'computer_history_update_settings')?.inputSchema?.properties?.observation;
-  const required = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist', 'observePrivateBrowsing'];
+  const required = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist'];
   const entry = observation?.properties?.allowlist?.items;
   if (!required.every((field) => observation?.required?.includes(field)) || !entry?.required?.includes('scope') || !entry?.properties?.urlDomain?.description?.includes('without a scheme or path')) throw new Error('raw computer_history_update_settings schema changed');
-  return '7 live tools; schemas and annotations match';
+  return '5 live tools; schemas and annotations match';
 }
 
 function runCliAuxiliaryGuardSmoke() {
-  const invalidObservation = { observation: { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [], observePrivateBrowsing: false } };
+  const invalidObservation = { observation: { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [] } };
   const invalidUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url' }] } };
   const schemeUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'https://example.com' }] } };
   const pathUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'example.com/path' }] } };
   for (const [tool, args, flag] of [
     ['event_stream_start', {}, 'allow-recording'],
-    ['computer_history_start', {}, 'allow-recording'],
     ['computer_history_resume', {}, 'allow-recording'],
     ['computer_history_update_settings', {}, 'allow-privacy-change'],
   ]) {
@@ -170,17 +169,17 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
   send({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
   const listed = await request('tools/list', {}, 5000);
   const names = listed.tools.map((tool) => tool.name);
-  for (const expected of ['list_apps', 'get_app_state', 'perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag', 'event_stream_start', 'event_stream_status', 'event_stream_stop', 'computer_history_start', 'computer_history_stop', 'computer_history_pause', 'computer_history_resume', 'computer_history_status', 'computer_history_get_settings', 'computer_history_update_settings']) {
+  for (const expected of ['list_apps', 'get_app_state', 'perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag', 'event_stream_start', 'event_stream_status', 'event_stream_stop', 'computer_history_pause', 'computer_history_resume', 'computer_history_status', 'computer_history_get_settings', 'computer_history_update_settings']) {
     if (!names.includes(expected)) throw new Error('missing MCP tool: ' + expected);
   }
-  if (names.length !== 20) throw new Error('expected exactly 20 MCP tools, saw ' + names.length);
+  if (names.length !== 18) throw new Error('expected exactly 18 MCP tools, saw ' + names.length);
   const settingsSchema = listed.tools.find((tool) => tool.name === 'computer_history_update_settings')?.inputSchema?.properties?.observation;
-  const requiredSettings = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist', 'observePrivateBrowsing'];
+  const requiredSettings = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist'];
   if (!requiredSettings.every((field) => settingsSchema?.required?.includes(field))) throw new Error('computer_history_update_settings schema does not require all observation fields');
   if (!settingsSchema?.properties?.allowlist?.items?.properties?.urlDomain?.description?.includes('without a scheme or path')) throw new Error('computer_history_update_settings schema omits URL domain guidance');
   const annotationExpectations = {
     event_stream_start: [false, false], event_stream_status: [true, true], event_stream_stop: [false, true],
-    computer_history_start: [false, true], computer_history_stop: [false, true], computer_history_pause: [false, true],
+    computer_history_pause: [false, true],
     computer_history_resume: [false, true], computer_history_status: [true, true], computer_history_get_settings: [true, true],
     computer_history_update_settings: [false, true],
   };
@@ -206,13 +205,12 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
   const eventStatusText = text(eventStatus);
   const eventInactive = eventStatus.isError ? eventStatusText.includes('Record & Replay is not enabled') : JSON.parse(eventStatusText).isRecording === false;
   if (!eventInactive) throw new Error('MCP event_stream_status did not prove recording is inactive or unavailable');
-  const invalidObservation = { observation: { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [], observePrivateBrowsing: false } };
+  const invalidObservation = { observation: { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [] } };
   const invalidUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url' }] } };
   const schemeUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'https://example.com' }] } };
   const pathUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'example.com/path' }] } };
   for (const [name, arguments, expected] of [
     ['event_stream_start', {}, /allowRecording/],
-    ['computer_history_start', { allowRecording: true }, /safetyNote/],
     ['computer_history_resume', { allowRecording: true }, /safetyNote/],
     ['computer_history_update_settings', {}, /allowPrivacyChange/],
     ['computer_history_update_settings', { allowPrivacyChange: true, safetyNote: 'test guard only' }, /all Computer History settings fields/],
@@ -254,23 +252,22 @@ if (tools.length !== 1 || tools[0].name !== 'macuse') {
 const actions = tools[0].parameters?.properties?.action?.enum || [];
 for (const action of ['restart_computer_use', 'event_stream', 'computer_history']) if (!actions.includes(action)) throw new Error('macuse tool schema is missing ' + action + ' action');
 const historySchema = tools[0].parameters?.properties?.computerHistory;
-const expectedOperations = ['start', 'stop', 'pause', 'resume', 'status', 'get_settings', 'update_settings'];
+const expectedOperations = ['pause', 'resume', 'status', 'get_settings', 'update_settings'];
 if (JSON.stringify(historySchema?.properties?.operation?.enum) !== JSON.stringify(expectedOperations)) throw new Error('macuse Computer History operations do not match current protocol');
 const historyObservation = historySchema?.properties?.arguments?.properties?.observation;
-const requiredSettings = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist', 'observePrivateBrowsing'];
+const requiredSettings = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist'];
 if (!requiredSettings.every((field) => historyObservation?.required?.includes(field))) throw new Error('macuse Computer History schema does not require all observation fields');
 if (!historyObservation?.properties?.allowlist?.items?.properties?.urlDomain?.description?.includes('without a scheme or path')) throw new Error('macuse Computer History schema omits URL domain guidance');
 if (tools[0].executionMode !== 'sequential') throw new Error('macuse tool must serialize calls that share one app-server thread and element cache');
 const macuse = tools[0];
 (async () => {
   const signal = new AbortController().signal;
-  const invalidObservation = { observation: { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [], observePrivateBrowsing: false } };
+  const invalidObservation = { observation: { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [] } };
   const invalidUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url' }] } };
   const schemeUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'https://example.com' }] } };
   const pathUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'example.com/path' }] } };
   for (const [params, expected] of [
     [{ action: 'event_stream', eventStream: { operation: 'start' } }, /allowRecording/],
-    [{ action: 'computer_history', computerHistory: { operation: 'start', allowRecording: true } }, /safetyNote/],
     [{ action: 'computer_history', computerHistory: { operation: 'resume', allowRecording: true } }, /safetyNote/],
     [{ action: 'computer_history', computerHistory: { operation: 'update_settings', allowPrivacyChange: true, safetyNote: 'guard test' } }, /all Computer History settings fields/],
     [{ action: 'computer_history', computerHistory: { operation: 'update_settings', arguments: invalidObservation, allowPrivacyChange: true, safetyNote: 'guard test' } }, /scope-specific/],
@@ -577,12 +574,12 @@ async function main() {
 
   const status = parseJsonOutput('app-server status', run('app-server status', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'status', '--quiet'], { timeoutMs: 180_000, verbose: opts.verbose }));
   requireOk('app-server status', status);
-  const expectedInventories = { 'computer-use': 10, 'event-stream': 3, 'computer-history': 7 };
+  const expectedInventories = { 'computer-use': 10, 'event-stream': 3, 'computer-history': 5 };
   for (const [name, count] of Object.entries(expectedInventories)) {
     const inventory = status.inventories?.[name] ?? status.status?.servers?.find((server) => server.name === name);
     if (!inventory?.toolNames || inventory.toolNames.length !== count) throw new Error(`app-server status expected ${count} ${name} tools, saw ${inventory?.toolNames?.length ?? 0}`);
   }
-  printPass('app-server status', 'all 20 tools across computer-use=10, event-stream=3, computer-history=7');
+  printPass('app-server status', 'all 18 tools across computer-use=10, event-stream=3, computer-history=5');
 
   if (opts.mode === 'read-only' || opts.mode === 'mutating' || opts.mode === 'focus') {
     if (opts.mode === 'focus') {

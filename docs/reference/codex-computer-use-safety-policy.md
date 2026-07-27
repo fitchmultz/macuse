@@ -12,10 +12,10 @@ Allowed today:
 - `list_apps`
 - `get_app_state`
 - app-approval denial probes
-- app-server status/discovery probes for all 20 public tools
+- app-server status/discovery probes for all 18 public tools
 - read-only `event_stream_status`, `computer_history_status`, and `computer_history_get_settings` (these expose activity/artifact/privacy metadata)
-- guarded Record & Replay stop and Computer History stop/pause operations
-- Record & Replay start or Computer History start/resume only when the user requested recording, with explicit `allowRecording: true` and a non-empty safety note
+- guarded Record & Replay stop and Computer History pause operations
+- Record & Replay start or Computer History resume only when the user requested recording, with explicit `allowRecording: true` and a non-empty safety note
 - `computer_history_update_settings` only with fresh exact user approval, explicit `allowPrivacyChange: true`, a non-empty safety note, and the complete `observation` settings object copied from an immediately preceding `computer_history_get_settings` result with only the approved fields changed
 - `macuse` calls with `action: "sequence"`, explicit `allowMutating: true`, and a concrete
   `safetyNote` for mutating steps

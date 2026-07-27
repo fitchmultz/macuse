@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process';
 import { accessSync, constants, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -20,14 +21,17 @@ export const VERSION = (() => {
 export const DEFAULT_CHATGPT_RESOURCES = '/Applications/ChatGPT.app/Contents/Resources';
 export const DEFAULT_CODEX_BIN = resolve(DEFAULT_CHATGPT_RESOURCES, 'codex');
 export const DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR = resolve(DEFAULT_CHATGPT_RESOURCES, 'plugins/openai-bundled/plugins/computer-use');
-export const DEFAULT_BUNDLED_COMPUTER_USE_CLIENT = resolve(DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, 'Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient');
-export const DEFAULT_COMPUTER_USE_PLUGIN_ROOT = '/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use';
+export const DEFAULT_CODEX_HOME = process.env.CODEX_HOME || resolve(homedir(), '.codex');
+// Plugin no longer embeds the app; use the installed client under $CODEX_HOME/computer-use.
+export const DEFAULT_COMPUTER_USE_PLUGIN_ROOT = resolve(DEFAULT_CODEX_HOME, 'plugins/cache/openai-bundled/computer-use');
+export const DEFAULT_COMPUTER_USE_APP = resolve(DEFAULT_CODEX_HOME, 'computer-use/Codex Computer Use.app');
+export const DEFAULT_BUNDLED_COMPUTER_USE_CLIENT = resolve(DEFAULT_COMPUTER_USE_APP, 'Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient');
+export const DEFAULT_COMPUTER_USE_CLIENT_CWD = dirname(DEFAULT_BUNDLED_COMPUTER_USE_CLIENT);
 export const DEFAULT_COMPUTER_USE_PLUGIN_DIR = discoverComputerUsePluginDir();
-export const DEFAULT_COMPUTER_USE_APP = '/Users/yourname/.codex/computer-use/Codex Computer Use.app';
 export const MCP_SERVERS = Object.freeze({
   'computer-use': { args: ['mcp'], tools: ['click', 'drag', 'get_app_state', 'list_apps', 'perform_secondary_action', 'press_key', 'scroll', 'select_text', 'set_value', 'type_text'] },
   'event-stream': { args: ['event-stream', 'mcp'], tools: ['event_stream_start', 'event_stream_status', 'event_stream_stop'] },
-  'computer-history': { args: ['computer-history', 'mcp'], tools: ['computer_history_get_settings', 'computer_history_pause', 'computer_history_resume', 'computer_history_start', 'computer_history_status', 'computer_history_stop', 'computer_history_update_settings'] },
+  'computer-history': { args: ['computer-history', 'mcp'], tools: ['computer_history_get_settings', 'computer_history_pause', 'computer_history_resume', 'computer_history_status', 'computer_history_update_settings'] },
 });
 export const COMPUTER_USE_TOOL_NAMES = MCP_SERVERS['computer-use'].tools;
 
@@ -45,7 +49,7 @@ export function mcpServerConfigs() {
   return Object.fromEntries(Object.entries(MCP_SERVERS).map(([name, server]) => [name, {
     command: DEFAULT_BUNDLED_COMPUTER_USE_CLIENT,
     args: server.args,
-    cwd: DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR,
+    cwd: DEFAULT_COMPUTER_USE_CLIENT_CWD,
     enabled: true,
   }]));
 }

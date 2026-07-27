@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -6,12 +7,16 @@ export const VERSION = resolveMacuseVersion();
 export const DEFAULT_CHATGPT_RESOURCES = "/Applications/ChatGPT.app/Contents/Resources";
 export const DEFAULT_CODEX_BIN = path.join(DEFAULT_CHATGPT_RESOURCES, "codex");
 export const DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR = path.join(DEFAULT_CHATGPT_RESOURCES, "plugins/openai-bundled/plugins/computer-use");
-export const DEFAULT_BUNDLED_COMPUTER_USE_CLIENT = path.join(DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, "Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient");
+// Plugin no longer embeds the app; use the installed client under $CODEX_HOME/computer-use.
+export const DEFAULT_CODEX_HOME = process.env.CODEX_HOME || path.join(homedir(), ".codex");
+export const DEFAULT_COMPUTER_USE_APP = path.join(DEFAULT_CODEX_HOME, "computer-use/Codex Computer Use.app");
+export const DEFAULT_BUNDLED_COMPUTER_USE_CLIENT = path.join(DEFAULT_COMPUTER_USE_APP, "Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient");
+export const DEFAULT_COMPUTER_USE_CLIENT_CWD = path.dirname(DEFAULT_BUNDLED_COMPUTER_USE_CLIENT);
 
 export const MCP_SERVERS = {
 	"computer-use": { args: ["mcp"], tools: ["click", "drag", "get_app_state", "list_apps", "perform_secondary_action", "press_key", "scroll", "select_text", "set_value", "type_text"] },
 	"event-stream": { args: ["event-stream", "mcp"], tools: ["event_stream_start", "event_stream_status", "event_stream_stop"] },
-	"computer-history": { args: ["computer-history", "mcp"], tools: ["computer_history_get_settings", "computer_history_pause", "computer_history_resume", "computer_history_start", "computer_history_status", "computer_history_stop", "computer_history_update_settings"] },
+	"computer-history": { args: ["computer-history", "mcp"], tools: ["computer_history_get_settings", "computer_history_pause", "computer_history_resume", "computer_history_status", "computer_history_update_settings"] },
 } as const;
 export type McpServerName = keyof typeof MCP_SERVERS;
 
@@ -19,7 +24,7 @@ export function mcpServerConfigs() {
 	return Object.fromEntries(Object.entries(MCP_SERVERS).map(([name, server]) => [name, {
 		command: DEFAULT_BUNDLED_COMPUTER_USE_CLIENT,
 		args: [...server.args],
-		cwd: DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR,
+		cwd: DEFAULT_COMPUTER_USE_CLIENT_CWD,
 		enabled: true,
 	}]));
 }

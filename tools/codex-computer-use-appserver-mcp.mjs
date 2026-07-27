@@ -26,7 +26,7 @@ const ELEMENT_ID_SCHEMA = { type: 'string', description: 'Stable element ID from
 const ELEMENT_DESCRIPTION_SCHEMA = { type: 'string', description: 'Exact case-insensitive element description from get_app_state, resolved to the current element_index before calling upstream.' };
 
 if (process.argv.includes('-h') || process.argv.includes('--help')) {
-  process.stdout.write(`macuse Codex Computer Use MCP wrapper ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver-mcp.mjs\n\nThis is a stdio MCP server exposing all 20 verified app-control, Record & Replay,\nand Computer History tools with local pointer/recording/privacy guards. Configure it in\nCursor or another MCP client; do not run it directly except for --help or syntax\nchecks.\n\nEnvironment:\n  CODEX_BIN          Codex app-server binary. Default: ${DEFAULT_CODEX_BIN}\n  CODEX_CU_MCP_CWD  Thread cwd. Default: current working directory.\n\nGenerate client config:\n  node tools/macuse-config.mjs cursor --pretty\n\nValidate:\n  node tools/validate-macuse.mjs mcp\n`);
+  process.stdout.write(`macuse Codex Computer Use MCP wrapper ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver-mcp.mjs\n\nThis is a stdio MCP server exposing all 18 verified app-control, Record & Replay,\nand Computer History tools with local pointer/recording/privacy guards. Configure it in\nCursor or another MCP client; do not run it directly except for --help or syntax\nchecks.\n\nEnvironment:\n  CODEX_BIN          Codex app-server binary. Default: ${DEFAULT_CODEX_BIN}\n  CODEX_CU_MCP_CWD  Thread cwd. Default: current working directory.\n\nGenerate client config:\n  node tools/macuse-config.mjs cursor --pretty\n\nValidate:\n  node tools/validate-macuse.mjs mcp\n`);
   process.exit(0);
 }
 
@@ -48,9 +48,8 @@ const OBSERVATION_SCHEMA = {
     defaultURLBehavior: { type: 'string', enum: ['observe', 'do_not_observe'] },
     allowlist: { type: 'array', items: OBSERVATION_ENTRY_SCHEMA },
     blocklist: { type: 'array', items: OBSERVATION_ENTRY_SCHEMA },
-    observePrivateBrowsing: { type: 'boolean' },
   },
-  required: ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist', 'observePrivateBrowsing'],
+  required: ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist'],
 };
 
 const TOOL_SCHEMAS = {
@@ -125,8 +124,6 @@ const TOOL_SCHEMAS = {
   event_stream_start: auxiliarySchema('event_stream_start', 'Start Record & Replay activity recording. Requires allowRecording:true and a non-empty safetyNote.', false, { allowRecording: { type: 'boolean' }, safetyNote: { type: 'string' } }, ['allowRecording', 'safetyNote']),
   event_stream_status: auxiliarySchema('event_stream_status', 'Read Record & Replay status. Read-only, but exposes activity/artifact metadata.', true),
   event_stream_stop: auxiliarySchema('event_stream_stop', 'Stop Record & Replay. Does not require allowRecording.', false, {}, [], true),
-  computer_history_start: auxiliarySchema('computer_history_start', 'Start Computer History recording. Requires allowRecording:true and a non-empty safetyNote.', false, { allowRecording: { type: 'boolean' }, safetyNote: { type: 'string' } }, ['allowRecording', 'safetyNote'], true),
-  computer_history_stop: auxiliarySchema('computer_history_stop', 'Stop Computer History. Does not require allowRecording.', false, {}, [], true),
   computer_history_pause: auxiliarySchema('computer_history_pause', 'Pause Computer History. Does not require allowRecording.', false, {}, [], true),
   computer_history_resume: auxiliarySchema('computer_history_resume', 'Resume Computer History recording. Requires allowRecording:true and a non-empty safetyNote.', false, { allowRecording: { type: 'boolean' }, safetyNote: { type: 'string' } }, ['allowRecording', 'safetyNote'], true),
   computer_history_status: auxiliarySchema('computer_history_status', 'Read Computer History status. Read-only, but exposes activity metadata.', true),
@@ -311,7 +308,7 @@ class AppServerClient {
 }
 
 function validateAuxiliaryGuard(tool, args) {
-  if (tool === 'event_stream_start' || tool === 'computer_history_start' || tool === 'computer_history_resume') {
+  if (tool === 'event_stream_start' || tool === 'computer_history_resume') {
     if (args.allowRecording !== true || !String(args.safetyNote || '').trim()) throw new Error(`${tool} requires allowRecording:true and a non-empty safetyNote`);
   }
   if (tool !== 'computer_history_update_settings') return;
@@ -322,8 +319,7 @@ function validateAuxiliaryGuard(tool, args) {
       || (entry.scope === 'url' && typeof entry.urlDomain === 'string' && entry.urlDomain.trim() && !entry.urlDomain.includes('://') && !entry.urlDomain.includes('/'))));
   if (!observation || !['observe', 'do_not_observe'].includes(observation.defaultApplicationBehavior)
     || !['observe', 'do_not_observe'].includes(observation.defaultURLBehavior)
-    || !validEntries(observation.allowlist) || !validEntries(observation.blocklist)
-    || typeof observation.observePrivateBrowsing !== 'boolean') {
+    || !validEntries(observation.allowlist) || !validEntries(observation.blocklist)) {
     throw new Error(`${tool} requires all Computer History settings fields and valid scope-specific allowlist/blocklist entries`);
   }
 }

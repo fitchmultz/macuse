@@ -177,17 +177,16 @@ const computerHistoryObservationEntryParam = Type.Object({
 	urlDomain: Type.Optional(Type.String({ description: "Required for URL rules. Use a domain without a scheme or path." })),
 }, { additionalProperties: false });
 const computerHistoryPayloadParam = Type.Object({
-	operation: StringEnum(["start", "stop", "pause", "resume", "status", "get_settings", "update_settings"] as const, { description: "Computer History operation. status/get_settings expose activity and privacy metadata; update_settings replaces all settings, so call get_settings immediately first and preserve unchanged fields." }),
+	operation: StringEnum(["pause", "resume", "status", "get_settings", "update_settings"] as const, { description: "Computer History operation. status/get_settings expose activity and privacy metadata; update_settings replaces all settings, so call get_settings immediately first and preserve unchanged fields." }),
 	arguments: Type.Optional(Type.Object({
 		observation: Type.Object({
 			defaultApplicationBehavior: StringEnum(["observe", "do_not_observe"] as const),
 			defaultURLBehavior: StringEnum(["observe", "do_not_observe"] as const),
 			allowlist: Type.Array(computerHistoryObservationEntryParam),
 			blocklist: Type.Array(computerHistoryObservationEntryParam),
-			observePrivateBrowsing: Type.Boolean(),
 		}, { additionalProperties: false }),
 	}, { additionalProperties: false })),
-	allowRecording: Type.Optional(Type.Boolean({ description: "Required for start and resume. Explicitly acknowledges activity recording." })),
+	allowRecording: Type.Optional(Type.Boolean({ description: "Required for resume. Explicitly acknowledges activity recording." })),
 	allowPrivacyChange: Type.Optional(Type.Boolean({ description: "Required for update_settings." })),
 	...auxiliaryCommon,
 });
@@ -259,8 +258,7 @@ function validateComputerHistoryObservation(args: Record<string, JsonValue>, too
 		|| (observation.defaultApplicationBehavior !== "observe" && observation.defaultApplicationBehavior !== "do_not_observe")
 		|| (observation.defaultURLBehavior !== "observe" && observation.defaultURLBehavior !== "do_not_observe")
 		|| !validEntries(observation.allowlist)
-		|| !validEntries(observation.blocklist)
-		|| typeof observation.observePrivateBrowsing !== "boolean") {
+		|| !validEntries(observation.blocklist)) {
 		throw new Error(`${tool} requires all Computer History settings fields and valid scope-specific allowlist/blocklist entries.`);
 	}
 }
@@ -334,7 +332,7 @@ export default function (pi: ExtensionAPI) {
 			"For mutating macuse sequences, keep the flow narrow, include a concrete safetyNote, set allowMutating=true, and stop before purchases, sends, deletes, credential changes, account/security/privacy changes, or ambiguous windows.",
 			"Prefer macuse sequence steps using perform_secondary_action with action=Press, press_key, set_value, select_text, or element-targeted scroll over pointer click when possible to preserve mouse/system focus.",
 			"For macuse element targeting, prefer stable elementId values from get_app_state when present, then exact elementDescription, then unique role/name, then guarded element_index.",
-			"Use event_stream/computer_history only when requested; starts and Computer History resume require allowRecording and safetyNote. Before update_settings, call get_settings immediately and preserve every unchanged field; update_settings also requires allowPrivacyChange and safetyNote. Status/get_settings expose sensitive metadata.",
+			"Use event_stream/computer_history only when requested; Record & Replay starts and Computer History resume require allowRecording and safetyNote. Before update_settings, call get_settings immediately and preserve every unchanged field; update_settings also requires allowPrivacyChange and safetyNote. Status/get_settings expose sensitive metadata.",
 		],
 		parameters: Type.Object({
 			action: StringEnum(["list_apps", "get_app_state", "sequence", "restart_computer_use", "event_stream", "computer_history"] as const, { description: "macuse operation to run." }),

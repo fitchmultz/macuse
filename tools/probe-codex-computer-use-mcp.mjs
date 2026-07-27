@@ -1,46 +1,13 @@
 #!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { accessSync, constants, readdirSync, statSync } from 'node:fs';
+import { accessSync, constants, statSync } from 'node:fs';
 import { createInterface } from 'node:readline/promises';
-import { VERSION } from './macuse-utils.mjs';
+import { DEFAULT_BUNDLED_COMPUTER_USE_CLIENT, DEFAULT_COMPUTER_USE_CLIENT_CWD, VERSION } from './macuse-utils.mjs';
 
-const DEFAULT_CLIENT = '/Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient';
-const DEFAULT_CWD_ROOT = '/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use';
+const DEFAULT_CLIENT = DEFAULT_BUNDLED_COMPUTER_USE_CLIENT;
+const DEFAULT_CWD = DEFAULT_COMPUTER_USE_CLIENT_CWD;
 const DEFAULT_PROTOCOL_VERSION = '2025-06-18';
-
-function compareVersionLike(a, b) {
-  const aa = a.split(/[^0-9]+/).filter(Boolean).map(Number);
-  const bb = b.split(/[^0-9]+/).filter(Boolean).map(Number);
-  for (let i = 0; i < Math.max(aa.length, bb.length); i += 1) {
-    const delta = (aa[i] || 0) - (bb[i] || 0);
-    if (delta !== 0) return delta;
-  }
-  return a.localeCompare(b);
-}
-
-function discoverDefaultCwd() {
-  try {
-    const entries = readdirSync(DEFAULT_CWD_ROOT, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort(compareVersionLike)
-      .reverse();
-    const found = entries.find((entry) => {
-      try {
-        return statSync(`${DEFAULT_CWD_ROOT}/${entry}/.mcp.json`).isFile();
-      } catch {
-        return false;
-      }
-    });
-    if (found) return `${DEFAULT_CWD_ROOT}/${found}`;
-  } catch {
-    // Fall back to the latest path observed when this probe was updated.
-  }
-  return `${DEFAULT_CWD_ROOT}/1.0.809`;
-}
-
-const DEFAULT_CWD = discoverDefaultCwd();
 
 const EXIT = Object.freeze({
   OK: 0,
@@ -1044,8 +1011,8 @@ function printNextDiagnostics(error, options) {
     process.stderr.write(`  node ${script} ${retryCommand}\n`);
   }
   if (error instanceof MissingInstallError) {
-    process.stderr.write('  find /Users/yourname/.codex/plugins/cache/openai-bundled/computer-use -maxdepth 3 -name .mcp.json -print\n');
-    process.stderr.write('  find /Users/yourname/.codex/computer-use -iname SkyComputerUseClient -type f -print\n');
+    process.stderr.write('  find "$CODEX_HOME/plugins/cache/openai-bundled/computer-use" -maxdepth 3 -name .mcp.json -print\n');
+    process.stderr.write('  find "$CODEX_HOME/computer-use" -iname SkyComputerUseClient -type f -print\n');
   }
   process.stderr.write(`  ${shellQuote(options?.client ?? DEFAULT_CLIENT)} --help\n`);
   process.stderr.write(`  ${shellQuote(options?.client ?? DEFAULT_CLIENT)} help mcp\n`);
