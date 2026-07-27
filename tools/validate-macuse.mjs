@@ -246,40 +246,51 @@ factory({
   registerCommand() {},
   on() {},
 });
-if (tools.length !== 1 || tools[0].name !== 'macuse') {
-  throw new Error('expected only macuse extension tool; saw ' + tools.map((tool) => tool.name).join(','));
-}
-const actions = tools[0].parameters?.properties?.action?.enum || [];
-for (const action of ['restart_computer_use', 'event_stream', 'computer_history']) if (!actions.includes(action)) throw new Error('macuse tool schema is missing ' + action + ' action');
-const historySchema = tools[0].parameters?.properties?.computerHistory;
-const expectedOperations = ['pause', 'resume', 'status', 'get_settings', 'update_settings'];
-if (JSON.stringify(historySchema?.properties?.operation?.enum) !== JSON.stringify(expectedOperations)) throw new Error('macuse Computer History operations do not match current protocol');
-const historyObservation = historySchema?.properties?.arguments?.properties?.observation;
+const expectedTools = [
+  'list_apps', 'get_app_state', 'perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag',
+  'event_stream_start', 'event_stream_status', 'event_stream_stop',
+  'computer_history_pause', 'computer_history_resume', 'computer_history_status', 'computer_history_get_settings', 'computer_history_update_settings',
+  'macuse_sequence', 'macuse_restart',
+];
+const names = tools.map((tool) => tool.name);
+if (JSON.stringify([...names].sort()) !== JSON.stringify([...expectedTools].sort())) throw new Error('extension tools do not match full surface: ' + names.join(','));
+if (tools.some((tool) => tool.executionMode !== 'sequential')) throw new Error('all extension tools must serialize the shared app-server thread and element cache');
+if (tools.some((tool) => tool.parameters?.additionalProperties !== false)) throw new Error('all public extension tool schemas must reject unknown top-level fields');
+const sequenceStepSchema = tools.find((tool) => tool.name === 'macuse_sequence')?.parameters?.properties?.steps?.items;
+if (sequenceStepSchema?.additionalProperties !== true) throw new Error('macuse_sequence step schema must remain permissive for runtime-normalized step fields');
+if (tools.some((tool) => tool.name === 'macuse')) throw new Error('obsolete composite macuse tool is still registered');
+const historyObservation = tools.find((tool) => tool.name === 'computer_history_update_settings')?.parameters?.properties?.observation;
 const requiredSettings = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist'];
-if (!requiredSettings.every((field) => historyObservation?.required?.includes(field))) throw new Error('macuse Computer History schema does not require all observation fields');
-if (!historyObservation?.properties?.allowlist?.items?.properties?.urlDomain?.description?.includes('without a scheme or path')) throw new Error('macuse Computer History schema omits URL domain guidance');
-if (tools[0].executionMode !== 'sequential') throw new Error('macuse tool must serialize calls that share one app-server thread and element cache');
-const macuse = tools[0];
+if (!requiredSettings.every((field) => historyObservation?.required?.includes(field))) throw new Error('Computer History schema does not require all observation fields');
+if (!historyObservation?.properties?.allowlist?.items?.properties?.urlDomain?.description?.includes('without scheme or path')) throw new Error('Computer History schema omits URL domain guidance');
+for (const name of ['perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag']) {
+  const required = tools.find((tool) => tool.name === name)?.parameters?.required || [];
+  if (!required.includes('allowMutating') || !required.includes('safetyNote')) throw new Error(name + ' schema does not require mutation authorization');
+}
 (async () => {
   const signal = new AbortController().signal;
-  const invalidObservation = { observation: { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [] } };
-  const invalidUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url' }] } };
-  const schemeUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'https://example.com' }] } };
-  const pathUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'example.com/path' }] } };
-  for (const [params, expected] of [
-    [{ action: 'event_stream', eventStream: { operation: 'start' } }, /allowRecording/],
-    [{ action: 'computer_history', computerHistory: { operation: 'resume', allowRecording: true } }, /safetyNote/],
-    [{ action: 'computer_history', computerHistory: { operation: 'update_settings', allowPrivacyChange: true, safetyNote: 'guard test' } }, /all Computer History settings fields/],
-    [{ action: 'computer_history', computerHistory: { operation: 'update_settings', arguments: invalidObservation, allowPrivacyChange: true, safetyNote: 'guard test' } }, /scope-specific/],
-    [{ action: 'computer_history', computerHistory: { operation: 'update_settings', arguments: invalidUrlObservation, allowPrivacyChange: true, safetyNote: 'guard test' } }, /scope-specific/],
-    [{ action: 'computer_history', computerHistory: { operation: 'update_settings', arguments: schemeUrlObservation, allowPrivacyChange: true, safetyNote: 'guard test' } }, /scope-specific/],
-    [{ action: 'computer_history', computerHistory: { operation: 'update_settings', arguments: pathUrlObservation, allowPrivacyChange: true, safetyNote: 'guard test' } }, /scope-specific/],
+  const byName = new Map(tools.map((tool) => [tool.name, tool]));
+  const invalidObservation = { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [] };
+  const invalidUrlObservation = { ...invalidObservation, allowlist: [{ scope: 'url' }] };
+  const schemeUrlObservation = { ...invalidObservation, allowlist: [{ scope: 'url', urlDomain: 'https://example.com' }] };
+  const pathUrlObservation = { ...invalidObservation, allowlist: [{ scope: 'url', urlDomain: 'example.com/path' }] };
+  for (const [name, params, expected] of [
+    ['event_stream_start', {}, /allowRecording/],
+    ['computer_history_resume', { allowRecording: true }, /safetyNote/],
+    ['set_value', { app: 'Activity Monitor', value: 'x' }, /allowMutating/],
+    ['set_value', { app: 'Activity Monitor', value: 'x', allowMutating: true, safetyNote: 'short' }, /safetyNote/],
+    ['click', { app: 'Activity Monitor', x: 1, y: 1, allowMutating: true, safetyNote: 'Activity Monitor test only; do not click any risky controls.' }, /allowPointer/],
+    ['computer_history_update_settings', { allowPrivacyChange: true, safetyNote: 'guard test' }, /all Computer History settings fields/],
+    ['computer_history_update_settings', { observation: invalidObservation, allowPrivacyChange: true, safetyNote: 'guard test' }, /scope-specific/],
+    ['computer_history_update_settings', { observation: invalidUrlObservation, allowPrivacyChange: true, safetyNote: 'guard test' }, /scope-specific/],
+    ['computer_history_update_settings', { observation: schemeUrlObservation, allowPrivacyChange: true, safetyNote: 'guard test' }, /scope-specific/],
+    ['computer_history_update_settings', { observation: pathUrlObservation, allowPrivacyChange: true, safetyNote: 'guard test' }, /scope-specific/],
   ]) {
     let guarded = false;
-    try { await macuse.execute('guard', params, signal); } catch (error) { guarded = expected.test(error.message || ''); }
-    if (!guarded) throw new Error('macuse auxiliary guard did not fail closed');
+    try { await byName.get(name).execute('guard', params, signal); } catch (error) { guarded = expected.test(error.message || ''); }
+    if (!guarded) throw new Error(name + ' extension guard did not fail closed');
   }
-  console.log(tools.map((tool) => tool.name).join(','));
+  console.log(names.join(','));
 })().catch((error) => { console.error(error.stack || error.message); process.exitCode = 1; });
 `;
   const nodePath = [
@@ -382,19 +393,20 @@ factory({
   await commands.get('macuse-status').handler('', commandCtx);
   const lazyStatus = notifications.at(-1)?.message || '';
   if (!lazyStatus.includes('has not been started')) throw new Error('pi extension /macuse-status started or missed lazy stopped state before any tool call: ' + lazyStatus);
-  const macuse = tools.get('macuse');
-  if (!macuse) throw new Error('missing extension tool: macuse');
-  if ([...tools.keys()].some((name) => name.startsWith('codex' + '_cu_'))) throw new Error('legacy prefixed tools are still registered: ' + [...tools.keys()].join(','));
-  const eventStatus = await macuse.execute('event-status', { action: 'event_stream', eventStream: { operation: 'status', toolTimeoutMs: 90000 } }, signal, () => {});
+  const eventStatusTool = tools.get('event_stream_status');
+  const listApps = tools.get('list_apps');
+  const getAppState = tools.get('get_app_state');
+  if (!eventStatusTool || !listApps || !getAppState) throw new Error('missing direct extension tools: ' + [...tools.keys()].join(','));
+  const eventStatus = await eventStatusTool.execute('event-status', { toolTimeoutMs: 90000 }, signal, () => {});
   const eventStatusText = eventStatus.content[0]?.text || '';
   const eventInactive = eventStatus.details.computerUse.isError ? eventStatusText.includes('Record & Replay is not enabled') : JSON.parse(eventStatusText).isRecording === false;
   if (!eventInactive) throw new Error('pi event_stream_status did not prove recording is inactive or unavailable');
-  const running = await macuse.execute('running', { action: 'list_apps', listApps: { runningOnly: true, maxTextChars: 5000, toolTimeoutMs: 90000 } }, signal, () => {});
+  const running = await listApps.execute('running', { runningOnly: true, maxTextChars: 5000, toolTimeoutMs: 90000 }, signal, () => {});
   if (!running.content[0].text.includes('running')) throw new Error('pi extension runningOnly list_apps returned no running apps');
   const nonRunningLines = running.content[0].text.split('\n').filter((line) => line.trim() && !line.includes('running'));
   if (nonRunningLines.length > 0) throw new Error('pi extension runningOnly list_apps kept non-running lines: ' + nonRunningLines.slice(0, 3).join(' | '));
-  const first = await macuse.execute('first', { action: 'get_app_state', getAppState: { app: 'Activity Monitor', maxTextChars: 500, toolTimeoutMs: 90000 } }, signal, () => {});
-  const second = await macuse.execute('second', { action: 'get_app_state', getAppState: { app: 'Finder', maxTextChars: 500, toolTimeoutMs: 90000 } }, signal, () => {});
+  const first = await getAppState.execute('first', { app: 'Activity Monitor', maxTextChars: 500, toolTimeoutMs: 90000 }, signal, () => {});
+  const second = await getAppState.execute('second', { app: 'Finder', maxTextChars: 500, toolTimeoutMs: 90000 }, signal, () => {});
   const firstThread = first.details.computerUse.threadId;
   const secondThread = second.details.computerUse.threadId;
   if (!firstThread || firstThread !== secondThread) throw new Error('pi extension did not reuse persistent app-server thread');
@@ -432,11 +444,14 @@ factory({
 function runPiExtensionActualAppSmoke(verbose) {
   const script = String.raw`
 const { createJiti } = require('jiti');
+const { existsSync, unlinkSync } = require('node:fs');
 const jiti = createJiti(process.cwd() + '/validate-extension-actual-app.js', { interopDefault: true });
 const mod = jiti('./extensions/codex-computer-use.ts');
 const factory = mod.default || mod;
 const tools = new Map();
 const handlers = new Map();
+const screenshotPath = '/tmp/macuse-direct-set-value-' + process.pid + '.jpg';
+if (existsSync(screenshotPath)) unlinkSync(screenshotPath);
 factory({
   registerTool(def) { tools.set(def.name, def); },
   registerCommand() {},
@@ -444,51 +459,55 @@ factory({
 });
 (async () => {
   const signal = new AbortController().signal;
-  const macuse = tools.get('macuse');
-  if (!macuse) throw new Error('missing extension tool: macuse');
-  if ([...tools.keys()].some((name) => name.startsWith('codex' + '_cu_'))) throw new Error('legacy prefixed tools are still registered: ' + [...tools.keys()].join(','));
-  const sequence = await macuse.execute('actual-app', {
-    action: 'sequence',
-    sequence: {
-      app: 'Activity Monitor',
-      steps: [
-        { label: 'before', tool: 'get_app_state', arguments: {}, expectVisibleText: ['CPU'] },
-        { label: 'filter', tool: 'set_value', arguments: { role: 'search', name: 'search', value: 'Codex' }, requireStateChange: true },
-        { label: 'filtered-state', tool: 'get_app_state', arguments: {}, expectVisibleText: ['Codex'] },
-        { label: 'clear-after-name-drift', tool: 'set_value', arguments: { role: 'search', name: 'search', value: '' }, requireStateChange: true },
-        { label: 'cleared-state', tool: 'get_app_state', arguments: {}, expectVisibleText: ['Activity Monitor All Processes'] },
-        { label: 'memory-tab', tool: 'perform_secondary_action', arguments: { elementDescription: 'Memory', action: 'Press' }, requireStateChange: true },
-        { label: 'memory-state', tool: 'get_app_state', arguments: {}, expectVisibleText: ['Memory'] },
-        { label: 'cpu-restore', tool: 'perform_secondary_action', arguments: { elementDescription: 'CPU', action: 'Press' }, requireStateChange: true },
-        { label: 'cpu-state', tool: 'get_app_state', arguments: {}, expectVisibleText: ['CPU'] },
-      ],
-      allowMutating: true,
-      safetyNote: 'Validate Activity Monitor only: temporary search text and CPU/Memory tab selection; do not press Stop, Inspector, Actions, or terminate processes.',
-      detail: 'minimal',
-      targetScope: 'main',
-      maxTextChars: 12000,
-      toolTimeoutMs: 120000,
-    },
+  const getAppState = tools.get('get_app_state');
+  const setValue = tools.get('set_value');
+  const secondaryAction = tools.get('perform_secondary_action');
+  const sequenceTool = tools.get('macuse_sequence');
+  if (!getAppState || !setValue || !secondaryAction || !sequenceTool) throw new Error('missing direct/sequence extension tools: ' + [...tools.keys()].join(','));
+  const safetyNote = 'Validate Activity Monitor only: temporary search text and CPU/Memory tab selection; do not press Stop, Inspector, Actions, or terminate processes.';
+  const common = { app: 'Activity Monitor', allowMutating: true, safetyNote, requireStateChange: true, detail: 'minimal', targetScope: 'main', maxTextChars: 12000, toolTimeoutMs: 120000 };
+
+  const before = await getAppState.execute('before', { app: 'Activity Monitor', detail: 'minimal', targetScope: 'main', maxTextChars: 12000, toolTimeoutMs: 120000 }, signal, () => {});
+  if (!before.content.some((block) => block.text?.includes('CPU'))) throw new Error('initial Activity Monitor state did not expose CPU');
+
+  const filtered = await setValue.execute('filter', { ...common, role: 'search', name: 'search', value: 'Codex' }, signal, () => {});
+  if (filtered.details.computerUse.failed) throw new Error('direct set_value filter failed:\n' + filtered.content[0].text);
+  const clear = await setValue.execute('clear', { ...common, role: 'search', name: 'search', value: '', requireStateChange: false, saveImagePath: screenshotPath }, signal, () => {});
+  if (clear.details.computerUse.failed) throw new Error('direct set_value clear failed:\n' + clear.content[0].text);
+  const clearStep = clear.details.computerUse.steps[0];
+  if (!clearStep.savedImageArtifact?.bytes || !existsSync(screenshotPath)) throw new Error('artifact-only direct mutation did not trigger screenshot readback');
+  if (!String(clearStep.targetResolution || '').includes('empty set_value fallback used clear-control')) throw new Error('direct set_value clear did not use drift-safe clear-control fallback');
+  const searchAfterClear = clearStep.elements.find((element) => element.role === 'search' || element.tags?.includes('search-field'));
+  if (!searchAfterClear || searchAfterClear.value) throw new Error('direct set_value clear did not leave Activity Monitor search field empty');
+
+  const memory = await secondaryAction.execute('memory', { ...common, elementDescription: 'Memory', action: 'Press' }, signal, () => {});
+  if (memory.details.computerUse.failed) throw new Error('direct Memory action failed:\n' + memory.content[0].text);
+  const memoryState = memory.details.computerUse.steps[0].elements.find((element) => element.description === 'Memory' || element.name === 'Memory');
+  if (memoryState?.value !== '1') throw new Error('Memory tab was not selected by direct perform_secondary_action');
+  const cpu = await secondaryAction.execute('cpu', { ...common, elementDescription: 'CPU', action: 'Press' }, signal, () => {});
+  if (cpu.details.computerUse.failed) throw new Error('direct CPU action failed:\n' + cpu.content[0].text);
+
+  const sequence = await sequenceTool.execute('final-sequence-read', {
+    app: 'Activity Monitor',
+    steps: [{ label: 'cpu-state', tool: 'get_app_state', arguments: {}, expectVisibleText: ['CPU'] }],
+    detail: 'minimal', targetScope: 'main', maxTextChars: 12000, toolTimeoutMs: 120000,
   }, signal, () => {});
-  if (sequence.details.computerUse.failed) throw new Error('actual-app sequence failed:\n' + sequence.content[0].text);
-  const clearStep = sequence.details.computerUse.steps[3];
-  if (!String(clearStep.targetResolution || '').includes('empty set_value fallback used clear-control')) throw new Error('search clear did not use drift-safe clear-control fallback');
-  const searchAfterClear = sequence.details.computerUse.steps[4].elements.find((element) => element.role === 'search' || element.tags?.includes('search-field'));
-  if (!searchAfterClear || searchAfterClear.value) throw new Error('search clear did not leave Activity Monitor search field empty');
-  const memoryState = sequence.details.computerUse.steps[6].elements.find((element) => element.description === 'Memory' || element.name === 'Memory');
-  if (memoryState?.value !== '1') throw new Error('Memory tab was not selected after Memory action');
-  const finalElements = sequence.details.computerUse.steps[8].elements;
+  if (sequence.details.computerUse.failed) throw new Error('macuse_sequence final read failed:\n' + sequence.content[0].text);
+  const finalElements = sequence.details.computerUse.steps[0].elements;
   const cpuState = finalElements.find((element) => element.description === 'CPU' || element.name === 'CPU');
   const finalMemoryState = finalElements.find((element) => element.description === 'Memory' || element.name === 'Memory');
-  if (cpuState?.value !== '1' || finalMemoryState?.value !== '0') throw new Error('CPU tab was not restored after Activity Monitor sequence');
-  const focus = sequence.details.computerUse.focus;
-  if (!focus || focus.changed !== false) throw new Error('actual-app sequence changed native frontmost focus');
-  const staleFocusField = 'focus' + 'Restoration';
-  if (staleFocusField in sequence.details.computerUse) throw new Error('sequence details still expose stale focus field');
-  if (sequence.details.computerUse.mousePreservation) throw new Error('non-pointer actual-app sequence warped/restored the mouse');
+  if (cpuState?.value !== '1' || finalMemoryState?.value !== '0') throw new Error('CPU tab was not restored after direct tools');
+  for (const result of [filtered, clear, memory, cpu, sequence]) {
+    const focus = result.details.computerUse.focus;
+    if (!focus || focus.changed !== false) throw new Error(result.details.computerUse.tool + ' changed native frontmost focus');
+    if (result.details.computerUse.defaultApp !== 'Activity Monitor') throw new Error(result.details.computerUse.tool + ' omitted direct target-app focus metadata');
+    if (result.details.computerUse.mousePreservation) throw new Error(result.details.computerUse.tool + ' warped/restored mouse without pointer use');
+  }
+  if (existsSync(screenshotPath)) unlinkSync(screenshotPath);
   if (handlers.has('session_shutdown')) await handlers.get('session_shutdown')({ reason: 'test' }, {});
-  console.log('activity-monitor-background-focus');
+  console.log('activity-monitor-direct-tools-background-focus');
 })().catch(async (error) => {
+  try { if (existsSync(screenshotPath)) unlinkSync(screenshotPath); } catch {}
   try { if (handlers.has('session_shutdown')) await handlers.get('session_shutdown')({ reason: 'test' }, {}); } catch {}
   console.error(error.stack || error.message);
   process.exitCode = 1;

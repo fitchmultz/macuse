@@ -277,10 +277,7 @@ Practical limits:
   probes succeeded, which means the missing direct-MCP contract is likely around
   Codex thread/session/lifecycle wrapping rather than the low-level Computer Use
   service alone.
-- A guarded app-server-mediated Activity Monitor search/tab sequence and controlled
-  TextEdit scroll/type/set-value/select sequences are validated. The sequence path is
-  exposed through `macuse` with `action: "sequence"`. Broader mutating workflows should stay
-  guarded by the local safety policy and before/after `get_app_state` evidence.
+- Guarded direct Activity Monitor `set_value` / `perform_secondary_action` calls and controlled TextEdit scroll/type/set-value/select sequences are validated. Pi exposes all 18 upstream tools directly plus `macuse_sequence`; broader mutations remain guarded by the local safety policy and before/after `get_app_state` evidence.
 
 ## Related user-state paths found
 

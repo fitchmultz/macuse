@@ -13,7 +13,7 @@ execution, because raw accepted service-backed calls still hang in local probes.
 The app-server-backed path provides:
 
 - one-command doctor/demo/config entrypoints for operator-grade proof artifacts
-- pi extension tools for read-only state/listing and persistent-session sequences
+- all 18 live upstream tools registered directly in pi, plus persistent-session sequence/restart helpers
 - a standard MCP wrapper for Cursor or other MCP-capable clients
 - focus-preserving defaults that prefer accessibility actions, keys, values, and
   element scroll over pointer movement
@@ -25,19 +25,19 @@ The app-server-backed path provides:
 
 | Capability | Codex native Computer Use | pi extension | standard MCP wrapper | Local validation |
 | --- | --- | --- | --- | --- |
-| App listing | `list_apps` | `macuse` with `action: "list_apps"` | `list_apps` | `validate-macuse read-only`, `validate-macuse mcp` |
-| App state + screenshot | `get_app_state` | `macuse` with `action: "get_app_state"`, sequence step | `get_app_state` | Activity Monitor get-state; image save/include probes |
-| Accessibility press/action | `perform_secondary_action` | `macuse` with `action: "sequence"` | `perform_secondary_action` | Activity Monitor CPU/Memory tab actions |
-| Keyboard | `press_key` | `macuse` with `action: "sequence"` | `press_key` | TextEdit save/select-all |
-| Literal typing | `type_text` | `macuse` with `action: "sequence"` | `type_text` | TextEdit `/tmp/macuse-type-test.txt` |
-| Set accessibility value | `set_value` | `macuse` with `action: "sequence"` | `set_value` | TextEdit `/tmp/macuse-set-value-test.txt` |
-| Text selection | `select_text` | `macuse` with `action: "sequence"` | `select_text` | TextEdit `/tmp/macuse-select-test.txt` |
-| Element scrolling | `scroll` | `macuse` with `action: "sequence"` | `scroll` | TextEdit `/tmp/macuse-scroll-test.txt` |
-| Pointer click | `click` | guarded sequence only; `allowPointerClick` required | guarded; `allowPointer` required | Pointer guard validated; prefer `perform_secondary_action` |
-| Pointer drag | `drag` | guarded sequence only; `allowPointerDrag` required | guarded; `allowPointer` required | TextEdit drag returned success; mouse restore validated |
+| App listing | `list_apps` | direct `list_apps` | `list_apps` | `validate-macuse read-only`, `validate-macuse mcp` |
+| App state + screenshot | `get_app_state` | direct `get_app_state`; `macuse_sequence` step | `get_app_state` | Activity Monitor get-state; image save/include probes |
+| Accessibility press/action | `perform_secondary_action` | direct guarded tool; sequence step | `perform_secondary_action` | direct Activity Monitor CPU/Memory tab actions |
+| Keyboard | `press_key` | direct guarded tool; sequence step | `press_key` | TextEdit save/select-all |
+| Literal typing | `type_text` | direct guarded tool; sequence step | `type_text` | TextEdit `/tmp/macuse-type-test.txt` |
+| Set accessibility value | `set_value` | direct guarded tool; sequence step | `set_value` | direct Activity Monitor filter/clear plus TextEdit probe |
+| Text selection | `select_text` | direct guarded tool; sequence step | `select_text` | TextEdit `/tmp/macuse-select-test.txt` |
+| Element scrolling | `scroll` | direct guarded tool; sequence step | `scroll` | TextEdit `/tmp/macuse-scroll-test.txt` |
+| Pointer click | `click` | direct `allowPointer`; sequence `allowPointerClick` | guarded `allowPointer` | Pointer guard validated; prefer `perform_secondary_action` |
+| Pointer drag | `drag` | direct `allowPointer`; sequence `allowPointerDrag` | guarded `allowPointer` | TextEdit drag returned success; mouse restore validated |
 | App approval behavior | Codex Any App setting | pi defaults to `approval: "inherit"`, auto-accepting app approvals; explicit `deny` remains available for tests | MCP wrapper also defaults to `inherit`; `ask` remains available for clients that want elicitation prompts | inherit/default, deny, and MCP elicitation proxy probes |
-| Record & Replay | `event-stream` MCP: start/status/stop | `macuse` `event_stream`; start guarded | 3 tools; start guarded | inventory, schemas, guards; status allowed |
-| Computer History | `computer-history` MCP: pause/resume/status/get_settings/update_settings | `macuse` `computer_history`; recording/privacy guards | 5 tools with equivalent guards | inventory, schemas, guards; status/get_settings allowed |
+| Record & Replay | `event-stream` MCP: start/status/stop | 3 direct `event_stream_*` tools; start guarded | 3 tools; start guarded | inventory, schemas, guards; status allowed |
+| Computer History | `computer-history` MCP: pause/resume/status/get_settings/update_settings | 5 direct `computer_history_*` tools; recording/privacy guards | 5 tools with equivalent guards | inventory, schemas, guards; status/get_settings allowed |
 | Direct raw MCP positive execution | internal/unknown | not used | not used | still times out, even with a live app-server thread ID |
 
 ## User-experience coverage
@@ -59,9 +59,9 @@ The app-server-backed path provides:
 | Final screenshot selection | Implemented | Sequence `saveImagePath` supports `screenshotStep:"final"` to capture the final visual state |
 | Persistent pi app-server session | Implemented | `node tools/validate-macuse.mjs quick` verifies two pi extension calls reuse one app-server thread and default approval inheritance auto-accepts Finder |
 | Element target normalization | Implemented | pi extension and CLI bridge coerce numeric `element_index` to string; pi extension also accepts `element` aliases, resolves `elementId` from the latest tree, exact-matches `elementDescription`, refreshes before element-targeted steps, reports duplicate ID/name diagnostics, and returns fallback element-index hints when a target is stale or missing |
-| Compact sequence output | Implemented | `macuse` with `action: "sequence"` defaults to `detail: "compact"`; full raw trees remain available with `detail: "full"`; TextEdit ruler marker noise is filtered |
-| Partial sequence failures | Implemented | failed `macuse` with `action: "sequence"` calls return completed step rows plus the failed-step diagnostic and resume hint; per-step `allowError:true` continues through resolution/tool errors |
-| Running app filtering | Implemented | `macuse` with `action: "list_apps"` supports `runningOnly:true` and substring `filter` |
+| Compact sequence output | Implemented | `macuse_sequence` defaults to `detail: "compact"`; full raw trees remain available with `detail: "full"`; TextEdit ruler marker noise is filtered |
+| Partial sequence failures | Implemented | failed `macuse_sequence` calls return completed step rows plus the failed-step diagnostic and resume hint; per-step `allowError:true` continues through resolution/tool errors |
+| Running app filtering | Implemented | direct `list_apps` supports `runningOnly:true` and substring `filter` |
 
 All 18 verified public tools are configured from the installed SkyComputerUseClient under `$CODEX_HOME/computer-use` and inventory-checked in the persistent app-server thread. Ordinary app control does not call recording or privacy-mutating tools. `turn-ended` is intentionally absent because it has no published payload contract; the private `@oai/sky` Node REPL adapter is not MCP and remains unexposed.
 

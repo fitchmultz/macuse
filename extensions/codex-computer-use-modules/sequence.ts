@@ -89,7 +89,7 @@ export function waitConditionMet(tool: string, args: Record<string, JsonValue>, 
 
 
 export function normalizeSequenceSteps(value: unknown): SequenceStep[] {
-	if (!Array.isArray(value) || value.length === 0) throw new Error("macuse action=sequence requires at least one step.");
+	if (!Array.isArray(value) || value.length === 0) throw new Error("macuse_sequence requires at least one step.");
 	return value.map((step, index) => {
 		if (!isRecord(step)) throw new Error(`sequence step ${index} must be an object.`);
 		if (typeof step.tool !== "string" || step.tool.length === 0) throw new Error(`sequence step ${index} requires a non-empty tool string.`);

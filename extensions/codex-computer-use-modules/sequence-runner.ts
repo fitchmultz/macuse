@@ -105,7 +105,7 @@ async function runWaitStep(step: SequenceStep, args: Record<string, JsonValue>, 
 		if (sleepMs <= 0) break;
 		await new Promise((resolve) => setTimeout(resolve, sleepMs));
 	}
-	const message = `${step.tool} timed out after ${waitTimeoutMs}ms: ${lastMessage}. Next action: re-run macuse action=get_app_state with detail:"minimal" for ${args.app}. Transport get_app_state calls used up to ${perPollToolTimeoutMs}ms each, with the final sub-1000ms remainder handled by the wait predicate instead of issuing a tiny transport call.`;
+	const message = `${step.tool} timed out after ${waitTimeoutMs}ms: ${lastMessage}. Next action: call get_app_state with detail:"minimal" for ${args.app}. Transport get_app_state calls used up to ${perPollToolTimeoutMs}ms each, with the final sub-1000ms remainder handled by the wait predicate instead of issuing a tiny transport call.`;
 	if (last) appendText(last, message);
 	else last = failureResult(message, opts.maxTextChars);
 	last.isError = true;
@@ -119,8 +119,11 @@ export async function executeSequence(
 	onUpdate: ((update: { content: TextContentBlock[]; details: Record<string, unknown> }) => void) | undefined,
 	getClient: () => AppServerClient,
 	sessionElementCache: Map<string, ElementInfo[]>,
+	resultTool = "macuse_sequence",
 ): Promise<{ content: (TextContentBlock | ImageContentBlock)[]; details: Record<string, unknown> }> {
 		const input = params as SequenceParams;
+		const toolName = resultTool;
+		const pointerClickFlag = resultTool === "macuse_sequence" ? "allowPointerClick" : "allowPointer";
 		const defaultApp = typeof input.app === "string" ? input.app : undefined;
 		const steps = normalizeSequenceSteps(input.steps).map((step) => {
 			if (!defaultApp || step.arguments.app !== undefined || !APP_SCOPED_TOOLS.has(step.tool)) return step;
@@ -130,18 +133,18 @@ export async function executeSequence(
 		const hasPointerClick = steps.some((step) => step.tool === "click");
 		const hasPointerDrag = steps.some((step) => step.tool === "drag");
 		if (hasPointerClick && !input.allowPointerClick) {
-			throw new Error("macuse action=sequence pointer click steps require allowPointerClick=true. Prefer perform_secondary_action with action=Press when possible to preserve mouse focus.");
+			throw new Error(`${toolName} pointer click requires ${toolName === "click" ? "allowPointer=true" : "allowPointerClick=true"}. Prefer perform_secondary_action with action=Press when possible to preserve mouse focus.`);
 		}
 		if (hasPointerDrag && !input.allowPointerDrag) {
-			throw new Error("macuse action=sequence pointer drag steps require allowPointerDrag=true. Pointer drag can move the user's cursor; the extension restores mouse position afterward.");
+			throw new Error(`${toolName} pointer drag requires ${toolName === "drag" ? "allowPointer=true" : "allowPointerDrag=true"}. Pointer drag can move the user's cursor; the extension restores mouse position afterward.`);
 		}
 		if (mutating) {
-			if (!input.allowMutating) throw new Error("macuse action=sequence mutating steps require allowMutating=true.");
+			if (!input.allowMutating) throw new Error(`${toolName} mutations require allowMutating=true.`);
 			const safetyNote = String(input.safetyNote || "").trim();
-			if (safetyNote.length < 20) throw new Error("macuse action=sequence mutating steps require a safetyNote describing target, intended effect, and stop boundary.");
+			if (safetyNote.length < 20) throw new Error(`${toolName} mutations require a safetyNote describing target, intended effect, and stop boundary.`);
 		}
 		const approval = input.approval || "inherit";
-		onUpdate?.({ content: [{ type: "text", text: `Running persistent Codex Computer Use sequence (${steps.length} steps, mutating=${mutating})...` }], details: {} });
+		onUpdate?.({ content: [{ type: "text", text: `Running ${toolName} through persistent Codex Computer Use (${steps.length} step${steps.length === 1 ? "" : "s"}, mutating=${mutating})...` }], details: {} });
 		const toolTimeoutMs = asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
 		const maxTextChars = asInt(input.maxTextChars, DEFAULT_MAX_TEXT_CHARS);
 		const detail = normalizeDetail(input.detail, "compact");
@@ -259,7 +262,7 @@ export async function executeSequence(
 					let postActionReadbackDone = false;
 					let actionErrorRecoveredByStateChange = false;
 					const hasAssertions = step.expectText.length > 0 || step.expectAbsentText.length > 0 || step.expectVisibleText.length > 0;
-					const needsStateReadback = step.requireStateChange || hasAssertions || Boolean(input.includeImage && saveImageForStep);
+					const needsStateReadback = step.requireStateChange || hasAssertions || Boolean((input.includeImage || input.saveImagePath) && saveImageForStep);
 					if (filtered.isError && step.requireStateChange && typeof stepArgs.app === "string") {
 						const verify = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
 						const verified = filterToolResult(verify.result, {
@@ -337,7 +340,7 @@ export async function executeSequence(
 							}
 						}
 						if (postActionNoChange) {
-							appendText(verified, `Warning: actionDispatchedButNoStateChange — ${step.tool} returned success, but a post-action get_app_state readback did not show observable title, URL, visible-text, or target changes. If the target should have opened/navigated, treat this as a failed UI action; retry after a fresh state read or escalate to guarded pointer click using allowPointerClick when the target/window is unambiguous.`);
+							appendText(verified, `Warning: actionDispatchedButNoStateChange — ${step.tool} returned success, but a post-action get_app_state readback did not show observable title, URL, visible-text, or target changes. If the target should have opened/navigated, treat this as a failed UI action; retry after a fresh state read or escalate to guarded pointer click using ${pointerClickFlag} when the target/window is unambiguous.`);
 						}
 						if (step.requireStateChange && postActionNoChange) verified.isError = true;
 						updateElementCache(elementCache, stepArgs.app, verified.content);
@@ -363,10 +366,10 @@ export async function executeSequence(
 						appendText(filtered, `Warning: browserInputChangedNavigationState — ${step.tool} in a browser changed URL/title state. Treat address/search fields as navigation controls even without pressing Return; verify no unintended external request or tab navigation occurred before continuing.`);
 					}
 					const nextActions = [
-						...(rawIndexTarget && changed && (changed.urlChanged || changed.titleChanged || changed.visibleTextChanged) && !step.tool.startsWith("get_app_state") ? [`If the UI rerendered or navigated, call macuse action=get_app_state for ${JSON.stringify(stepArgs.app)} with detail:"minimal" before using raw element_index targets.`] : []),
-						...(!hasStateContent && filtered.isError ? [`No app-state readback was available from this failed step, so changed-state summaries are intentionally suppressed to avoid false deltas. Re-run macuse action=get_app_state before deciding whether the UI actually changed.`] : []),
+						...(rawIndexTarget && changed && (changed.urlChanged || changed.titleChanged || changed.visibleTextChanged) && !step.tool.startsWith("get_app_state") ? [`If the UI rerendered or navigated, call get_app_state for ${JSON.stringify(stepArgs.app)} with detail:"minimal" before using raw element_index targets.`] : []),
+						...(!hasStateContent && filtered.isError ? [`No app-state readback was available from this failed step, so changed-state summaries are intentionally suppressed to avoid false deltas. Re-run get_app_state before deciding whether the UI actually changed.`] : []),
 						...(diagnostics.length > 0 ? [`Resolve upstream Computer Use state for ${JSON.stringify(stepArgs.app)} before retrying mutating actions; use agent_browser for web/Chrome if Computer Use state keeps timing out.`] : []),
-						...(postActionNoChange ? [`AX action dispatched but no observable state change was seen. If a click/open was expected, retry with a fresh state read; use a pointer click fallback only with allowPointerClick and an unambiguous target/window.`] : []),
+						...(postActionNoChange ? [`AX action dispatched but no observable state change was seen. If a click/open was expected, retry with a fresh state read; use a pointer click fallback only with ${pointerClickFlag} and an unambiguous target/window.`] : []),
 						...(actionErrorRecoveredByStateChange ? [`Upstream reported an error, but post-action state changed. Inspect the final state carefully before issuing another mutating step.`] : []),
 						...(browserTextInput && step.tool === "type_text" ? [`type_text sends keys to the browser's current focus, which may be page content rather than the address bar. Prefer set_value on a verified address/search target only when navigation is allowed, or verify focused UI before typing.`] : []),
 						...(browserInputChangedNavigationState ? [`Browser text input changed URL/title state. Audit final browser state and close/restore any scratch tab before continuing.`] : []),
@@ -384,7 +387,7 @@ export async function executeSequence(
 						allowError: step.allowError,
 						targetResolution,
 						targetWarnings,
-						elements: step.tool === "get_app_state" && hasStateContent ? machineElements(filtered.content, targetScope) : [],
+						elements: (step.tool === "get_app_state" || resultTool !== "macuse_sequence") && hasStateContent ? machineElements(filtered.content, targetScope) : [],
 						visibleText: afterState?.visibleText ?? [],
 						changed,
 						nextActions,
@@ -464,7 +467,7 @@ export async function executeSequence(
 						elements: [],
 						visibleText: [],
 						changed: null,
-						nextActions: ["Inspect the failed-step diagnostic, then re-run macuse action=get_app_state with detail:\"minimal\" before retrying any raw element_index target."],
+						nextActions: ["Inspect the failed-step diagnostic, then re-run get_app_state with detail:\"minimal\" before retrying any raw element_index target."],
 						acceptedElicitations: 0,
 						elicitationCount: 0,
 					});
@@ -480,9 +483,8 @@ export async function executeSequence(
 		const mousePreservation = mouseBefore ? { before: mouseBefore, after: mouseAfter, restored: mouseRestored } : undefined;
 		const content = sequenceContent(results, Boolean(input.includeImage), failed, steps.length, detail, maxTextChars, focus, defaultApp, mousePreservation);
 		const details = bridgeDetails({
-			tool: "macuse",
-			action: "sequence",
-			computerUseTool: "sequence",
+			tool: toolName,
+			computerUseTool: resultTool === "macuse_sequence" ? "sequence" : resultTool,
 			threadId: getClient().status().threadId,
 			detail,
 			targetScope,
@@ -494,7 +496,7 @@ export async function executeSequence(
 			resumeFromStepIndex: failed?.index ?? null,
 			defaultApp: defaultApp ?? null,
 			implicitRefreshes,
-			imageSupportNote: input.includeImage ? "Image rendering is model/host dependent; saveImagePath is the reliable screenshot artifact path." : null,
+			imageSupportNote: input.includeImage || input.saveImagePath ? "Image rendering is model/host dependent; saveImagePath is the reliable screenshot artifact path." : null,
 			screenshotStep,
 			focus,
 			pointerToolsUsed: hasPointerClick || hasPointerDrag,
@@ -530,7 +532,7 @@ export async function executeSequence(
 			// self-contained: include the run summary text so the model can
 			// diagnose the zero-progress failure from the message alone.
 			const summaryBlock = content.find(isTextBlock);
-			throw new ComputerUseError(`macuse action=sequence failed at step 1 (index 0, ${failed.tool}): ${failed.message}.\n\n${truncateString(summaryBlock?.text ?? "", 4000)}`, details);
+			throw new ComputerUseError(`${toolName} failed at step 1 (index 0, ${failed.tool}): ${failed.message}.\n\n${truncateString(summaryBlock?.text ?? "", 4000)}`, details);
 		}
 		return { content: content as (TextContentBlock | ImageContentBlock)[], details };
 	

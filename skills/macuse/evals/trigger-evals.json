@@ -10,12 +10,12 @@
     "reason": "Requests macuse/Computer Use dogfood against native macOS apps."
   },
   {
-    "query": "Use the macuse sequence action to filter Activity Monitor search and restore it.",
+    "query": "Use macuse_sequence to filter Activity Monitor search and restore it.",
     "should_trigger": true,
     "reason": "Names macuse sequence use and asks for safe local app control."
   },
   {
-    "query": "Call macuse get_app_state on Calendar and summarize visible controls.",
+    "query": "Call get_app_state through macuse on Calendar and summarize visible controls.",
     "should_trigger": true,
     "reason": "Names a macuse read-only action for native app state inspection."
   },

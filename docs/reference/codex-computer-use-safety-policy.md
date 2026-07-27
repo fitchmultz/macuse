@@ -3,7 +3,7 @@
 Source: Local policy for this `macuse` investigation, based on the installed Codex Computer Use skill, OpenAI's Computer Use docs snapshot, and local bridge behavior.
 Author: Local investigation notes
 Created: May 22, 2026
-Status: Active guardrails for the packaged pi extension; one `macuse` tool exposes app control plus guarded Record & Replay and Computer History actions
+Status: Active guardrails for the packaged pi extension; all 18 upstream tools are direct and guarded, with `macuse_sequence` and `macuse_restart` as extension helpers
 
 ## Current allowed scope
 
@@ -17,21 +17,10 @@ Allowed today:
 - guarded Record & Replay stop and Computer History pause operations
 - Record & Replay start or Computer History resume only when the user requested recording, with explicit `allowRecording: true` and a non-empty safety note
 - `computer_history_update_settings` only with fresh exact user approval, explicit `allowPrivacyChange: true`, a non-empty safety note, and the complete `observation` settings object copied from an immediately preceding `computer_history_get_settings` result with only the approved fields changed
-- `macuse` calls with `action: "sequence"`, explicit `allowMutating: true`, and a concrete
-  `safetyNote` for mutating steps
+- direct `perform_secondary_action`, `press_key`, `type_text`, `set_value`, `select_text`, `scroll`, `click`, and `drag` only with explicit `allowMutating: true`, a concrete `safetyNote`, and a recent `get_app_state`; direct pointer tools also require `allowPointer: true`
+- `macuse_sequence` with the same mutation guard, ordered evidence, and `allowPointerClick` / `allowPointerDrag` for pointer steps
 
-Not allowed as always-on standalone tools:
-
-- `click`
-- `type_text`
-- `press_key`
-- `drag`
-- `scroll`
-- `set_value`
-- `select_text`
-- `perform_secondary_action`
-
-The packaged pi extension exposes one `macuse` tool with read-only actions, one guarded persistent-session sequence action, and guarded `event_stream` / `computer_history` actions. It does not expose standalone app-control mutating tools. `turn-ended` remains excluded because no payload contract is published, and the private `@oai/sky` Node REPL adapter is not MCP and is not exposed.
+The packaged pi extension exposes all 18 live upstream tools directly, plus `macuse_sequence` and `macuse_restart`. `turn-ended` remains excluded because no payload contract is published, and the private `@oai/sky` Node REPL adapter is not MCP and is not exposed.
 
 ## Preconditions before any mutating action
 
@@ -132,8 +121,7 @@ Separate controlled TextEdit probes were also run:
 
 ## Implementation guidance
 
-Prefer one mutating sequence surface over many always-on standalone mutating tools. The current
-persistent `macuse` sequence action requires or enforces:
+Direct mutating tools and `macuse_sequence` share the same persistent executor, stable-target refresh, focus evidence, and fail-closed guards. Post-action readback runs when evidence is requested with `requireStateChange`, assertions, or image capture. Use a direct tool for one action and `macuse_sequence` for ordered multi-step workflows. `macuse_sequence` requires or enforces:
 
 - ordered `steps`, preferably starting and ending with `get_app_state`
 - optional sequence-level `app` to apply a default target app to steps that omit
@@ -183,10 +171,11 @@ persistent `macuse` sequence action requires or enforces:
   descriptions, role/name, value, semantic tags (`settable-field`,
   `search-field`, `clear-control`, `risk-sensitive-control`), disabled state,
   changed-state summaries, warnings, and next-action hints where Computer Use
-  exposes enough accessibility evidence. Mutating sequence steps perform a
-  post-action state readback and report `actionDispatchedButNoStateChange` when
-  upstream reports success but no observable title, URL, visible-text, or target
-  change appears; per-step `requireStateChange: true` turns that into a failure
+  exposes enough accessibility evidence. Mutating steps perform post-action
+  state readback when requested by `requireStateChange`, assertions, or image
+  artifact capture, and report `actionDispatchedButNoStateChange` when upstream
+  reports success but no observable title, URL, visible-text, or target change
+  appears; per-step `requireStateChange: true` turns that into a failure
   and captures a pre-action baseline for non-element actions such as `press_key`;
   if the first readback shows no change, a short delayed readback is attempted
   before failing to better catch transient popovers/editors

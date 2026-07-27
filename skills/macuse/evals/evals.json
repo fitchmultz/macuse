@@ -8,7 +8,7 @@
     {
       "id": "success-safe-activity-monitor-sequence",
       "prompt": "Use macuse to filter Activity Monitor search for Codex, clear it, switch Memory, and restore CPU.",
-      "expected_output": "The response should use macuse action=sequence with allowMutating true, a narrow Activity Monitor safetyNote, stable targets, assertions for search clear and CPU restore, and a concise run-summary-based report."
+      "expected_output": "The response should use direct guarded set_value and perform_secondary_action tools or macuse_sequence when ordered assertions matter, with allowMutating true, a narrow Activity Monitor safetyNote, stable targets, verified search clear/CPU restore, and a concise evidence report."
     },
     {
       "id": "recover-computer-use-timeout-or-tcc",

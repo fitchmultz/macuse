@@ -538,36 +538,11 @@ The installable pi extension source is:
 extensions/codex-computer-use.ts
 ```
 
-It is declared through `package.json#pi.extensions` and registers one `macuse` pi tool with six actions:
+It is declared through `package.json#pi.extensions` and registers all 18 live upstream tools under their native names: 10 `computer-use`, 3 `event-stream`, and 5 `computer-history` tools. It also registers `macuse_sequence` and `macuse_restart`; the obsolete composite `macuse` action router is removed.
 
-- `action: "list_apps"`
-- `action: "get_app_state"`
-- `action: "sequence"`
-- `action: "event_stream"`
-- `action: "computer_history"`
-- `action: "restart_computer_use"`
+The pi extension keeps one persistent Codex app-server process/thread instead of shelling out to the CLI bridge for every tool call. Normal `session_shutdown` stops it; `/macuse-stop` stops only app-server while leaving lazy restart available. Read-only app state and auxiliary status/settings calls recover stopped-session or transport-closed failures once by restarting only the extension-owned app-server session. `/macuse-restart` / `macuse_restart` explicitly restart Computer Use helpers plus app-server. PID records/watchdog state remain under `/tmp/macuse-appserver`.
 
-The pi extension keeps a persistent Codex app-server process and thread for the
-session instead of shelling out to the CLI bridge for every tool call. Normal
-`session_shutdown` stops that process, `/macuse-stop` stops only app-server while
-leaving lazy restart available. Read-only app state plus Record & Replay/Computer History status/settings calls recover
-stopped-session or transport-closed failures once by restarting only the
-macuse-owned app-server session. `/macuse-restart` / `restart_computer_use`
-explicitly restart Computer Use helper processes plus app-server when that
-broader reset is intended. On macOS the extension writes a PID record under
-`/tmp/macuse-appserver`, starts a small watchdog that monitors the originating pi
-process, and reaps only matching macuse-owned orphaned `codex app-server`
-processes on startup.
-`macuse` actions `get_app_state` and `sequence` default to
-`approval: "inherit"`, which auto-accepts Computer Use app-approval elicitations
-to match Codex's Any App setting. For mutating `macuse` sequence steps, the
-extension requires `allowMutating: true` and a concrete `safetyNote`. Sequence
-steps can include `expectText`, `expectAbsentText`, `expectVisibleText`, and
-`allowError` so the extension can stop on unexpected state or tool errors.
-Sequence output defaults
-to `detail: "compact"`; use `detail: "full"` when every raw tree is needed.
-`macuse` sequence also accepts a sequence-level `app` default, which is
-applied to steps whose `arguments` omit `app`. Element-targeted tools accept
+`get_app_state`, direct mutations, and `macuse_sequence` default to `approval:"inherit"`, matching Codex Any App. Direct `perform_secondary_action`, `press_key`, `type_text`, `set_value`, `select_text`, `scroll`, `click`, and `drag` require `allowMutating:true`, a concrete `safetyNote`, and a recent app-state read; direct pointer tools additionally require `allowPointer:true`. `macuse_sequence` uses the same executor with ordered assertions/waits, `allowPointerClick` / `allowPointerDrag`, and a sequence-level `app` default. Sequence steps can include `expectText`, `expectAbsentText`, `expectVisibleText`, `allowError`, and `requireStateChange`; output defaults to `detail:"compact"` and keeps resumable failure details. Element-targeted tools accept
 `element_index` as a string or number, `element` as an alias, `elementId` /
 `element_id` resolved from the latest `get_app_state` tree, exact
 `elementDescription` / `element_description` matches for descriptions such as
@@ -585,9 +560,7 @@ result includes all completed steps plus a failed-step diagnostic and resume hin
 instead of discarding partial evidence. Per-step `allowError: true` also covers
 element resolution errors, so optional/fallback steps can fail and the sequence
 can continue.
-Pointer-based `click` steps additionally require
-`allowPointerClick: true`; pointer-based `drag` steps require
-`allowPointerDrag: true` and use extension-level mouse restoration.
+Direct pointer `click`/`drag` calls require `allowPointer:true`; pointer steps inside `macuse_sequence` require `allowPointerClick:true` / `allowPointerDrag:true`. Both paths restore mouse position.
 Prefer `perform_secondary_action` with `action: "Press"`, `press_key`,
 `set_value`, or element-targeted `scroll` when possible to preserve the user's
 mouse/system focus. `press_key` uses xdotool-style key names, such as `5`,
@@ -607,7 +580,7 @@ fallback when exactly one non-risky clear/cancel button is available. Non-empty
 matching, which makes accessibility text assertions such as `text 1` reliable;
 `expectVisibleText` checks parsed visible text values directly, such as `0` or
 `1`, so agents do not need to copy accessibility line formats for display
-assertions. `macuse` action `get_app_state` supports `detail: "minimal"` for app/window,
+assertions. `get_app_state` supports `detail: "minimal"` for app/window,
 visible text, and concise target hints, `detail: "compact"` for grouped
 interactive elements, and `detail: "full"` for raw trees. `targetScope: "main"`
 suppresses likely browser/app chrome and OS window controls in transformed
@@ -641,7 +614,7 @@ state. When upstream Computer Use returns its “application session stopped” 
 or a transport-closed error, macuse restarts only its app-server session and
 retries read-only calls once automatically; the sentinel is sanitized into a
 normal tool error instead of passing through an agent-stop instruction. Use
-`restart_computer_use` or `/macuse-restart` for an explicit Computer Use helper
+`macuse_restart` or `/macuse-restart` for an explicit Computer Use helper
 restart. When upstream Computer Use returns timeout errors such as `-10005
 timeoutReached`, macuse annotates the result with a clear blocker: filtering
 modes only reduce output after upstream responds and cannot make a hung browser
@@ -852,9 +825,8 @@ Reusable now for broad pi operation:
 - Codex app-server supplies the thread/session/lifecycle wrapper that direct raw
   MCP was missing in these probes.
 - The Codex skill and app-specific instruction files are available locally.
-- pi can load `extensions/codex-computer-use.ts` through the package manifest and expose the single `macuse` tool with app control plus guarded Record & Replay and Computer History actions backed by one live Codex app-server thread.
-- A harmless Activity Monitor search/filter/clear and CPU/Memory restore smoke
-  test has passed through the app-server sequence path.
+- pi can load `extensions/codex-computer-use.ts` through the package manifest and expose all 18 live upstream tools plus `macuse_sequence` / `macuse_restart`, backed by one live Codex app-server thread.
+- A harmless Activity Monitor search/filter/clear and CPU/Memory restore smoke test has passed through direct `set_value` / `perform_secondary_action` calls, followed by a `macuse_sequence` state assertion.
 
 Still needed before broad mutating GUI operation:
 
@@ -862,10 +834,8 @@ Still needed before broad mutating GUI operation:
    [`codex-computer-use-safety-policy.md`](./codex-computer-use-safety-policy.md),
    including explicit stop boundaries for purchases, account/security/privacy
    settings, credentials, destructive actions, and wrong-window detection.
-2. Validate additional mutating tool shapes, such as scroll and text input, only
-   in controlled apps/states with before/after `get_app_state` evidence.
-3. Decide whether standalone mutating pi tools are ever worthwhile; the current
-   default is one `macuse` tool with a guarded sequence action rather than many standalone mutating tools.
+2. Keep validating mutating tool shapes such as scroll and text input only in controlled apps/states with before/after `get_app_state` evidence.
+3. Keep direct mutation schemas and `macuse_sequence` on the same guard/target-resolution executor so their safety behavior cannot drift.
 4. A host-app permission setup story for macOS Automation/TCC. Current evidence
    shows the service checks the responsible host app, such as Repo Prompt or a
    terminal, when the MCP client sends Apple Events to `Codex Computer Use.app`.

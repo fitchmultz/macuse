@@ -78,26 +78,22 @@ node tools/codex-computer-use-appserver.mjs list-apps --running-only --filter "A
 node tools/codex-computer-use-appserver.mjs get-state --app "Activity Monitor" --quiet --pretty
 ```
 
-The packaged pi extension keeps a persistent Codex app-server thread for the session and registers one model-facing tool: `macuse`.
+The packaged pi extension keeps one persistent Codex app-server thread and registers the full live upstream surface directly:
 
-`macuse` routes by `action`:
+- Computer Use: `list_apps`, `get_app_state`, `perform_secondary_action`, `press_key`, `type_text`, `set_value`, `select_text`, `scroll`, `click`, and `drag`.
+- Record & Replay: `event_stream_start`, `event_stream_status`, and `event_stream_stop`.
+- Computer History: `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, and `computer_history_update_settings`.
+- Pi helpers: `macuse_sequence` for ordered flows/waits/assertions and `macuse_restart` for an explicit Computer Use helper plus app-server restart.
 
-- `action: "list_apps"` with `listApps` payload lists known or running local macOS apps.
-- `action: "get_app_state"` with `getAppState` payload inspects a target app. `detail: "minimal"` returns app/window, visible text, and concise target hints; `detail: "compact"` returns grouped interactive elements; `detail: "full"` keeps raw trees. `targetScope: "main"` suppresses likely chrome/window controls where possible.
-- `action: "sequence"` with `sequence` payload runs multi-step flows, including mutating steps with `allowMutating: true`, a `safetyNote`, and optional per-step `expectText` / `expectAbsentText` / `expectVisibleText` assertions.
-- `action: "event_stream"` with `eventStream` payload exposes guarded Record & Replay start/status/stop operations.
-- `action: "computer_history"` with `computerHistory` payload exposes Computer History pause/resume/status/get_settings/update_settings operations.
-- `action: "restart_computer_use"` with `restartComputerUse` payload explicitly restarts Computer Use helper processes plus the macuse app-server session without user input, then leaves the tool ready for retry.
+Direct mutating Computer Use tools require `allowMutating:true`, a `safetyNote` naming the target/effect/stop boundary, and a recent `get_app_state`. Element-targeted calls refresh app state and accept `element_index`/`element`, stable `elementId`, exact `elementDescription`, role/name selectors, ordered `targets` fallbacks, and raw-index `expected*` stale guards. Direct `click`/`drag` also require `allowPointer:true`; pointer tools restore mouse position. Prefer `perform_secondary_action` with `action:"Press"`, `press_key`, `set_value`, or `scroll` over pointer actions. `press_key` accepts xdotool-style combos such as `super+comma`, and `key:",", modifiers:["COMMAND"]` normalizes to that form.
 
-Sequence pointer `click` steps require `allowPointerClick: true`; pointer `drag` steps require `allowPointerDrag: true`; pointer steps restore mouse position afterward. Prefer accessibility actions/keys/values so non-pointer sequences do not warp the cursor or steal focus; `press_key` accepts xdotool-style combos such as `super+comma`, and `key:",", modifiers:["COMMAND"]` normalizes to that form. Use sequence-level `app` to avoid repeating the same app in every step, or per-step `app` for multi-app sequences. Element targets accept `element_index` as a string or number, `element` as an alias, stable `elementId` values, exact `elementDescription` matches such as `CPU`, role/name selectors such as `{ "role": "search", "name": "search" }`, or `arguments.targets` fallback objects such as `[{"elementDescription":"Memory"},{"role":"button","name":"Memory"}]`; raw index targets can pass `expectedRole` / `expectedName` / `expectedValue` stale guards. Search fields normalize `role:"search text field"` to `role:"search"`; settable/search/transient fields expose `tags` such as `settable-field`, `search-field`, `transient-editor`, `clear-control`, and `risk-sensitive-control`, keep stable names when values change, prioritize transient editor targets in summaries, warn when risk-sensitive controls are visible, and support a conservative empty-`set_value` clear-button fallback when one clear control is available. Compact trees and failed lookups include preferred target syntax plus index fallbacks. Sequence output defaults to `detail: "compact"`; pass `detail: "minimal"` for assertion-focused low-token summaries or `detail: "full"` for complete trees. App state and sequence details include parsed `visibleText`, `targets`/`elements`, target-stability diagnostics, native focus before/after summaries, a concise sequence run summary, target warnings, changed-state summaries, resolved-target safety tags, and next-action hints. Sequence steps reuse upstream action results by default and perform post-action `get_app_state` readback only when evidence is requested (`requireStateChange`, assertions, or image artifacts); if upstream reports success but requested readback shows no title, URL, visible-text, or target change, output includes `actionDispatchedButNoStateChange`, and per-step `requireStateChange: true` turns that warning into a sequence failure. Failed sequences return completed step results plus a failed-step diagnostic with `failedStepIndex`, `completedStepCount`, and `resumeFromStepIndex`; per-step `allowError: true` lets the sequence continue through resolution or tool errors. If a failed step has no app-state readback, changed-state summaries are suppressed to avoid false deltas from error text; re-read app state before deciding whether the UI changed. Upstream “application session stopped” sentinels are sanitized into normal macuse tool errors rather than agent-stop instructions. Sequence wait helpers (`waitForText` for parsed visible text or raw text-entry values, `waitForElement`, `waitUntilElementEnabled`, `waitUntilElementDisabled`, plus best-effort `waitForURL` / `waitForTitle`) poll `get_app_state` without manual sleeps; waits accept separate predicate `timeoutMs`, per-poll `toolTimeoutMs`, and `waitForText` accepts `visibleOnly`, strict window `title`, and `url` scoping.
+`macuse_sequence` uses the same guarded executor and adds ordered steps, a sequence-level default `app`, wait helpers, assertions, resumable partial failures, and `allowPointerClick` / `allowPointerDrag` for pointer steps. It defaults to `detail:"compact"`; use `minimal` for low-token evidence or `full` for raw trees. `requireStateChange:true` requests post-action readback and fails closed when no observable title, URL, visible-text, or target change appears. Empty `set_value` can use one conservative non-risky clear control. Wait helpers (`waitForText`, `waitForElement`, `waitUntilElementEnabled`, `waitUntilElementDisabled`, and best-effort `waitForURL` / `waitForTitle`) poll `get_app_state` without manual sleeps.
 
-The persistent session avoids spawning the bridge for every pi tool call. On startup it uses paginated app-server `mcpServerStatus/list` calls with `detail: "toolsAndAuthOnly"` to fail fast if any expected public MCP server or tool is missing; `/macuse-status` reports the cached inventory once running. Use `/macuse-stop` to stop only the app-server process while leaving it available for lazy restart on the next tool call. Read-only app-state and auxiliary status/settings calls recover stopped-session or transport-closed failures once by restarting only the macuse-owned app-server session. Use `/macuse-restart` or tool action `restart_computer_use` when you explicitly want to restart Computer Use helper processes plus app-server. The extension writes a macOS temp PID record under `/tmp/macuse-appserver`, starts a small watchdog, and reaps only matching macuse-owned orphaned `codex app-server` processes on startup.
+The persistent session verifies all three live inventories (`computer-use` 10, `event-stream` 3, `computer-history` 5), serializes calls that share its app-server thread/cache, and avoids spawning a bridge per tool call. `/macuse-status` reports its cached inventory; `/macuse-stop` stops only the owned app-server; `/macuse-restart` and `macuse_restart` restart Computer Use helpers plus app-server. Read-only app-state and status/settings calls auto-recover stopped-session or transport-closed failures once by restarting only the extension-owned app-server session. PID records and the watchdog live under `/tmp/macuse-appserver`.
 
-The same persistent thread configures all three public SkyComputerUseClient MCP servers and verifies their live inventories: `computer-use` (10 tools), `event-stream` (3), and `computer-history` (5). `macuse` exposes the auxiliary tools through `action:"event_stream"` and `action:"computer_history"`. Record & Replay starts and Computer History resume require `allowRecording:true` plus a non-empty `safetyNote`; `update_settings` requires `allowPrivacyChange:true`, a safety note, and the complete `observation` object. That object requires `defaultApplicationBehavior`, `defaultURLBehavior`, `allowlist`, `blocklist`; behavior values are `observe` or `do_not_observe`, and list entries use `scope: "app"` with `bundleID` or `scope: "url"` with a bare-domain `urlDomain` (no scheme or path). Status and `get_settings` calls are read-only but expose activity/privacy metadata. Stop and pause need no allow flag.
+Record & Replay start and Computer History resume require `allowRecording:true` plus a non-empty `safetyNote`. `computer_history_update_settings` requires `allowPrivacyChange:true`, a safety note, and the complete `observation` object copied from an immediate `computer_history_get_settings` read with unchanged fields preserved. Status/settings reads can expose activity/privacy metadata; stop/pause need no allow flag.
 
-`turn-ended` is excluded because it has no published payload contract. The private `@oai/sky` Node REPL adapter is not MCP and is likewise unexposed; neither is a stable public integration surface.
-
-The package also ships `/skill:macuse`, a small Agent Skill that teaches agents the safe default macuse workflow, target-selection order, mutation guardrails, and evidence to report when using the `macuse` tool.
+`turn-ended` remains excluded because it has no published payload contract; the private `@oai/sky` Node REPL adapter is not MCP. The package also ships `/skill:macuse`, which teaches the direct tools, `macuse_sequence`, targeting order, mutation guards, and audit evidence.
 
 ## Optional repair / auto-heal
 
@@ -122,56 +118,58 @@ Do not commit password env files. Use a dedicated environment variable only for 
 
 ## Pi tool cookbook
 
-List running apps:
+Call `list_apps`:
+
+```json
+{ "runningOnly": true }
+```
+
+Call `get_app_state`:
+
+```json
+{ "app": "Activity Monitor", "detail": "minimal", "targetScope": "main" }
+```
+
+Call direct `set_value` for one guarded mutation:
 
 ```json
 {
-  "action": "list_apps",
-  "listApps": { "runningOnly": true }
+  "app": "Activity Monitor",
+  "role": "search",
+  "name": "search",
+  "value": "Codex",
+  "allowMutating": true,
+  "safetyNote": "Activity Monitor only: temporarily filter search; do not press Stop, Inspector, Actions, or terminate processes.",
+  "requireStateChange": true,
+  "detail": "minimal"
 }
 ```
 
-Inspect Activity Monitor with the lowest-token useful state view:
+Call `macuse_sequence` for an ordered flow:
 
 ```json
 {
-  "action": "get_app_state",
-  "getAppState": { "app": "Activity Monitor", "detail": "minimal" }
+  "app": "Activity Monitor",
+  "detail": "minimal",
+  "targetScope": "main",
+  "steps": [
+    { "tool": "get_app_state", "arguments": {}, "expectVisibleText": ["CPU"] },
+    { "tool": "set_value", "arguments": { "role": "search", "name": "search", "value": "Codex" }, "requireStateChange": true },
+    { "tool": "set_value", "arguments": { "role": "search", "name": "search", "value": "" }, "requireStateChange": true },
+    { "tool": "perform_secondary_action", "arguments": { "elementDescription": "Memory", "action": "Press" }, "requireStateChange": true },
+    { "tool": "perform_secondary_action", "arguments": { "elementDescription": "CPU", "action": "Press" }, "requireStateChange": true }
+  ],
+  "allowMutating": true,
+  "safetyNote": "Activity Monitor only: temporary search text and CPU/Memory tab selection; do not press Stop, Inspector, Actions, or terminate processes."
 }
 ```
 
-Safe Activity Monitor mutation:
+Bad-target recovery: use the returned stable-target hints, re-run `get_app_state`, and retry only the failed action/`resumeFromStepIndex`. Direct pointer fallback requires `allowPointer:true`; sequence pointer steps require `allowPointerClick` / `allowPointerDrag`. Treat `actionDispatchedButNoStateChange` as unproven, and treat browser `navigation-field` inputs as possible navigation/submission controls. Use `macuse_restart` for an intentional full helper reset; prefer `agent_browser` for ordinary web DOM automation.
+
+Save a screenshot with `get_app_state`:
 
 ```json
-{
-  "action": "sequence",
-  "sequence": {
-    "app": "Activity Monitor",
-    "detail": "minimal",
-    "targetScope": "main",
-    "steps": [
-      { "tool": "get_app_state", "arguments": {}, "expectVisibleText": ["CPU"] },
-      { "tool": "set_value", "arguments": { "role": "search", "name": "search", "value": "Codex" }, "requireStateChange": true },
-      { "tool": "get_app_state", "arguments": {}, "expectVisibleText": ["Codex"] },
-      { "tool": "set_value", "arguments": { "role": "search", "name": "search", "value": "" }, "requireStateChange": true },
-      { "tool": "perform_secondary_action", "arguments": { "elementDescription": "Memory", "action": "Press" }, "requireStateChange": true },
-      { "tool": "perform_secondary_action", "arguments": { "elementDescription": "CPU", "action": "Press" }, "requireStateChange": true }
-    ],
-    "allowMutating": true,
-    "safetyNote": "Activity Monitor only: temporary search text and CPU/Memory tab selection; do not press Stop, Inspector, Actions, or terminate processes."
-  }
-}
-```
-
-Bad-target recovery: use the diagnostic's closest matches and per-row `target: { elementId: ... }` / `target: { elementDescription: ... }` / `target: { role, name }` hints, then retry from the failed `resumeFromStepIndex`. If you must use `element_index`, pass `expectedRole` and `expectedName` so the extension can fail closed before acting when the index goes stale. `expectVisibleText` matches substrings within parsed visible text nodes, window titles, visible control labels, and exposed text-field/search/edit values, including multiline settable/value continuations when upstream exposes them. If a mutating step reports `actionDispatchedButNoStateChange`, treat the intended open/navigation as unproven; retry from a fresh state read, then consider a guarded pointer click with `allowPointerClick` only when the target/window is unambiguous. Treat browser address/search fields tagged `navigation-field` as navigation/submission controls: `set_value` or `type_text` may change URL/title state or send a search rather than merely stage text; macuse warns when browser text input changes URL/title state, and notes that `type_text` goes to current keyboard focus, which may be page content rather than the omnibox. If upstream Computer Use returns a stopped-session or transport-closed state, macuse restarts only its app-server session and retries read-only calls once; use `restart_computer_use` before retrying mutating flows when a full Computer Use helper restart is intentional. If upstream Computer Use returns `-10005 timeoutReached` while reading a browser such as Chrome, macuse cannot safely mutate that app; retry with `/macuse-restart` / larger `toolTimeoutMs` / fewer heavy browser windows, or use `agent_browser` for web automation when appropriate.
-
-Save a screenshot artifact:
-
-```json
-{
-  "action": "get_app_state",
-  "getAppState": { "app": "Activity Monitor", "saveImagePath": ".scratch/activity-monitor.jpg", "detail": "compact" }
-}
+{ "app": "Activity Monitor", "saveImagePath": ".scratch/activity-monitor.jpg", "detail": "compact" }
 ```
 
 Tool details include saved image path, bytes, SHA-256, width, and height when an image is saved. In sequences, `saveImagePath` defaults to the first step for compatibility; pass `screenshotStep: "final"` to save the final visual state.

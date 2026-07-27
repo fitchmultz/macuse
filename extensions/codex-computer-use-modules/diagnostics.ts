@@ -35,7 +35,7 @@ export function computerUseDiagnostic(result: FilteredToolResult, tool: string, 
 		return `Diagnostic: upstream Computer Use timed out while collecting state for ${app}. macuse cannot safely operate that app until upstream get_app_state succeeds. detail:"minimal" and targetScope filtering reduce returned tokens only after upstream responds, so they cannot fix this timeout. Try /macuse-restart, a larger toolTimeoutMs, closing heavy browser windows/tabs, or use agent_browser for web/Chrome tasks when browser automation is acceptable.`;
 	}
 	if (/Computer Use is not active .*first must call get_app_state|first must call get_app_state/i.test(text)) {
-		return `Diagnostic: upstream Computer Use refused ${tool} because ${app} has no active state session. No mutation was performed by macuse. A successful macuse action=get_app_state call for the same app is required first; if that state call times out, this is an upstream Computer Use blocker rather than a target-selection problem.`;
+		return `Diagnostic: upstream Computer Use refused ${tool} because ${app} has no active state session. No mutation was performed by macuse. A successful get_app_state call for the same app is required first; if that state call times out, this is an upstream Computer Use blocker rather than a target-selection problem.`;
 	}
 	return null;
 }
