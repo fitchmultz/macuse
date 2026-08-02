@@ -37,16 +37,17 @@ import { AppServerClient } from "./codex-computer-use-modules/app-server-client"
 import { restartComputerUseRuntime } from "./codex-computer-use-modules/computer-use-recovery";
 import { captureFocusSnapshot, executeSequence } from "./codex-computer-use-modules/sequence-runner";
 
-const timeoutParam = Type.Optional(Type.Number({ minimum: 1_000, maximum: 300_000, description: "Tool timeout in milliseconds. Default 90000." }));
-const maxTextParam = Type.Optional(Type.Number({ minimum: 1_000, maximum: 200_000, description: "Maximum characters per returned text block. Default 20000." }));
-const approvalParam = Type.Optional(StringEnum(["inherit", "accept-all", "accept-once", "deny"] as const, { description: "How to answer Computer Use app-approval prompts. Default inherit, which auto-accepts app approvals to match Codex's Any App setting." }));
-const detailParam = Type.Optional(StringEnum(["minimal", "compact", "full"] as const, { description: "Output detail. minimal returns app/window, visible text, and concise target hints; compact trims accessibility trees to interactive element lines; full returns raw Computer Use text." }));
-const targetScopeParam = Type.Optional(StringEnum(["all", "main"] as const, { description: "Output target scope. main suppresses likely app/browser chrome and window controls where possible." }));
-const appParam = Type.String({ description: "App name, full app path, or unambiguous bundle identifier, e.g. Activity Monitor or com.apple.ActivityMonitor." });
-const elementIndexParam = Type.Union([Type.String(), Type.Number()], { description: "Computer Use element index. Numbers are coerced to strings before calling upstream." });
+const timeoutParam = Type.Optional(Type.Number({ minimum: 1_000, maximum: 300_000, description: "Tool timeout ms. Default 90000." }));
+const maxTextParam = Type.Optional(Type.Number({ minimum: 1_000, maximum: 200_000, description: "Max characters per text block. Default 20000." }));
+const approvalParam = Type.Optional(StringEnum(["inherit", "accept-all", "accept-once", "deny"] as const, { description: "App-approval prompt handling. Default inherit auto-accepts, matching Codex's Any App setting." }));
+const detailParam = Type.Optional(StringEnum(["minimal", "compact", "full"] as const, { description: "Output detail: minimal (app/window summary + target hints), compact (interactive elements only), full (raw text)." }));
+const targetScopeParam = Type.Optional(StringEnum(["all", "main"] as const, { description: "main suppresses likely app/browser chrome and window controls." }));
+const appParam = Type.String({ description: "App name, path, or bundle ID, e.g. Activity Monitor or com.apple.ActivityMonitor." });
+const elementIndexParam = Type.Union([Type.String(), Type.Number()], { description: "Computer Use element index. Numbers are coerced to strings." });
+const bareElementIndexParam = Type.Union([Type.String(), Type.Number()]);
 const elementTargetCandidateParam = Type.Object({
-	element_index: Type.Optional(elementIndexParam),
-	element: Type.Optional(elementIndexParam),
+	element_index: Type.Optional(bareElementIndexParam),
+	element: Type.Optional(bareElementIndexParam),
 	elementId: Type.Optional(Type.String()),
 	element_id: Type.Optional(Type.String()),
 	elementDescription: Type.Optional(Type.String()),
@@ -58,7 +59,7 @@ const elementTargetCandidateParam = Type.Object({
 }, { additionalProperties: false });
 const elementTargetParams = {
 	element_index: Type.Optional(elementIndexParam),
-	element: Type.Optional(elementIndexParam),
+	element: Type.Optional(Type.Union([Type.String(), Type.Number()], { description: "Alias for element_index." })),
 	elementId: Type.Optional(Type.String({ description: "Stable element ID from get_app_state." })),
 	element_id: Type.Optional(Type.String({ description: "Alias for elementId." })),
 	elementDescription: Type.Optional(Type.String({ description: "Exact case-insensitive element description from get_app_state." })),
@@ -69,17 +70,17 @@ const elementTargetParams = {
 	elementName: Type.Optional(Type.String({ description: "Alias for name." })),
 	targets: Type.Optional(Type.Array(elementTargetCandidateParam, { description: "Ordered fallback targets resolved against fresh app state." })),
 	expectedRole: Type.Optional(Type.String({ description: "Fail-closed stale guard for raw element_index." })),
-	expectedName: Type.Optional(Type.String({ description: "Fail-closed stale guard for raw element_index." })),
-	expectedDescription: Type.Optional(Type.String({ description: "Fail-closed stale guard for raw element_index." })),
-	expectedId: Type.Optional(Type.String({ description: "Fail-closed stale guard for raw element_index." })),
-	expectedValue: Type.Optional(Type.String({ description: "Fail-closed stale guard for raw element_index." })),
+	expectedName: Type.Optional(Type.String({ description: "Stale guard, as expectedRole." })),
+	expectedDescription: Type.Optional(Type.String({ description: "Stale guard, as expectedRole." })),
+	expectedId: Type.Optional(Type.String({ description: "Stale guard, as expectedRole." })),
+	expectedValue: Type.Optional(Type.String({ description: "Stale guard, as expectedRole." })),
 };
 const directMutationParams = {
 	allowMutating: Type.Boolean({ description: "Must be true. Explicitly authorizes this guarded app mutation." }),
 	safetyNote: Type.String({ minLength: 20, description: "Target app, intended effect, and stop boundary." }),
 	approval: approvalParam,
-	requireStateChange: Type.Optional(Type.Boolean({ description: "Fail closed when post-action readback shows no observable title, URL, visible-text, or target change." })),
-	includeImage: Type.Optional(Type.Boolean({ description: "Attach screenshot image blocks from post-action readback when supported." })),
+	requireStateChange: Type.Optional(Type.Boolean({ description: "Fail closed when post-action readback shows no observable change." })),
+	includeImage: Type.Optional(Type.Boolean({ description: "Attach post-action screenshot blocks when supported." })),
 	saveImagePath: Type.Optional(Type.String({ description: "Save a post-action screenshot artifact to this path." })),
 	detail: detailParam,
 	targetScope: targetScopeParam,
