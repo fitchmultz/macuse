@@ -1,5 +1,8 @@
 # macuse
 
+> [!WARNING]
+> **Experimental and unsupported.** macuse relies on undocumented Codex/ChatGPT interfaces that may change without notice. Review the [safety policy](docs/reference/codex-computer-use-safety-policy.md) before granting macOS permissions or running mutating or repair commands.
+
 Local tooling and notes for testing whether OpenAI Codex Computer Use can be reused from non-Codex agents such as pi.
 
 ## One-command wow path
