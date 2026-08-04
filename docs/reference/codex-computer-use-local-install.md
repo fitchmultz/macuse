@@ -4,9 +4,9 @@ Source: Local filesystem paths under `/Users/yourname/.codex/computer-use`, `/Us
 Author: [OpenAI](https://openai.com/)
 Posted: Not applicable; local installed app and plugin cache
 Scraped: May 22, 2026
-Refreshed: May 22, 2026 09:35 MDT after the Codex host app update, external-harness TCC probes, app-server bridge validation, and guarded Calculator click/key validation. Spot-checked again June 8, 2026 after subsequent Codex updates. Current validation uses Activity Monitor instead of Calculator. Updated July 17, 2026 for the Computer History protocol; spot-checked July 18, 2026 after the next ChatGPT update.
+Refreshed: May 22, 2026 09:35 MDT after the Codex host app update, external-harness TCC probes, app-server bridge validation, and guarded Calculator click/key validation. Spot-checked again June 8 and July 18, 2026. Updated August 4, 2026 for current Computer Use schemas and Pi 0.83.0.
 Observed install metadata at May 22 refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin still `1.0.799`; app bundle `com.openai.sky.CUAService`; notarized Developer ID app from OpenAI
-Current July 18 spot-check: ChatGPT host app `26.715.31925` build `5551` (bundle ID remains `com.openai.codex`); Codex CLI `0.145.0-alpha.18`; bundled Computer Use plugin `1.0.1000451`. Its public MCP inventory is `computer-use`/`mcp` (10 tools), `event-stream`/`event-stream mcp` (3), and `computer-history`/`computer-history mcp` (5). Discover the cache version at runtime rather than using historical fallback paths.
+Current August 4 spot-check: ChatGPT host app `26.727.51351` build `6119` (bundle ID remains `com.openai.codex`); bundled Codex CLI `0.146.0-alpha.9.2`; Computer Use plugin `1.0.1000550`; Computer Use client `26.727.1000550`. Macuse configures `computer-use`/`mcp` (10 tools), `event-stream`/`event-stream mcp` (3), and `computer-history`/`computer-history mcp` (5). The client also exposes a separate Messages MCP that macuse intentionally excludes. Discover the cache version at runtime rather than using historical fallback paths.
 
 The host app, Codex CLI, and bundled Computer Use plugin now live inside
 `/Applications/ChatGPT.app`. The separate Computer Use service also remains
@@ -22,8 +22,8 @@ For external-harness findings, probes, and refresh commands, see
 | --- | --- |
 | Host app | `/Applications/ChatGPT.app` |
 | Bundle ID | `com.openai.codex` |
-| App version | `26.715.31925` |
-| Build version | `5551` |
+| App version | `26.727.51351` |
+| Build version | `6119` |
 
 Related local host-app state found:
 
@@ -277,7 +277,7 @@ Practical limits:
   probes succeeded, which means the missing direct-MCP contract is likely around
   Codex thread/session/lifecycle wrapping rather than the low-level Computer Use
   service alone.
-- Guarded direct Activity Monitor `set_value` / `perform_secondary_action` calls and controlled TextEdit scroll/type/set-value/select sequences are validated. Pi exposes all 18 upstream tools directly plus `macuse_sequence`; broader mutations remain guarded by the local safety policy and before/after `get_app_state` evidence.
+- Guarded direct Activity Monitor `set_value` / `perform_secondary_action` calls and controlled TextEdit scroll/type/set-value/select sequences are validated. Pi registers all 18 tools in macuse's configured scope and activates exact direct tools on demand through `macuse_tools`; broader mutations remain guarded by the local safety policy and before/after `get_app_state` evidence.
 
 ## Related user-state paths found
 

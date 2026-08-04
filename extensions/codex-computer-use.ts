@@ -155,56 +155,48 @@ const mutationToolSpecs = [
 		name: "perform_secondary_action",
 		label: "Computer Use Secondary Action",
 		description: "Invoke an accessibility secondary action on an element. Prefer action:Press over pointer click. Stable targets are refreshed before execution.",
-		promptSnippet: "Invoke a guarded accessibility action in a macOS app",
 		parameters: Type.Object({ app: appParam, ...elementTargetParams, action: Type.String(), ...directMutationParams }, { additionalProperties: false }),
 	},
 	{
 		name: "press_key",
 		label: "Computer Use Press Key",
 		description: "Press a key or key combination in a target macOS app. Call get_app_state first to verify the app/window.",
-		promptSnippet: "Press a guarded key combination in a macOS app",
 		parameters: Type.Object({ app: appParam, key: Type.String(), modifiers: Type.Optional(Type.Array(Type.String())), ...directMutationParams }, { additionalProperties: false }),
 	},
 	{
 		name: "type_text",
 		label: "Computer Use Type Text",
 		description: "Type literal text into the currently focused control in a target macOS app. Call get_app_state first.",
-		promptSnippet: "Type guarded literal text in a macOS app",
 		parameters: Type.Object({ app: appParam, text: Type.String(), ...directMutationParams }, { additionalProperties: false }),
 	},
 	{
 		name: "set_value",
 		label: "Computer Use Set Value",
 		description: "Set a settable accessibility element value. Stable targets are refreshed; empty search values can use the conservative clear-control fallback.",
-		promptSnippet: "Set a guarded accessibility field value in a macOS app",
 		parameters: Type.Object({ app: appParam, ...elementTargetParams, value: Type.String(), ...directMutationParams }, { additionalProperties: false }),
 	},
 	{
 		name: "select_text",
 		label: "Computer Use Select Text",
 		description: "Select text in a text element or place its cursor before/after the exact text. Stable targets are refreshed.",
-		promptSnippet: "Select text or position a cursor in a macOS app",
 		parameters: Type.Object({ app: appParam, ...elementTargetParams, text: Type.String(), prefix: Type.Optional(Type.String()), suffix: Type.Optional(Type.String()), selection: Type.Optional(StringEnum(["text", "cursor_before", "cursor_after"] as const)), ...directMutationParams }, { additionalProperties: false }),
 	},
 	{
 		name: "scroll",
 		label: "Computer Use Scroll",
 		description: "Scroll an accessibility element by direction and page count. Stable targets are refreshed.",
-		promptSnippet: "Scroll a guarded macOS app element",
 		parameters: Type.Object({ app: appParam, ...elementTargetParams, direction: StringEnum(["up", "down", "left", "right"] as const), pages: Type.Optional(Type.Number()), ...directMutationParams }, { additionalProperties: false }),
 	},
 	{
 		name: "click",
 		label: "Computer Use Click",
 		description: "Pointer click by stable target, element index, or screenshot coordinates. Requires allowPointer:true and restores mouse position. Prefer perform_secondary_action.",
-		promptSnippet: "Perform an explicitly authorized pointer click in a macOS app",
 		parameters: Type.Object({ app: appParam, ...elementTargetParams, x: Type.Optional(Type.Number()), y: Type.Optional(Type.Number()), mouse_button: Type.Optional(StringEnum(["left", "right", "middle"] as const)), click_count: Type.Optional(Type.Integer()), allowPointer: Type.Boolean(), ...directMutationParams }, { additionalProperties: false }),
 	},
 	{
 		name: "drag",
 		label: "Computer Use Drag",
 		description: "Pointer drag using screenshot coordinates. Requires allowPointer:true and restores mouse position.",
-		promptSnippet: "Perform an explicitly authorized pointer drag in a macOS app",
 		parameters: Type.Object({ app: appParam, from_x: Type.Number(), from_y: Type.Number(), to_x: Type.Number(), to_y: Type.Number(), allowPointer: Type.Boolean(), ...directMutationParams }, { additionalProperties: false }),
 	},
 ] as const;
@@ -215,7 +207,6 @@ const auxiliaryToolSpecs = [
 		server: "event-stream",
 		label: "Record & Replay Start",
 		description: "Start Record & Replay activity recording. Requires exact user intent, allowRecording:true, and a safety note.",
-		promptSnippet: "Start explicitly authorized Record & Replay activity recording",
 		parameters: Type.Object({ allowRecording: Type.Boolean(), safetyNote: Type.String({ minLength: 1 }), toolTimeoutMs: timeoutParam }, { additionalProperties: false }),
 	},
 	{
@@ -223,7 +214,6 @@ const auxiliaryToolSpecs = [
 		server: "event-stream",
 		label: "Record & Replay Status",
 		description: "Read Record & Replay status. Read-only, but exposes activity and artifact metadata.",
-		promptSnippet: "Read Record & Replay recording status",
 		parameters: Type.Object({ toolTimeoutMs: timeoutParam }, { additionalProperties: false }),
 	},
 	{
@@ -231,7 +221,6 @@ const auxiliaryToolSpecs = [
 		server: "event-stream",
 		label: "Record & Replay Stop",
 		description: "Stop Record & Replay activity recording.",
-		promptSnippet: "Stop Record & Replay activity recording",
 		parameters: Type.Object({ toolTimeoutMs: timeoutParam }, { additionalProperties: false }),
 	},
 	{
@@ -239,7 +228,6 @@ const auxiliaryToolSpecs = [
 		server: "computer-history",
 		label: "Computer History Pause",
 		description: "Pause Computer History recording.",
-		promptSnippet: "Pause Computer History recording",
 		parameters: Type.Object({ toolTimeoutMs: timeoutParam }, { additionalProperties: false }),
 	},
 	{
@@ -247,7 +235,6 @@ const auxiliaryToolSpecs = [
 		server: "computer-history",
 		label: "Computer History Resume",
 		description: "Resume Computer History recording. Requires exact user intent, allowRecording:true, and a safety note.",
-		promptSnippet: "Resume explicitly authorized Computer History recording",
 		parameters: Type.Object({ allowRecording: Type.Boolean(), safetyNote: Type.String({ minLength: 1 }), toolTimeoutMs: timeoutParam }, { additionalProperties: false }),
 	},
 	{
@@ -255,7 +242,6 @@ const auxiliaryToolSpecs = [
 		server: "computer-history",
 		label: "Computer History Status",
 		description: "Read Computer History status. Read-only, but exposes activity metadata.",
-		promptSnippet: "Read Computer History status",
 		parameters: Type.Object({ toolTimeoutMs: timeoutParam }, { additionalProperties: false }),
 	},
 	{
@@ -263,24 +249,27 @@ const auxiliaryToolSpecs = [
 		server: "computer-history",
 		label: "Computer History Settings",
 		description: "Read all Computer History settings. Read-only, but exposes privacy metadata; call immediately before update_settings.",
-		promptSnippet: "Read Computer History privacy settings",
 		parameters: Type.Object({ toolTimeoutMs: timeoutParam }, { additionalProperties: false }),
 	},
 	{
 		name: "computer_history_update_settings",
 		server: "computer-history",
 		label: "Computer History Update Settings",
-		description: "Replace all Computer History observation settings. Read current settings first and preserve every unchanged field. Requires exact approval, allowPrivacyChange:true, and a safety note.",
-		promptSnippet: "Replace explicitly authorized Computer History privacy settings",
-		parameters: Type.Object({ observation: observationParam, allowPrivacyChange: Type.Boolean(), safetyNote: Type.String({ minLength: 1 }), toolTimeoutMs: timeoutParam }, { additionalProperties: false }),
+		description: "Replace all Computer History settings. Read current settings first and preserve every unchanged field, including showMenuBarIcon. Requires exact approval, allowPrivacyChange:true, and a safety note.",
+		parameters: Type.Object({ observation: observationParam, showMenuBarIcon: Type.Optional(Type.Boolean()), allowPrivacyChange: Type.Boolean(), safetyNote: Type.String({ minLength: 1 }), toolTimeoutMs: timeoutParam }, { additionalProperties: false }),
 	},
 ] as const;
+
+const lazyToolNames = [...mutationToolSpecs.map((spec) => spec.name), ...auxiliaryToolSpecs.map((spec) => spec.name), "macuse_restart"] as const;
+const lazyToolNameSet = new Set<string>(lazyToolNames);
+const loadToolsParam = Type.Object({
+	tools: Type.Array(StringEnum(lazyToolNames), { minItems: 1, uniqueItems: true, description: "Exact macuse tools to enable for this session." }),
+}, { additionalProperties: false });
 
 type ToolSpec<TParams extends TSchema = TSchema> = {
 	name: string;
 	label: string;
 	description: string;
-	promptSnippet: string;
 	parameters: TParams;
 };
 
@@ -403,11 +392,6 @@ function registerMutationTool(pi: ExtensionAPI, spec: ToolSpec): void {
 	pi.registerTool({
 		...spec,
 		executionMode: "sequential",
-		promptGuidelines: [
-			`Use ${spec.name} only after get_app_state has identified the exact target app/window; pass allowMutating:true and a concrete safetyNote.`,
-			...(spec.name === "click" ? ["Prefer perform_secondary_action with action:Press over click when accessibility exposes it; click also requires allowPointer:true."] : []),
-			...(spec.name === "drag" ? ["drag requires allowPointer:true and restores mouse position after the call."] : []),
-		],
 		async execute(_toolCallId, params, signal, onUpdate) {
 			const forwardUpdate = onUpdate ? (update: { content: TextContentBlock[]; details: Record<string, unknown> }) => onUpdate(update) : undefined;
 			return executeDirectMutation(spec.name, params as unknown as Record<string, JsonValue>, signal, forwardUpdate);
@@ -420,7 +404,6 @@ function registerAuxiliaryTool(pi: ExtensionAPI, spec: ToolSpec & { server: "eve
 		name: spec.name,
 		label: spec.label,
 		description: spec.description,
-		promptSnippet: spec.promptSnippet,
 		parameters: spec.parameters,
 		executionMode: "sequential",
 		async execute(_toolCallId, params, signal) {
@@ -430,7 +413,10 @@ function registerAuxiliaryTool(pi: ExtensionAPI, spec: ToolSpec & { server: "eve
 }
 
 export default function (pi: ExtensionAPI) {
-	pi.on("session_start", () => sessionElementCache.clear());
+	pi.on("session_start", () => {
+		sessionElementCache.clear();
+		pi.setActiveTools(pi.getActiveTools().filter((name) => !lazyToolNameSet.has(name)));
+	});
 	pi.on("session_shutdown", async () => {
 		sessionElementCache.clear();
 		if (client) await client.stop();
@@ -505,6 +491,7 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet: "Run a guarded multi-step macOS Computer Use workflow",
 		promptGuidelines: [
 			"Use macuse_sequence for multi-step native-app flows; start with get_app_state or call it first, keep mutations narrow, set allowMutating:true, and include a concrete safetyNote.",
+			"macuse_sequence can run step tools without activating them; when a step's argument shape is uncertain, use macuse_tools to load that direct tool first.",
 			"Prefer perform_secondary_action, press_key, set_value, select_text, or scroll over pointer click/drag in macuse_sequence; pointer steps require their explicit pointer flags.",
 		],
 		parameters: sequenceParam,
@@ -515,10 +502,33 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 	pi.registerTool({
+		name: "macuse_tools",
+		label: "macuse Tools",
+		description: "Enable exact registered macuse tools for this session. Load only the tools needed for the current task.",
+		promptSnippet: "Enable inactive macuse tools for direct Computer Use, recording, history, or recovery",
+		promptGuidelines: [
+			"Use macuse_tools to enable only the exact inactive macuse tools needed; enabled tools stay active for the session.",
+			"macuse_tools only changes visibility; direct mutations still require recent get_app_state evidence, allowMutating:true, and a concrete safetyNote.",
+		],
+		parameters: loadToolsParam,
+		executionMode: "sequential",
+		async execute(_toolCallId, params) {
+			const active = pi.getActiveTools();
+			pi.setActiveTools([...new Set([...active, ...params.tools])]);
+			const enabled = pi.getActiveTools();
+			const added = params.tools.filter((name) => !active.includes(name) && enabled.includes(name));
+			const unavailable = params.tools.filter((name) => !enabled.includes(name));
+			const text = [
+				added.length ? `Enabled macuse tools: ${added.join(", ")}.` : "No new macuse tools enabled.",
+				unavailable.length ? `Unavailable or excluded: ${unavailable.join(", ")}.` : "",
+			].filter(Boolean).join(" ");
+			return { content: [{ type: "text" as const, text }], details: { added, unavailable } };
+		},
+	});
+	pi.registerTool({
 		name: "macuse_restart",
 		label: "macuse Restart",
 		description: "Restart Computer Use runtime helpers and the extension-owned app-server session, then leave the tool ready for retry.",
-		promptSnippet: "Restart a stopped or transport-broken Computer Use runtime",
 		parameters: restartParam,
 		executionMode: "sequential",
 		async execute(_toolCallId, params, signal, onUpdate) {
