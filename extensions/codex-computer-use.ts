@@ -411,7 +411,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (event, ctx) => {
 		sessionElementCache.clear();
 		pi.setActiveTools(pi.getActiveTools().filter((name) => !lazyToolNameSet.has(name)));
-		const latestActivationMarker = [...ctx.sessionManager.getBranch()].reverse().find((entry) => {
+		const latestActivationMarker = ctx.sessionManager.getBranch().findLast((entry) => {
 			if (entry.type === "custom_message" && entry.customType === "macuse-tools-reset") return true;
 			if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.toolName !== "macuse_tools") return false;
 			const added = (entry.message.details as { added?: unknown } | undefined)?.added;
