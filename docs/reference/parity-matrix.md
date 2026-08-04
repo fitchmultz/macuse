@@ -13,7 +13,7 @@ execution, because raw accepted service-backed calls still hang in local probes.
 The app-server-backed path provides:
 
 - one-command doctor/demo/config entrypoints for operator-grade proof artifacts
-- all 18 live upstream tools registered directly in pi, plus persistent-session sequence/restart helpers
+- all 18 configured upstream tools registered in pi, with four initially active tools and additive on-demand activation
 - a standard MCP wrapper for Cursor or other MCP-capable clients
 - focus-preserving defaults that prefer accessibility actions, keys, values, and
   element scroll over pointer movement
@@ -63,14 +63,13 @@ The app-server-backed path provides:
 | Partial sequence failures | Implemented | failed `macuse_sequence` calls return completed step rows plus the failed-step diagnostic and resume hint; per-step `allowError:true` continues through resolution/tool errors |
 | Running app filtering | Implemented | direct `list_apps` supports `runningOnly:true` and substring `filter` |
 
-All 18 verified public tools are configured from the installed SkyComputerUseClient under `$CODEX_HOME/computer-use` and inventory-checked in the persistent app-server thread. Ordinary app control does not call recording or privacy-mutating tools. `turn-ended` is intentionally absent because it has no published payload contract; the private `@oai/sky` Node REPL adapter is not MCP and remains unexposed.
+All 18 tools in macuse's configured scope are loaded from the installed SkyComputerUseClient under `$CODEX_HOME/computer-use` and inventory-checked in the persistent app-server thread. Pi initially activates only `list_apps`, `get_app_state`, `macuse_sequence`, and `macuse_tools`; the loader enables exact additional tools additively. The client's separate Messages MCP is intentionally excluded because messaging is outside macuse's app-control scope and sends cross a hard safety boundary. Ordinary app control does not call recording or privacy-mutating tools. `turn-ended` is intentionally absent because it has no published payload contract; the private `@oai/sky` Node REPL adapter is not MCP and remains unexposed.
 
 ## Known gaps
 
 - Direct raw `SkyComputerUseClient mcp` still hangs for accepted service-backed
   `list_apps` / `get_app_state` calls outside the app-server path.
-- The app-server protocol is internal and may change with Codex updates; keep the
-  refresh/validation commands current.
+- Computer Use MCP schemas remain proprietary and may change with Codex updates; keep the refresh/validation commands current.
 - Drag has only a low-stakes TextEdit probe. It is guarded because pointer drag
   can move the user's cursor even when focus is preserved.
 - High-stakes workflows remain intentionally gated by the safety policy.

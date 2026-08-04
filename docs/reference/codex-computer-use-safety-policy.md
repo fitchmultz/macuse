@@ -3,7 +3,7 @@
 Source: Local policy for this `macuse` investigation, based on the installed Codex Computer Use skill, OpenAI's Computer Use docs snapshot, and local bridge behavior.
 Author: Local investigation notes
 Created: May 22, 2026
-Status: Active guardrails for the packaged pi extension; all 18 upstream tools are direct and guarded, with `macuse_sequence` and `macuse_restart` as extension helpers
+Status: Active guardrails for the packaged pi extension; all 18 configured upstream tools are registered and guarded, with additive activation through `macuse_tools`
 
 ## Current allowed scope
 
@@ -16,11 +16,11 @@ Allowed today:
 - read-only `event_stream_status`, `computer_history_status`, and `computer_history_get_settings` (these expose activity/artifact/privacy metadata)
 - guarded Record & Replay stop and Computer History pause operations
 - Record & Replay start or Computer History resume only when the user requested recording, with explicit `allowRecording: true` and a non-empty safety note
-- `computer_history_update_settings` only with fresh exact user approval, explicit `allowPrivacyChange: true`, a non-empty safety note, and the complete `observation` settings object copied from an immediately preceding `computer_history_get_settings` result with only the approved fields changed
+- `computer_history_update_settings` only with fresh exact user approval, explicit `allowPrivacyChange: true`, a non-empty safety note, and the complete `observation` plus current `showMenuBarIcon` value when present, copied from an immediately preceding `computer_history_get_settings` result with only the approved fields changed
 - direct `perform_secondary_action`, `press_key`, `type_text`, `set_value`, `select_text`, `scroll`, `click`, and `drag` only with explicit `allowMutating: true`, a concrete `safetyNote`, and a recent `get_app_state`; direct pointer tools also require `allowPointer: true`
 - `macuse_sequence` with the same mutation guard, ordered evidence, and `allowPointerClick` / `allowPointerDrag` for pointer steps
 
-The packaged pi extension exposes all 18 live upstream tools directly, plus `macuse_sequence` and `macuse_restart`. `turn-ended` remains excluded because no payload contract is published, and the private `@oai/sky` Node REPL adapter is not MCP and is not exposed.
+The packaged pi extension registers all 18 tools in its three configured MCP families, plus `macuse_sequence`, `macuse_tools`, and `macuse_restart`. Only `list_apps`, `get_app_state`, `macuse_sequence`, and `macuse_tools` start active; the loader enables exact additional tools additively. The separate Messages MCP is intentionally excluded because sends cross a hard safety boundary. `turn-ended` remains excluded because no payload contract is published, and the private `@oai/sky` Node REPL adapter is not MCP and is not exposed.
 
 ## Preconditions before any mutating action
 

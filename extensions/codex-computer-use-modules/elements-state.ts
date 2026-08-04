@@ -730,7 +730,7 @@ export function validateIndexedTarget(args: Record<string, JsonValue>, cache: Ma
 
 export function stripSelectorOnlyKeys(args: Record<string, JsonValue>): Record<string, JsonValue> {
 	const normalized = { ...args };
-	for (const key of ["expectedRole", "expectedName", "expectedDescription", "expectedId", "expectedValue"] as const) delete normalized[key];
+	for (const key of ["element", "elementId", "element_id", "elementDescription", "element_description", "role", "elementRole", "name", "elementName", "targets", "expectedRole", "expectedName", "expectedDescription", "expectedId", "expectedValue"] as const) delete normalized[key];
 	return normalized;
 }
 

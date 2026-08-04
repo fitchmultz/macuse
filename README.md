@@ -1,7 +1,7 @@
 # macuse
 
 > [!WARNING]
-> **Experimental and unsupported.** macuse relies on undocumented Codex/ChatGPT interfaces that may change without notice. Review the [safety policy](docs/reference/codex-computer-use-safety-policy.md) before granting macOS permissions or running mutating or repair commands.
+> **Experimental and unsupported.** macuse uses Codex app-server's documented experimental MCP bridge with proprietary Computer Use schemas that may change without notice. Review the [safety policy](docs/reference/codex-computer-use-safety-policy.md) before granting macOS permissions or running mutating or repair commands.
 
 Local tooling and notes for testing whether OpenAI Codex Computer Use can be reused from non-Codex agents such as pi.
 
@@ -47,7 +47,7 @@ node tools/macuse-config.mjs cursor --pretty
 
 ## Validation
 
-The current local Pi extension baseline is Pi 0.80.9; Pi runtime packages remain wildcard peers supplied by the host.
+The current local Pi extension baseline is Pi 0.83.0; Pi runtime packages remain wildcard peers supplied by the host.
 
 Run the reusable smoke suite (add `--json` to `validate-macuse.mjs` for machine-readable pass/warn/fail summaries):
 
@@ -81,12 +81,14 @@ node tools/codex-computer-use-appserver.mjs list-apps --running-only --filter "A
 node tools/codex-computer-use-appserver.mjs get-state --app "Activity Monitor" --quiet --pretty
 ```
 
-The packaged pi extension keeps one persistent Codex app-server thread and registers the full live upstream surface directly:
+The packaged pi extension keeps one persistent Codex app-server thread and registers all 18 tools in macuse's configured Computer Use scope:
 
 - Computer Use: `list_apps`, `get_app_state`, `perform_secondary_action`, `press_key`, `type_text`, `set_value`, `select_text`, `scroll`, `click`, and `drag`.
 - Record & Replay: `event_stream_start`, `event_stream_status`, and `event_stream_stop`.
 - Computer History: `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, and `computer_history_update_settings`.
-- Pi helpers: `macuse_sequence` for ordered flows/waits/assertions and `macuse_restart` for an explicit Computer Use helper plus app-server restart.
+- Pi helpers: `macuse_sequence` for ordered flows/waits/assertions, `macuse_tools` for additive on-demand activation, and `macuse_restart` for an explicit Computer Use helper plus app-server restart.
+
+Pi starts with only `list_apps`, `get_app_state`, `macuse_sequence`, and `macuse_tools` active. Call `macuse_tools` with the exact direct, recording, history, or recovery tools needed; activated tools stay available for the session.
 
 Direct mutating Computer Use tools require `allowMutating:true`, a `safetyNote` naming the target/effect/stop boundary, and a recent `get_app_state`. Element-targeted calls refresh app state and accept `element_index`/`element`, stable `elementId`, exact `elementDescription`, role/name selectors, ordered `targets` fallbacks, and raw-index `expected*` stale guards. Direct `click`/`drag` also require `allowPointer:true`; pointer tools restore mouse position. Prefer `perform_secondary_action` with `action:"Press"`, `press_key`, `set_value`, or `scroll` over pointer actions. `press_key` accepts xdotool-style combos such as `super+comma`, and `key:",", modifiers:["COMMAND"]` normalizes to that form.
 
@@ -94,9 +96,9 @@ Direct mutating Computer Use tools require `allowMutating:true`, a `safetyNote` 
 
 The persistent session verifies all three live inventories (`computer-use` 10, `event-stream` 3, `computer-history` 5), serializes calls that share its app-server thread/cache, and avoids spawning a bridge per tool call. `/macuse-status` reports its cached inventory; `/macuse-stop` stops only the owned app-server; `/macuse-restart` and `macuse_restart` restart Computer Use helpers plus app-server. Read-only app-state and status/settings calls auto-recover stopped-session or transport-closed failures once by restarting only the extension-owned app-server session. PID records and the watchdog live under `/tmp/macuse-appserver`.
 
-Record & Replay start and Computer History resume require `allowRecording:true` plus a non-empty `safetyNote`. `computer_history_update_settings` requires `allowPrivacyChange:true`, a safety note, and the complete `observation` object copied from an immediate `computer_history_get_settings` read with unchanged fields preserved. Status/settings reads can expose activity/privacy metadata; stop/pause need no allow flag.
+Record & Replay start and Computer History resume require `allowRecording:true` plus a non-empty `safetyNote`. `computer_history_update_settings` requires `allowPrivacyChange:true`, a safety note, the complete `observation` object, and the current `showMenuBarIcon` value when present, copied from an immediate `computer_history_get_settings` read with unchanged fields preserved. Status/settings reads can expose activity/privacy metadata; stop/pause need no allow flag.
 
-`turn-ended` remains excluded because it has no published payload contract; the private `@oai/sky` Node REPL adapter is not MCP. The package also ships `/skill:macuse`, which teaches the direct tools, `macuse_sequence`, targeting order, mutation guards, and audit evidence.
+The installed client also exposes a separate Messages MCP with read/search/send tools. Macuse intentionally excludes it because messaging is outside this package's app-control scope and `send_message` crosses a hard safety boundary. `turn-ended` remains excluded because it has no published payload contract; the private `@oai/sky` Node REPL adapter is not MCP. The package also ships `/skill:macuse`, which teaches the loader, direct tools, `macuse_sequence`, targeting order, mutation guards, and audit evidence.
 
 ## Optional repair / auto-heal
 
@@ -133,7 +135,13 @@ Call `get_app_state`:
 { "app": "Activity Monitor", "detail": "minimal", "targetScope": "main" }
 ```
 
-Call direct `set_value` for one guarded mutation:
+Enable direct `set_value` for one guarded mutation:
+
+```json
+{ "tools": ["set_value"] }
+```
+
+Then call it:
 
 ```json
 {
@@ -205,7 +213,7 @@ For Cursor or another MCP-capable client, use the app-server-backed wrapper rath
 }
 ```
 
-The wrapper exposes all 18 public tools across the Computer Use, Record & Replay, and Computer History families while routing execution through Codex app-server. It defaults to `approval: "inherit"`, auto-accepting app approvals to match Codex's Any App setting; `approval: "ask"` is still available for clients that want MCP elicitation prompts. Element targets accept `element_index`, `element`, stable `elementId` / `element_id`, or exact `elementDescription` / `element_description`; stable targets are resolved against a fresh app state before mutation. Pointer `click` / `drag` require `allowPointer: true` and restore mouse position afterward. Like the pi extension, the wrapper sanitizes stopped-session sentinels and restarts only its app-server session before retrying read-only app/status/settings calls once.
+The wrapper exposes all 18 tools in its configured Computer Use, Record & Replay, and Computer History families while routing execution through Codex app-server. It defaults to `approval: "inherit"`, auto-accepting app approvals to match Codex's Any App setting; `approval: "ask"` is still available for clients that want MCP elicitation prompts. Element targets accept `element_index`, `element`, stable `elementId` / `element_id`, or exact `elementDescription` / `element_description`; stable targets are resolved against a fresh app state before mutation. Pointer `click` / `drag` require `allowPointer: true` and restore mouse position afterward. Like the pi extension, the wrapper sanitizes stopped-session sentinels and restarts only its app-server session before retrying read-only app/status/settings calls once.
 
 ## Probe path
 

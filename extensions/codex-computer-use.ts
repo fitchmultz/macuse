@@ -270,11 +270,35 @@ const auxiliaryToolSpecs = [
 		name: "computer_history_update_settings",
 		server: "computer-history",
 		label: "Computer History Update Settings",
-		description: "Replace all Computer History observation settings. Read current settings first and preserve every unchanged field. Requires exact approval, allowPrivacyChange:true, and a safety note.",
+		description: "Replace all Computer History settings. Read current settings first and preserve every unchanged field, including showMenuBarIcon. Requires exact approval, allowPrivacyChange:true, and a safety note.",
 		promptSnippet: "Replace explicitly authorized Computer History privacy settings",
-		parameters: Type.Object({ observation: observationParam, allowPrivacyChange: Type.Boolean(), safetyNote: Type.String({ minLength: 1 }), toolTimeoutMs: timeoutParam }, { additionalProperties: false }),
+		parameters: Type.Object({ observation: observationParam, showMenuBarIcon: Type.Optional(Type.Boolean()), allowPrivacyChange: Type.Boolean(), safetyNote: Type.String({ minLength: 1 }), toolTimeoutMs: timeoutParam }, { additionalProperties: false }),
 	},
 ] as const;
+
+const lazyToolNames = [
+	"perform_secondary_action",
+	"press_key",
+	"type_text",
+	"set_value",
+	"select_text",
+	"scroll",
+	"click",
+	"drag",
+	"event_stream_start",
+	"event_stream_status",
+	"event_stream_stop",
+	"computer_history_pause",
+	"computer_history_resume",
+	"computer_history_status",
+	"computer_history_get_settings",
+	"computer_history_update_settings",
+	"macuse_restart",
+] as const;
+const lazyToolNameSet = new Set<string>(lazyToolNames);
+const loadToolsParam = Type.Object({
+	tools: Type.Array(StringEnum(lazyToolNames), { minItems: 1, uniqueItems: true, description: "Exact macuse tools to enable for this session." }),
+}, { additionalProperties: false });
 
 type ToolSpec<TParams extends TSchema = TSchema> = {
 	name: string;
@@ -430,7 +454,10 @@ function registerAuxiliaryTool(pi: ExtensionAPI, spec: ToolSpec & { server: "eve
 }
 
 export default function (pi: ExtensionAPI) {
-	pi.on("session_start", () => sessionElementCache.clear());
+	pi.on("session_start", () => {
+		sessionElementCache.clear();
+		pi.setActiveTools(pi.getActiveTools().filter((name) => !lazyToolNameSet.has(name)));
+	});
 	pi.on("session_shutdown", async () => {
 		sessionElementCache.clear();
 		if (client) await client.stop();
@@ -512,6 +539,24 @@ export default function (pi: ExtensionAPI) {
 		async execute(_toolCallId, params, signal, onUpdate) {
 			const forwardUpdate = onUpdate ? (update: { content: TextContentBlock[]; details: Record<string, unknown> }) => onUpdate(update) : undefined;
 			return executeSequence(params, signal, forwardUpdate, getClient, sessionElementCache);
+		},
+	});
+	pi.registerTool({
+		name: "macuse_tools",
+		label: "macuse Tools",
+		description: "Enable exact registered macuse tools for this session. Load only the tools needed for the current task.",
+		promptSnippet: "Enable inactive macuse tools for direct Computer Use, recording, history, or recovery",
+		promptGuidelines: ["Use macuse_tools to enable only the exact inactive macuse tools needed; enabled tools stay active for the session."],
+		parameters: loadToolsParam,
+		executionMode: "sequential",
+		async execute(_toolCallId, params) {
+			const active = pi.getActiveTools();
+			const added = params.tools.filter((name) => !active.includes(name));
+			if (added.length) pi.setActiveTools([...active, ...added]);
+			return {
+				content: [{ type: "text" as const, text: added.length ? `Enabled macuse tools: ${added.join(", ")}` : "Requested macuse tools are already enabled." }],
+				details: { added },
+			};
 		},
 	});
 	pi.registerTool({

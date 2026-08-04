@@ -4,9 +4,9 @@ Source: Local Codex Computer Use app/plugin files and direct MCP probes against 
 Author: [OpenAI](https://openai.com/) for the installed app/plugin; local investigation notes captured in this repository
 Posted: Not applicable; local installed app and plugin cache
 Scraped: May 22, 2026
-Refreshed: May 22, 2026 09:35 MDT; spot-checked again June 8, 2026 after Codex updates; updated July 17, 2026 for the Computer History protocol; spot-checked July 18, 2026 after the next ChatGPT update. Active validation uses Activity Monitor instead of Calculator.
+Refreshed: May 22, 2026 09:35 MDT; spot-checked again June 8 and July 18, 2026; updated August 4, 2026 for current Computer Use schemas and Pi 0.83.0. Active validation uses Activity Monitor instead of Calculator.
 Observed metadata at May 22 refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin `1.0.799`; MCP server name `Computer Use`; MCP server version `d10a51766bb4d162ef1eed308e86a0f8f3816fb860896cb92c18e6de998142af`
-Current July 18 spot-check: ChatGPT host app `26.715.31925` build `5551` (bundle ID `com.openai.codex`); Codex CLI `0.145.0-alpha.18`; bundled Computer Use plugin `1.0.1000451`. The app-server-mediated pi path configures and inventory-checks `computer-use` (10 tools), `event-stream` (3), and `computer-history` (5) in one explicit thread. Historical `/Applications/Codex.app` references below describe the pre-merge install. `turn-ended` remains unexposed because it has no published payload contract; the private `@oai/sky` Node REPL adapter is not MCP.
+Current August 4 spot-check: ChatGPT host app `26.727.51351` build `6119` (bundle ID `com.openai.codex`); bundled Codex CLI `0.146.0-alpha.9.2`; Computer Use plugin `1.0.1000550`; Computer Use client `26.727.1000550`. The app-server-mediated pi path configures and inventory-checks `computer-use` (10 tools), `event-stream` (3), and `computer-history` (5) in one explicit thread. The same client now exposes a separate Messages MCP, which macuse intentionally excludes because messaging is outside its app-control scope. Historical `/Applications/Codex.app` references below describe the pre-merge install. `turn-ended` remains unexposed because it has no published payload contract; the private `@oai/sky` Node REPL adapter is not MCP.
 
 ## Bottom line
 
@@ -54,9 +54,9 @@ What is **not** proven yet:
 - Drag workflows and high-stakes click/scroll/type/set-value/select workflows beyond the controlled Activity Monitor/TextEdit smoke tests.
 - Whether the local safety policy fully covers Codex's native Computer Use task
   safeguards.
-- Whether app-server's `thread/start` + `mcpServer/tool/call` is a stable public
-  contract or an internal compatibility layer that may change with Codex app
-  updates.
+- Whether the documented experimental app-server `thread/start` +
+  `mcpServer/tool/call` contract and proprietary Computer Use schemas remain
+  compatible across Codex app updates.
 
 The practical conclusion is: pi and Cursor should not recreate the low-level
 macOS automation stack. OpenAI ships that layer, and Codex app-server currently
@@ -538,7 +538,7 @@ The installable pi extension source is:
 extensions/codex-computer-use.ts
 ```
 
-It is declared through `package.json#pi.extensions` and registers all 18 live upstream tools under their native names: 10 `computer-use`, 3 `event-stream`, and 5 `computer-history` tools. It also registers `macuse_sequence` and `macuse_restart`; the obsolete composite `macuse` action router is removed.
+It is declared through `package.json#pi.extensions` and registers all 18 tools in macuse's configured scope under their native names: 10 `computer-use`, 3 `event-stream`, and 5 `computer-history` tools. It also registers `macuse_sequence`, `macuse_tools`, and `macuse_restart`; only the read tools, sequence helper, and additive loader start active, and the obsolete composite `macuse` action router remains removed.
 
 The pi extension keeps one persistent Codex app-server process/thread instead of shelling out to the CLI bridge for every tool call. Normal `session_shutdown` stops it; `/macuse-stop` stops only app-server while leaving lazy restart available. Read-only app state and auxiliary status/settings calls recover stopped-session or transport-closed failures once by restarting only the extension-owned app-server session. `/macuse-restart` / `macuse_restart` explicitly restart Computer Use helpers plus app-server. PID records/watchdog state remain under `/tmp/macuse-appserver`.
 
@@ -825,7 +825,7 @@ Reusable now for broad pi operation:
 - Codex app-server supplies the thread/session/lifecycle wrapper that direct raw
   MCP was missing in these probes.
 - The Codex skill and app-specific instruction files are available locally.
-- pi can load `extensions/codex-computer-use.ts` through the package manifest and expose all 18 live upstream tools plus `macuse_sequence` / `macuse_restart`, backed by one live Codex app-server thread.
+- pi can load `extensions/codex-computer-use.ts` through the package manifest, initially expose only `list_apps`, `get_app_state`, `macuse_sequence`, and `macuse_tools`, then add exact registered tools on demand while retaining one live Codex app-server thread.
 - A harmless Activity Monitor search/filter/clear and CPU/Memory restore smoke test has passed through direct `set_value` / `perform_secondary_action` calls, followed by a `macuse_sequence` state assertion.
 
 Still needed before broad mutating GUI operation:

@@ -34,7 +34,7 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
 
 ## Default workflow
 
-1. Start read-only: call `list_apps({ runningOnly: true })` or use `filter` when the target app name is uncertain.
+1. Start read-only: call `list_apps({ runningOnly: true })` or use `filter` when the target app name is uncertain. `list_apps`, `get_app_state`, `macuse_sequence`, and `macuse_tools` start active; use `macuse_tools({ tools: [...] })` to enable only the exact direct, recording, history, or recovery tools needed.
 2. Inspect before acting: call `get_app_state({ app, detail: "minimal", targetScope: "main" })`; use `detail: "compact"` only when you need more target context. Focus capture is opt-in with `trackFocus: true`. Mutating tools and sequences capture native frontmost focus before/after and report whether it changed; they do not auto-restore frontmost focus. If Computer Use reports a stopped app session or transport-closed state, read-only calls auto-restart only the macuse app-server session once; call `macuse_restart({ reason })` before retrying when an explicit Computer Use helper restart is needed.
 3. Prefer stable targets in this order:
    - `elementId`
@@ -43,8 +43,8 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
    - `targets` fallback objects (inside step `arguments` for `macuse_sequence`)
    - raw `element_index` only with `expectedRole`/`expectedName` guards.
 4. For dynamic controls, prefer `targets` fallback objects that include both stable IDs and visible descriptions when available.
-5. Prefer direct non-pointer tools: `perform_secondary_action`, `set_value`, `press_key`, `type_text`, `select_text`, and `scroll`. Each direct mutation requires `allowMutating:true`, a narrow `safetyNote`, and a recent `get_app_state`; use `requireStateChange:true` when a no-op should fail closed. Prefer `set_value` only on a verified settable target and `type_text` only after verified focus. `select_text` selects by text string, not offsets. Direct `click`/`drag` additionally require `allowPointer:true`.
-6. Use the direct `event_stream_*` and `computer_history_*` tools only when requested. Record & Replay start and Computer History resume require `allowRecording:true` plus `safetyNote`; `computer_history_update_settings` requires `allowPrivacyChange:true`, a safety note, and the complete `observation`; call `computer_history_get_settings` immediately first and preserve every unchanged field. Stop/pause need no allow flag. Status/settings calls are read-only but expose activity/privacy metadata.
+5. Enable the exact tool with `macuse_tools` before using a direct tool. Prefer direct non-pointer tools: `perform_secondary_action`, `set_value`, `press_key`, `type_text`, `select_text`, and `scroll`. Each direct mutation requires `allowMutating:true`, a narrow `safetyNote`, and a recent `get_app_state`; use `requireStateChange:true` when a no-op should fail closed. Prefer `set_value` only on a verified settable target and `type_text` only after verified focus. `select_text` selects by text string, not offsets. Direct `click`/`drag` additionally require `allowPointer:true`.
+6. Use the direct `event_stream_*` and `computer_history_*` tools only when requested. Record & Replay start and Computer History resume require `allowRecording:true` plus `safetyNote`; `computer_history_update_settings` requires `allowPrivacyChange:true`, a safety note, the complete `observation`, and the current `showMenuBarIcon` value when present; call `computer_history_get_settings` immediately first and preserve every unchanged field. Stop/pause need no allow flag. Status/settings calls are read-only but expose activity/privacy metadata.
 7. Use `macuse_sequence` when the flow needs ordered actions, waits, assertions, or shared cleanup. Pass:
    - `allowMutating: true` and a narrow `safetyNote` for mutating steps
    - before/after `get_app_state`
@@ -68,7 +68,7 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
 - Finder sidebar/file rows and Calendar toolbar/popover controls are known to have sparse or unstable AX actions. If `Press` is invalid, switch target strategy or stop before pointer fallback unless explicitly approved.
 - For repeated `cgWindowNotFound`, `frontmost=<none>`, service timeouts, `connectionInvalid`, `errAETimeout`, `Computer Use server error -1743`, or suspected macOS TCC/Automation failures, run `node tools/macuse-doctor.mjs --out .scratch/doctor` when you are in this repo. Use `node tools/macuse-repair.mjs --repair-tcc --responsible auto` for a dry-run responsible-launcher preview. Apply repairs only with explicit user approval because `--apply`, `--unlock-with-env`, and `--repair-tcc` mutate broader local GUI/process/privacy state; applying TCC repair requires a host with Full Disk Access. Restarting Computer Use for the current session is allowed through `macuse_restart`.
 
-Do not expose or attempt `turn-ended` (no published payload contract) or the private `@oai/sky` Node REPL adapter (not MCP).
+Do not expose or attempt the separate Messages MCP, `turn-ended` (no published payload contract), or the private `@oai/sky` Node REPL adapter (not MCP).
 
 ## Evidence to report
 

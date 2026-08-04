@@ -82,10 +82,11 @@ function runRawComputerHistoryContractSmoke() {
     const readOnly = tool.name === 'computer_history_status' || tool.name === 'computer_history_get_settings';
     if (tool.annotations?.readOnlyHint !== readOnly || tool.annotations?.destructiveHint !== false || tool.annotations?.idempotentHint !== true || tool.annotations?.openWorldHint !== false) throw new Error(`raw ${tool.name} annotations changed`);
   }
-  const observation = tools.find((tool) => tool.name === 'computer_history_update_settings')?.inputSchema?.properties?.observation;
+  const updateSettings = tools.find((tool) => tool.name === 'computer_history_update_settings')?.inputSchema;
+  const observation = updateSettings?.properties?.observation;
   const required = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist'];
   const entry = observation?.properties?.allowlist?.items;
-  if (!required.every((field) => observation?.required?.includes(field)) || !entry?.required?.includes('scope') || !entry?.properties?.urlDomain?.description?.includes('without a scheme or path')) throw new Error('raw computer_history_update_settings schema changed');
+  if (updateSettings?.properties?.showMenuBarIcon?.type !== 'boolean' || !required.every((field) => observation?.required?.includes(field)) || !entry?.required?.includes('scope') || !entry?.properties?.urlDomain?.description?.includes('without a scheme or path')) throw new Error('raw computer_history_update_settings schema changed');
   return '5 live tools; schemas and annotations match';
 }
 
@@ -173,8 +174,10 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
     if (!names.includes(expected)) throw new Error('missing MCP tool: ' + expected);
   }
   if (names.length !== 18) throw new Error('expected exactly 18 MCP tools, saw ' + names.length);
-  const settingsSchema = listed.tools.find((tool) => tool.name === 'computer_history_update_settings')?.inputSchema?.properties?.observation;
+  const updateSettingsSchema = listed.tools.find((tool) => tool.name === 'computer_history_update_settings')?.inputSchema;
+  const settingsSchema = updateSettingsSchema?.properties?.observation;
   const requiredSettings = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist'];
+  if (updateSettingsSchema?.properties?.showMenuBarIcon?.type !== 'boolean') throw new Error('computer_history_update_settings schema omits showMenuBarIcon');
   if (!requiredSettings.every((field) => settingsSchema?.required?.includes(field))) throw new Error('computer_history_update_settings schema does not require all observation fields');
   if (!settingsSchema?.properties?.allowlist?.items?.properties?.urlDomain?.description?.includes('without a scheme or path')) throw new Error('computer_history_update_settings schema omits URL domain guidance');
   const annotationExpectations = {
@@ -241,16 +244,20 @@ const jiti = createJiti(process.cwd() + '/validate-extension.js', { interopDefau
 const mod = jiti('./extensions/codex-computer-use.ts');
 const factory = mod.default || mod;
 const tools = [];
+const handlers = new Map();
+let activeTools = [];
 factory({
-  registerTool(def) { tools.push(def); },
+  registerTool(def) { tools.push(def); activeTools.push(def.name); },
   registerCommand() {},
-  on() {},
+  on(name, handler) { handlers.set(name, handler); },
+  getActiveTools() { return [...activeTools]; },
+  setActiveTools(names) { activeTools = [...names]; },
 });
 const expectedTools = [
   'list_apps', 'get_app_state', 'perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag',
   'event_stream_start', 'event_stream_status', 'event_stream_stop',
   'computer_history_pause', 'computer_history_resume', 'computer_history_status', 'computer_history_get_settings', 'computer_history_update_settings',
-  'macuse_sequence', 'macuse_restart',
+  'macuse_sequence', 'macuse_tools', 'macuse_restart',
 ];
 const names = tools.map((tool) => tool.name);
 if (JSON.stringify([...names].sort()) !== JSON.stringify([...expectedTools].sort())) throw new Error('extension tools do not match full surface: ' + names.join(','));
@@ -259,8 +266,10 @@ if (tools.some((tool) => tool.parameters?.additionalProperties !== false)) throw
 const sequenceStepSchema = tools.find((tool) => tool.name === 'macuse_sequence')?.parameters?.properties?.steps?.items;
 if (sequenceStepSchema?.additionalProperties !== true) throw new Error('macuse_sequence step schema must remain permissive for runtime-normalized step fields');
 if (tools.some((tool) => tool.name === 'macuse')) throw new Error('obsolete composite macuse tool is still registered');
-const historyObservation = tools.find((tool) => tool.name === 'computer_history_update_settings')?.parameters?.properties?.observation;
+const historySettings = tools.find((tool) => tool.name === 'computer_history_update_settings')?.parameters;
+const historyObservation = historySettings?.properties?.observation;
 const requiredSettings = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist'];
+if (historySettings?.properties?.showMenuBarIcon?.type !== 'boolean') throw new Error('Computer History schema omits showMenuBarIcon');
 if (!requiredSettings.every((field) => historyObservation?.required?.includes(field))) throw new Error('Computer History schema does not require all observation fields');
 if (!historyObservation?.properties?.allowlist?.items?.properties?.urlDomain?.description?.includes('without scheme or path')) throw new Error('Computer History schema omits URL domain guidance');
 for (const name of ['perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag']) {
@@ -270,6 +279,12 @@ for (const name of ['perform_secondary_action', 'press_key', 'type_text', 'set_v
 (async () => {
   const signal = new AbortController().signal;
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
+  await handlers.get('session_start')({}, {});
+  const initialMacuseTools = activeTools.filter((name) => names.includes(name)).sort();
+  const expectedInitialTools = ['get_app_state', 'list_apps', 'macuse_sequence', 'macuse_tools'].sort();
+  if (JSON.stringify(initialMacuseTools) !== JSON.stringify(expectedInitialTools)) throw new Error('initial macuse tools are not lazy: ' + initialMacuseTools.join(','));
+  const loaded = await byName.get('macuse_tools').execute('load', { tools: ['set_value', 'computer_history_status'] }, signal);
+  if (!activeTools.includes('set_value') || !activeTools.includes('computer_history_status') || !loaded.details.added.includes('set_value')) throw new Error('macuse_tools did not activate exact requested tools');
   const invalidObservation = { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [] };
   const invalidUrlObservation = { ...invalidObservation, allowlist: [{ scope: 'url' }] };
   const schemeUrlObservation = { ...invalidObservation, allowlist: [{ scope: 'url', urlDomain: 'https://example.com' }] };
@@ -315,12 +330,14 @@ const { filterToolResult } = jiti('./extensions/codex-computer-use-modules/conte
 const { sanitizeRecoverableComputerUseText } = jiti('./extensions/codex-computer-use-modules/computer-use-recovery.ts');
 const { appServerSessionRecoverySummary, filterToolResult: filterCliToolResult, sanitizeRecoverableComputerUseText: sanitizeCliRecoverableComputerUseText, shouldAutoRecoverComputerUse } = jiti('./tools/cu-helpers.mjs');
 const { computerUseDiagnostic } = jiti('./extensions/codex-computer-use-modules/diagnostics.ts');
-const { normalizePressKeyValue, normalizeToolArguments } = jiti('./extensions/codex-computer-use-modules/elements-state.ts');
+const { normalizePressKeyValue, normalizeToolArguments, stripSelectorOnlyKeys } = jiti('./extensions/codex-computer-use-modules/elements-state.ts');
 const errorContent = [{ type: 'text', text: 'NSOSStatusErrorDomain Code=-609 connectionInvalid' }];
 if (normalizePressKeyValue(',', ['COMMAND']) !== 'super+comma') throw new Error('Command-comma key normalization failed');
 if (normalizePressKeyValue('Command+,') !== 'super+comma') throw new Error('Command+, key normalization failed');
 const normalizedArgs = normalizeToolArguments({ app: 'CueboxItem24', key: 'Comma', modifiers: ['COMMAND'] });
 if (normalizedArgs.key !== 'super+comma' || 'modifiers' in normalizedArgs) throw new Error('press_key modifiers were not normalized away');
+const strippedArgs = stripSelectorOnlyKeys({ app: 'CueboxItem24', element_index: '7', elementId: 'stale', elementDescription: 'Old', role: 'button', name: 'Go', targets: [], expectedRole: 'button', action: 'Press' });
+if (JSON.stringify(strippedArgs) !== JSON.stringify({ app: 'CueboxItem24', element_index: '7', action: 'Press' })) throw new Error('host-only selector keys leaked to upstream Computer Use');
 const stopSentinelResult = { content: [{ type: 'text', text: 'This application session has been explicitly stopped by the user for this turn. Stop your work and send a final message noting they stopped the session and you\'re ready to continue if they want you to. Computer Use can be used again in the next assistant turn.' }] };
 const stopped = filterToolResult(stopSentinelResult, { maxTextChars: 1000 });
 const stoppedText = stopped.content[0]?.text || '';

@@ -43,7 +43,7 @@ The wrapper:
 
 - starts Codex app-server with Computer Use feature flags,
 - creates an ephemeral app-server thread with `computer-use`, `event-stream`, and `computer-history`,
-- exposes all 18 verified public tools over standard MCP,
+- exposes all 18 tools in the configured Computer Use, Record & Replay, and Computer History families over standard MCP,
 - defaults to `approval: "inherit"`, auto-accepting Computer Use app approvals
   to match Codex's Any App setting,
 - routes tool execution through app-server `mcpServer/tool/call`,
