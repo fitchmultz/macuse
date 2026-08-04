@@ -117,6 +117,8 @@ function runCliAuxiliaryGuardSmoke() {
   if (unknownArgument.status !== 2 || !unknownArgument.stdout.includes('Unsupported arguments for click: mouseButton')) throw new Error('CLI accepted an unknown argument before app-server startup');
   const nestedApproval = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', 'call', '--tool', 'get_app_state', '--arguments-json', '{"app":"Activity Monitor","approval":"deny"}', '--quiet'], { cwd: process.cwd(), encoding: 'utf8', timeout: 10_000 });
   if (nestedApproval.status !== 2 || !nestedApproval.stdout.includes('--arguments-json cannot set approval')) throw new Error('CLI silently ignored nested approval');
+  const unguardedSequence = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', 'sequence', '--steps-json', '[{"tool":"event_stream_start","arguments":{}}]', '--allow-mutating', '--quiet'], { cwd: process.cwd(), encoding: 'utf8', timeout: 10_000 });
+  if (unguardedSequence.status !== 2 || !unguardedSequence.stdout.includes('allow-recording')) throw new Error('CLI sequence skipped auxiliary safety guards');
   for (const [args, failure] of [
     [invalidObservation, 'an app rule without bundleID'],
     [invalidUrlObservation, 'a URL rule without urlDomain'],

@@ -361,6 +361,7 @@ function parseArgs(argv) {
     throw new UsageError(`tool ${opts.tool} is not read-only; pass --allow-mutating to acknowledge GUI mutation`);
   }
   for (const [index, step] of opts.steps.entries()) {
+    validateAuxiliaryGuard(step.tool, step.arguments, opts);
     if (Object.hasOwn(step.arguments, 'approval')) throw new UsageError(`sequence step ${index} arguments cannot set approval; use --approval`);
     if (!READ_ONLY_TOOLS.has(step.tool) && !opts.allowMutating) {
       throw new UsageError(`sequence step ${index} tool ${step.tool} is not read-only; pass --allow-mutating to acknowledge GUI mutation`);
