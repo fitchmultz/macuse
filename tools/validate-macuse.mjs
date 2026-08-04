@@ -113,13 +113,17 @@ function runCliAuxiliaryGuardSmoke() {
     const result = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', 'call', '--server', 'computer-history', '--tool', 'computer_history_update_settings', '--arguments-json', JSON.stringify(args), '--allow-privacy-change', '--safety-note', 'guard test only', '--quiet'], { cwd: process.cwd(), encoding: 'utf8', timeout: 10_000 });
     if (result.status !== 2 || !result.stdout.includes('scope-specific')) throw new Error(`CLI computer_history_update_settings accepted ${failure}`);
   }
-  const statusResult = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', 'call', '--server', 'event-stream', '--tool', 'event_stream_status', '--arguments-json', '{}', '--quiet'], { cwd: process.cwd(), encoding: 'utf8', timeout: 120_000 });
-  if (statusResult.status !== 0) throw new Error(`CLI event_stream_status failed: ${statusResult.stderr || statusResult.stdout}`);
-  const status = parseJsonOutput('CLI event_stream_status', statusResult.stdout);
-  const statusText = status.result?.content?.find((block) => block.type === 'text')?.text || '';
-  const inactive = status.result?.isError ? statusText.includes('Record & Replay is not enabled') : JSON.parse(statusText || '{}').isRecording === false;
+  return 'recording/privacy guards fail closed before app-server startup';
+}
+
+function runCliAuxiliaryStatusSmoke() {
+  const result = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', 'call', '--server', 'event-stream', '--tool', 'event_stream_status', '--arguments-json', '{}', '--quiet'], { cwd: process.cwd(), encoding: 'utf8', timeout: 120_000 });
+  if (result.status !== 0) throw new Error(`CLI event_stream_status failed: ${result.stderr || result.stdout}`);
+  const status = parseJsonOutput('CLI event_stream_status', result.stdout);
+  const text = status.result?.content?.find((block) => block.type === 'text')?.text || '';
+  const inactive = status.result?.isError ? text.includes('Record & Replay is not enabled') : JSON.parse(text || '{}').isRecording === false;
   if (!inactive) throw new Error('CLI event_stream_status did not prove recording is inactive or unavailable');
-  return 'recording/privacy guards fail closed; event_stream_status routed without recording';
+  return 'event_stream_status routed without recording';
 }
 
 function runMcpServerSmoke(verbose) {
@@ -609,6 +613,8 @@ async function main() {
     else process.stdout.write('OK extension validation complete.\n');
     return;
   }
+
+  printPass('CLI auxiliary status routing', runCliAuxiliaryStatusSmoke());
 
   const piPersistentSmoke = runPiExtensionPersistentSmoke(opts.verbose);
   printPass('pi extension persistent app-server smoke', `thread=${piPersistentSmoke}`);
