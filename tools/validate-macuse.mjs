@@ -114,7 +114,7 @@ function runCliAuxiliaryGuardSmoke() {
     if (result.status !== 2 || !result.stdout.includes(flag)) throw new Error(`CLI ${tool} guard did not fail closed before app-server startup`);
   }
   const unknownArgument = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', 'call', '--tool', 'click', '--arguments-json', '{"app":"Activity Monitor","mouseButton":"right"}', '--allow-mutating', '--quiet'], { cwd: process.cwd(), encoding: 'utf8', timeout: 10_000 });
-  if (unknownArgument.status !== 1 || !unknownArgument.stdout.includes('Unsupported arguments for click: mouseButton')) throw new Error('CLI accepted an unknown argument before app-server startup');
+  if (unknownArgument.status !== 2 || !unknownArgument.stdout.includes('Unsupported arguments for click: mouseButton')) throw new Error('CLI accepted an unknown argument before app-server startup');
   for (const [args, failure] of [
     [invalidObservation, 'an app rule without bundleID'],
     [invalidUrlObservation, 'a URL rule without urlDomain'],
@@ -236,6 +236,7 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
   const schemeUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'https://example.com' }] } };
   const pathUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'example.com/path' }] } };
   for (const [name, arguments, expected] of [
+    ['click', { app: 'Activity Monitor', x: 1, y: 1, mouseButton: 'right', allowPointer: true }, /Unsupported arguments for click: mouseButton/],
     ['event_stream_start', {}, /allowRecording/],
     ['computer_history_resume', { allowRecording: true }, /safetyNote/],
     ['computer_history_update_settings', {}, /allowPrivacyChange/],
@@ -360,6 +361,7 @@ for (const name of ['perform_secondary_action', 'press_key', 'type_text', 'set_v
     ['set_value', { app: 'Activity Monitor', value: 'x' }, /allowMutating/],
     ['set_value', { app: 'Activity Monitor', value: 'x', allowMutating: true, safetyNote: 'short' }, /safetyNote/],
     ['click', { app: 'Activity Monitor', x: 1, y: 1, allowMutating: true, safetyNote: 'Activity Monitor test only; do not click any risky controls.' }, /allowPointer/],
+    ['macuse_sequence', { steps: [{ tool: 'click', arguments: { app: 'Activity Monitor', x: 1, y: 1, mouseButton: 'right' } }], allowMutating: true, allowPointerClick: true, safetyNote: 'Activity Monitor test only; reject invalid click arguments before any action.' }, /Unsupported arguments for click: mouseButton/],
     ['computer_history_update_settings', { allowPrivacyChange: true, safetyNote: 'guard test' }, /all Computer History settings fields/],
     ['computer_history_update_settings', { observation: invalidObservation, allowPrivacyChange: true, safetyNote: 'guard test' }, /scope-specific/],
     ['computer_history_update_settings', { observation: invalidUrlObservation, allowPrivacyChange: true, safetyNote: 'guard test' }, /scope-specific/],

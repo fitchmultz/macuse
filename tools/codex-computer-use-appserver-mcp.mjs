@@ -390,6 +390,7 @@ async function handleRequest(message) {
       let args = normalizeToolArguments(params.arguments || {});
       if (!TOOL_SCHEMAS[name]) throw new Error(`unknown tool: ${name}`);
       validateAuxiliaryGuard(name, args);
+      pickUpstreamToolArgs(name, args);
       if (POINTER_TOOLS.has(name) && args.allowPointer !== true) throw new Error(`${name} requires allowPointer:true; prefer non-pointer actions when possible`);
       if (targetsElement(name, args)) {
         const refresh = await appServer.callTool('get_app_state', { app: args.app, approval: args.approval || 'inherit' });

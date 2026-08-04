@@ -228,6 +228,14 @@ function normalizeStringList(value, name) {
   throw new UsageError(`${name} must be a string or array of strings`);
 }
 
+function validateUpstreamToolArgs(tool, args) {
+  try {
+    pickUpstreamToolArgs(tool, args);
+  } catch (error) {
+    throw new UsageError(error.message || String(error));
+  }
+}
+
 function validateAuxiliaryGuard(tool, args, opts) {
   if (tool === 'event_stream_start' || tool === 'computer_history_resume') {
     if (!opts.allowRecording || !opts.safetyNote.trim()) throw new UsageError(`${tool} requires --allow-recording and a non-empty --safety-note`);
@@ -344,7 +352,7 @@ function parseArgs(argv) {
   if (!MCP_SERVERS[opts.server]) throw new UsageError('--server must be computer-use, event-stream, or computer-history');
   if (opts.tool && !MCP_SERVERS[opts.server].tools.includes(opts.tool)) throw new UsageError(`tool ${opts.tool} is not exposed by ${opts.server}`);
   validateAuxiliaryGuard(opts.tool, opts.arguments, opts);
-  if (opts.tool) pickUpstreamToolArgs(opts.tool, opts.arguments);
+  if (opts.tool) validateUpstreamToolArgs(opts.tool, opts.arguments);
   if (opts.approval && !['inherit', 'accept-all', 'accept-once', 'deny'].includes(opts.approval)) {
     throw new UsageError('--approval must be inherit, accept-all, accept-once, or deny');
   }
@@ -355,7 +363,7 @@ function parseArgs(argv) {
     if (!READ_ONLY_TOOLS.has(step.tool) && !opts.allowMutating) {
       throw new UsageError(`sequence step ${index} tool ${step.tool} is not read-only; pass --allow-mutating to acknowledge GUI mutation`);
     }
-    pickUpstreamToolArgs(step.tool, step.arguments);
+    validateUpstreamToolArgs(step.tool, step.arguments);
   }
   return opts;
 }
