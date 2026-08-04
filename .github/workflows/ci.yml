@@ -5,6 +5,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -16,9 +19,7 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run typecheck
-      - run: node --check tools/probe-codex-computer-use-mcp.mjs
-      - run: node --check tools/codex-computer-use-appserver.mjs
-      - run: node --check tools/codex-computer-use-appserver-mcp.mjs
+      - run: node tools/validate-macuse.mjs extension
       - run: npx --no-install pi --no-context-files --no-skills --no-prompt-templates --no-themes --no-extensions -e ./extensions/codex-computer-use.ts --list-models '__no_such_model__'
         env:
           PI_OFFLINE: "1"

@@ -14,12 +14,12 @@ function recordCheck(status, name, detail = '') {
 }
 
 function help() {
-  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n  node tools/validate-macuse.mjs focus [options]\n  node tools/validate-macuse.mjs mcp [options]\n\nModes:\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, verify the pi\n      extension reuses one persistent app-server thread, run direct raw-MCP\n      discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only probes: app-server list_apps and get_app_state.\n      The direct raw-MCP Finder deny probe is diagnostic-only and warns instead\n      of failing because SkyComputerUseClient mcp is unreliable outside Codex.\n\n  mutating\n      Run read-only plus an Activity Monitor real-app mutation smoke: filter\n      search, clear search after the field name changes, switch Memory, restore\n      CPU, and verify native frontmost focus is not stolen.\n\n  focus\n      Run mutating plus the extension sequence background-focus check.\n      Native frontmost drift fails; no restore fallback is attempted.\n\n  mcp\n      Smoke-test the Cursor/standard-MCP wrapper: initialize, tools/list,\n      approval elicitation, get_app_state, and pointer guard behavior.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  --json                         Print a machine-readable validation summary.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating edits only Activity Monitor's\n  search field and tab selection, then restores CPU/search state.\n\nExamples:\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs focus\n  node tools/validate-macuse.mjs mcp\n  node tools/validate-macuse.mjs read-only --app \"Activity Monitor\" --tool-timeout-ms 120000\n`);
+  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs extension [options]\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n  node tools/validate-macuse.mjs focus [options]\n  node tools/validate-macuse.mjs mcp [options]\n\nModes:\n  extension\n      Run syntax, extension behavior, and guard smokes without Codex Computer Use.\n\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, verify the pi\n      extension reuses one persistent app-server thread, run direct raw-MCP\n      discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only probes: app-server list_apps and get_app_state.\n      The direct raw-MCP Finder deny probe is diagnostic-only and warns instead\n      of failing because SkyComputerUseClient mcp is unreliable outside Codex.\n\n  mutating\n      Run read-only plus an Activity Monitor real-app mutation smoke: filter\n      search, clear search after the field name changes, switch Memory, restore\n      CPU, and verify native frontmost focus is not stolen.\n\n  focus\n      Run mutating plus the extension sequence background-focus check.\n      Native frontmost drift fails; no restore fallback is attempted.\n\n  mcp\n      Smoke-test the Cursor/standard-MCP wrapper: initialize, tools/list,\n      approval elicitation, get_app_state, and pointer guard behavior.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  --json                         Print a machine-readable validation summary.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating edits only Activity Monitor's\n  search field and tab selection, then restores CPU/search state.\n\nExamples:\n  node tools/validate-macuse.mjs extension\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs focus\n  node tools/validate-macuse.mjs mcp\n  node tools/validate-macuse.mjs read-only --app \"Activity Monitor\" --tool-timeout-ms 120000\n`);
 }
 function parse(argv) {
   if (argv.includes('-h') || argv.includes('--help')) return { help: true };
   const mode = argv.shift() || 'quick';
-  if (!['quick', 'read-only', 'mutating', 'focus', 'mcp'].includes(mode)) throw new Error(`unknown mode: ${mode}`);
+  if (!['extension', 'quick', 'read-only', 'mutating', 'focus', 'mcp'].includes(mode)) throw new Error(`unknown mode: ${mode}`);
   const opts = { mode, app: DEFAULT_APP, toolTimeoutMs: DEFAULT_TIMEOUT_MS, verbose: false, json: false };
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
@@ -286,8 +286,13 @@ for (const name of ['perform_secondary_action', 'press_key', 'type_text', 'set_v
   if (JSON.stringify(initialMacuseTools) !== JSON.stringify(expectedInitialTools)) throw new Error('initial macuse tools are not lazy: ' + initialMacuseTools.join(','));
   const loaded = await byName.get('macuse_tools').execute('load', { tools: ['set_value', 'computer_history_status'] }, signal);
   if (!activeTools.includes('set_value') || !activeTools.includes('computer_history_status') || !loaded.details.added.includes('set_value')) throw new Error('macuse_tools did not activate exact requested tools');
+  await byName.get('macuse_tools').execute('load-overlap', { tools: ['set_value', 'press_key'] }, signal);
+  if (activeTools.length !== new Set(activeTools).size) throw new Error('macuse_tools duplicated an already active tool');
   const excluded = await byName.get('macuse_tools').execute('load-excluded', { tools: ['drag'] }, signal);
   if (!excluded.details.unavailable.includes('drag') || !excluded.content[0].text.includes('Unavailable or excluded: drag')) throw new Error('macuse_tools misreported an excluded tool as enabled');
+  for (const tool of tools.filter((tool) => !expectedInitialTools.includes(tool.name))) {
+    if (tool.promptSnippet || tool.promptGuidelines?.length) throw new Error('inactive tool ' + tool.name + ' changes the system prompt when activated');
+  }
   const invalidObservation = { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [] };
   const invalidUrlObservation = { ...invalidObservation, allowlist: [{ scope: 'url' }] };
   const schemeUrlObservation = { ...invalidObservation, allowlist: [{ scope: 'url', urlDomain: 'https://example.com' }] };
@@ -339,7 +344,7 @@ if (normalizePressKeyValue(',', ['COMMAND']) !== 'super+comma') throw new Error(
 if (normalizePressKeyValue('Command+,') !== 'super+comma') throw new Error('Command+, key normalization failed');
 const normalizedArgs = normalizeToolArguments({ app: 'CueboxItem24', key: 'Comma', modifiers: ['COMMAND'] });
 if (normalizedArgs.key !== 'super+comma' || 'modifiers' in normalizedArgs) throw new Error('press_key modifiers were not normalized away');
-const strippedArgs = stripHostOnlyKeys({ app: 'CueboxItem24', element_index: '7', elementId: 'stale', elementDescription: 'Old', role: 'button', name: 'Go', targets: [], expectedRole: 'button', action: 'Press', detail: 'minimal', toolTimeoutMs: 1000 });
+const strippedArgs = stripHostOnlyKeys({ app: 'CueboxItem24', element_index: '7', elementId: 'stale', elementDescription: 'Old', role: 'button', name: 'Go', targets: [], expectedRole: 'button', action: 'Press', detail: 'minimal', toolTimeoutMs: 1000, trackFocus: true, runningOnly: true });
 if (JSON.stringify(strippedArgs) !== JSON.stringify({ app: 'CueboxItem24', element_index: '7', action: 'Press' })) throw new Error('host-only selector keys leaked to upstream Computer Use');
 const stopSentinelResult = { content: [{ type: 'text', text: 'This application session has been explicitly stopped by the user for this turn. Stop your work and send a final message noting they stopped the session and you\'re ready to continue if they want you to. Computer Use can be used again in the next assistant turn.' }] };
 const stopped = filterToolResult(stopSentinelResult, { maxTextChars: 1000 });
@@ -598,6 +603,12 @@ async function main() {
   printPass('list_apps error preservation smoke', listAppsErrorSmoke);
 
   printPass('CLI auxiliary safety guards', runCliAuxiliaryGuardSmoke());
+
+  if (opts.mode === 'extension') {
+    if (jsonOutput) writeJsonSummary(opts, true);
+    else process.stdout.write('OK extension validation complete.\n');
+    return;
+  }
 
   const piPersistentSmoke = runPiExtensionPersistentSmoke(opts.verbose);
   printPass('pi extension persistent app-server smoke', `thread=${piPersistentSmoke}`);

@@ -514,7 +514,7 @@ export default function (pi: ExtensionAPI) {
 		executionMode: "sequential",
 		async execute(_toolCallId, params) {
 			const active = pi.getActiveTools();
-			pi.setActiveTools([...active, ...params.tools]);
+			pi.setActiveTools([...new Set([...active, ...params.tools])]);
 			const enabled = pi.getActiveTools();
 			const added = params.tools.filter((name) => !active.includes(name) && enabled.includes(name));
 			const unavailable = params.tools.filter((name) => !enabled.includes(name));
@@ -529,7 +529,6 @@ export default function (pi: ExtensionAPI) {
 		name: "macuse_restart",
 		label: "macuse Restart",
 		description: "Restart Computer Use runtime helpers and the extension-owned app-server session, then leave the tool ready for retry.",
-		promptSnippet: "Restart a stopped or transport-broken Computer Use runtime",
 		parameters: restartParam,
 		executionMode: "sequential",
 		async execute(_toolCallId, params, signal, onUpdate) {

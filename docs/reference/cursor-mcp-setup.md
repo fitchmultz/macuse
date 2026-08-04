@@ -49,7 +49,7 @@ The wrapper:
 - routes tool execution through app-server `mcpServer/tool/call`,
 - sanitizes stopped-session sentinels and restarts only its app-server session before retrying read-only app/status/settings calls once,
 - requires `allowRecording:true` plus `safetyNote` for Record & Replay starts and Computer History resume,
-- requires `allowPrivacyChange:true`, `safetyNote`, and the complete `observation` object for Computer History settings updates, and
+- requires `allowPrivacyChange:true`, `safetyNote`, the complete `observation` object, and the current `showMenuBarIcon` value when present for Computer History settings updates, and
 - restores mouse position after pointer `click` / `drag` calls.
 
 ## Tool use rules
@@ -61,7 +61,7 @@ The wrapper:
 4. App approval defaults to `approval: "inherit"`. Use `approval: "ask"` only
    when a client should surface MCP elicitation prompts, or `approval: "deny"`
    for denial-path tests.
-5. Use `event_stream_status`, `computer_history_status`, and `computer_history_get_settings` only when activity/artifact/privacy metadata is relevant. Record & Replay starts and Computer History resume require explicit user intent, `allowRecording:true`, and `safetyNote`; settings changes require fresh exact approval, `allowPrivacyChange:true`, and the complete `observation` object.
+5. Use `event_stream_status`, `computer_history_status`, and `computer_history_get_settings` only when activity/artifact/privacy metadata is relevant. Record & Replay starts and Computer History resume require explicit user intent, `allowRecording:true`, and `safetyNote`; settings changes require fresh exact approval, `allowPrivacyChange:true`, the complete `observation` object, and the current `showMenuBarIcon` value when present.
 6. Stop before purchases, sends, deletes, credential/account/security/privacy
    changes, installs, or ambiguous wrong-window actions unless the user gives
    fresh explicit approval for that exact operation.
