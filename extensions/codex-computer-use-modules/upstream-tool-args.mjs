@@ -1,4 +1,4 @@
-export const UPSTREAM_TOOL_ARG_KEYS = Object.freeze({
+const upstreamToolArgKeys = {
 	list_apps: [],
 	get_app_state: ["app"],
 	click: ["app", "click_count", "element_index", "mouse_button", "x", "y"],
@@ -17,19 +17,22 @@ export const UPSTREAM_TOOL_ARG_KEYS = Object.freeze({
 	computer_history_status: [],
 	computer_history_get_settings: [],
 	computer_history_update_settings: ["observation", "showMenuBarIcon"],
-});
+};
+for (const keys of Object.values(upstreamToolArgKeys)) Object.freeze(keys);
+export const UPSTREAM_TOOL_ARG_KEYS = Object.freeze(upstreamToolArgKeys);
 
-export const HOST_ONLY_TOOL_ARG_KEYS = new Set([
+export const HOST_ONLY_TOOL_ARG_KEYS = Object.freeze([
 	"element", "elementId", "element_id", "elementDescription", "element_description", "role", "elementRole", "name", "elementName", "targets",
 	"expectedRole", "expectedName", "expectedDescription", "expectedId", "expectedValue", "approval", "allowMutating", "safetyNote", "allowPointer",
 	"allowPointerClick", "allowPointerDrag", "allowRecording", "allowPrivacyChange", "requireStateChange", "includeImage", "saveImagePath", "detail",
 	"targetScope", "maxTextChars", "toolTimeoutMs", "trackFocus", "runningOnly", "filter", "screenshotStep", "modifiers",
 ]);
+const hostOnlyToolArgKeySet = new Set(HOST_ONLY_TOOL_ARG_KEYS);
 
 export function pickUpstreamToolArgs(tool, args) {
 	if (!Object.hasOwn(UPSTREAM_TOOL_ARG_KEYS, tool)) throw new Error(`Unsupported upstream Computer Use tool: ${tool}`);
 	const keys = UPSTREAM_TOOL_ARG_KEYS[tool];
-	const unknown = Object.keys(args).filter((key) => !keys.includes(key) && !HOST_ONLY_TOOL_ARG_KEYS.has(key));
+	const unknown = Object.keys(args).filter((key) => !keys.includes(key) && !hostOnlyToolArgKeySet.has(key));
 	if (unknown.length) throw new Error(`Unsupported arguments for ${tool}: ${unknown.join(", ")}`);
 	return Object.fromEntries(keys.filter((key) => Object.hasOwn(args, key)).map((key) => [key, args[key]]));
 }

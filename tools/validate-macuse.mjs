@@ -2,7 +2,7 @@
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { DEFAULT_BUNDLED_COMPUTER_USE_CLIENT, DEFAULT_COMPUTER_USE_CLIENT_CWD, MCP_SERVERS, frontmostApp, mousePosition, parseJsonOutput, VERSION } from './macuse-utils.mjs';
-import { UPSTREAM_TOOL_ARG_KEYS } from '../extensions/codex-computer-use-modules/upstream-tool-args.mjs';
+import { HOST_ONLY_TOOL_ARG_KEYS, UPSTREAM_TOOL_ARG_KEYS } from '../extensions/codex-computer-use-modules/upstream-tool-args.mjs';
 
 const DEFAULT_APP = 'Activity Monitor';
 const DEFAULT_TIMEOUT_MS = 90_000;
@@ -135,7 +135,7 @@ function runCliAuxiliaryStatusSmoke() {
   return 'event_stream_status routed without recording';
 }
 
-function runMcpServerSmoke(verbose) {
+function runMcpServerSmoke(verbose, schemaOnly = false) {
   const script = String.raw`
 const { spawn } = require('node:child_process');
 const proc = spawn(process.execPath, ['tools/codex-computer-use-appserver-mcp.mjs'], { cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe'] });
@@ -187,6 +187,13 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
     if (!names.includes(expected)) throw new Error('missing MCP tool: ' + expected);
   }
   if (names.length !== 18) throw new Error('expected exactly 18 MCP tools, saw ' + names.length);
+  const upstreamKeys = JSON.parse(process.env.MACUSE_UPSTREAM_TOOL_ARG_KEYS);
+  const hostOnlyKeys = new Set(JSON.parse(process.env.MACUSE_HOST_ONLY_TOOL_ARG_KEYS));
+  for (const tool of listed.tools) {
+    const supportedKeys = new Set([...(upstreamKeys[tool.name] || []), ...hostOnlyKeys]);
+    const unsupportedKeys = Object.keys(tool.inputSchema?.properties || {}).filter((key) => !supportedKeys.has(key));
+    if (unsupportedKeys.length) throw new Error(tool.name + ' MCP schema keys are missing from the upstream boundary: ' + unsupportedKeys.join(','));
+  }
   const updateSettingsSchema = listed.tools.find((tool) => tool.name === 'computer_history_update_settings')?.inputSchema;
   const settingsSchema = updateSettingsSchema?.properties?.observation;
   const requiredSettings = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist'];
@@ -203,6 +210,7 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
     const annotations = listed.tools.find((tool) => tool.name === name)?.annotations;
     if (annotations?.readOnlyHint !== readOnly || annotations?.destructiveHint !== false || annotations?.idempotentHint !== idempotent || annotations?.openWorldHint !== false) throw new Error(name + ' annotations do not match upstream');
   }
+  if (process.env.MACUSE_MCP_SCHEMA_ONLY === '1') { console.log(names.join(',')); return; }
   const finder = await request('tools/call', { name: 'get_app_state', arguments: { app: 'Finder', approval: 'ask' } }, 120000);
   if (!sawElicitation || finder.isError !== true) throw new Error('MCP elicitation proxy did not decline Finder as expected');
   sawElicitation = false;
@@ -243,7 +251,12 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
 })().then(() => { proc.kill('SIGTERM'); }).catch((error) => { proc.kill('SIGTERM'); console.error(error.stack || error.message); process.exitCode = 1; });
 `;
   const stdout = run('appserver MCP wrapper smoke', process.execPath, ['-e', script], {
-    env: { MACUSE_VALIDATE_VERBOSE: verbose ? '1' : '' },
+    env: {
+      MACUSE_VALIDATE_VERBOSE: verbose ? '1' : '',
+      MACUSE_MCP_SCHEMA_ONLY: schemaOnly ? '1' : '',
+      MACUSE_UPSTREAM_TOOL_ARG_KEYS: JSON.stringify(UPSTREAM_TOOL_ARG_KEYS),
+      MACUSE_HOST_ONLY_TOOL_ARG_KEYS: JSON.stringify([...HOST_ONLY_TOOL_ARG_KEYS]),
+    },
     timeoutMs: 240_000,
     verbose,
   });
@@ -656,6 +669,9 @@ async function main() {
   printPass('list_apps error preservation smoke', listAppsErrorSmoke);
 
   printPass('CLI auxiliary safety guards', runCliAuxiliaryGuardSmoke());
+
+  const mcpSchemaSmoke = runMcpServerSmoke(opts.verbose, true);
+  printPass('app-server MCP schema boundary smoke', `${mcpSchemaSmoke.split(',').length} tools`);
 
   if (opts.mode === 'extension') {
     if (jsonOutput) writeJsonSummary(opts, true);
