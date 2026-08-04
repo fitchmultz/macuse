@@ -144,7 +144,10 @@ export async function executeSequence(
 			const safetyNote = String(input.safetyNote || "").trim();
 			if (safetyNote.length < 20) throw new Error(`${toolName} mutations require a safetyNote describing target, intended effect, and stop boundary.`);
 		}
-		for (const step of steps) if (!WAIT_TOOLS.has(step.tool)) pickUpstreamToolArgs(step.tool, step.arguments);
+		for (const step of steps) {
+			if (Object.hasOwn(step.arguments, "approval")) throw new Error(`${toolName} step arguments cannot set approval; use the top-level approval option.`);
+			if (!WAIT_TOOLS.has(step.tool)) pickUpstreamToolArgs(step.tool, step.arguments);
+		}
 		const approval = input.approval || "inherit";
 		onUpdate?.({ content: [{ type: "text", text: `Running ${toolName} through persistent Codex Computer Use (${steps.length} step${steps.length === 1 ? "" : "s"}, mutating=${mutating})...` }], details: {} });
 		const toolTimeoutMs = asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);

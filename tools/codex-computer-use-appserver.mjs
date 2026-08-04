@@ -352,6 +352,7 @@ function parseArgs(argv) {
   if (!MCP_SERVERS[opts.server]) throw new UsageError('--server must be computer-use, event-stream, or computer-history');
   if (opts.tool && !MCP_SERVERS[opts.server].tools.includes(opts.tool)) throw new UsageError(`tool ${opts.tool} is not exposed by ${opts.server}`);
   validateAuxiliaryGuard(opts.tool, opts.arguments, opts);
+  if (opts.tool && Object.hasOwn(opts.arguments, 'approval')) throw new UsageError('--arguments-json cannot set approval; use --approval');
   if (opts.tool) validateUpstreamToolArgs(opts.tool, opts.arguments);
   if (opts.approval && !['inherit', 'accept-all', 'accept-once', 'deny'].includes(opts.approval)) {
     throw new UsageError('--approval must be inherit, accept-all, accept-once, or deny');
@@ -360,6 +361,7 @@ function parseArgs(argv) {
     throw new UsageError(`tool ${opts.tool} is not read-only; pass --allow-mutating to acknowledge GUI mutation`);
   }
   for (const [index, step] of opts.steps.entries()) {
+    if (Object.hasOwn(step.arguments, 'approval')) throw new UsageError(`sequence step ${index} arguments cannot set approval; use --approval`);
     if (!READ_ONLY_TOOLS.has(step.tool) && !opts.allowMutating) {
       throw new UsageError(`sequence step ${index} tool ${step.tool} is not read-only; pass --allow-mutating to acknowledge GUI mutation`);
     }
