@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { DEFAULT_BUNDLED_COMPUTER_USE_CLIENT, DEFAULT_COMPUTER_USE_CLIENT_CWD, frontmostApp, mousePosition, parseJsonOutput, VERSION } from './macuse-utils.mjs';
+import { DEFAULT_BUNDLED_COMPUTER_USE_CLIENT, DEFAULT_COMPUTER_USE_CLIENT_CWD, MCP_SERVERS, frontmostApp, mousePosition, parseJsonOutput, VERSION } from './macuse-utils.mjs';
+import { UPSTREAM_TOOL_ARG_KEYS } from '../extensions/codex-computer-use-modules/upstream-tool-args.mjs';
 
 const DEFAULT_APP = 'Activity Monitor';
 const DEFAULT_TIMEOUT_MS = 90_000;
@@ -66,28 +67,36 @@ function run(name, command, args, opts = {}) {
   return result.stdout;
 }
 
-function runRawComputerHistoryContractSmoke() {
+function runRawToolContractSmoke() {
   const input = [
     { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'macuse-validation', version: VERSION } } },
     { jsonrpc: '2.0', method: 'notifications/initialized', params: {} },
     { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
   ].map((message) => JSON.stringify(message)).join('\n') + '\n';
-  const result = spawnSync(DEFAULT_BUNDLED_COMPUTER_USE_CLIENT, ['computer-history', 'mcp'], { cwd: DEFAULT_COMPUTER_USE_CLIENT_CWD, input, encoding: 'utf8', timeout: 10_000 });
-  if (result.error || result.status !== 0) throw new Error(`raw Computer History discovery failed: ${result.error?.message || result.stderr || `exit ${result.status}`}`);
-  const listed = result.stdout.split('\n').filter(Boolean).map((line) => JSON.parse(line)).find((message) => message.id === 2)?.result;
-  const tools = listed?.tools;
-  const expected = ['computer_history_pause', 'computer_history_resume', 'computer_history_status', 'computer_history_get_settings', 'computer_history_update_settings'];
-  if (!Array.isArray(tools) || JSON.stringify(tools.map((tool) => tool.name)) !== JSON.stringify(expected)) throw new Error('raw Computer History tool inventory changed');
-  for (const tool of tools) {
+  const discovered = {};
+  for (const [server, config] of Object.entries(MCP_SERVERS)) {
+    const result = spawnSync(DEFAULT_BUNDLED_COMPUTER_USE_CLIENT, config.args, { cwd: DEFAULT_COMPUTER_USE_CLIENT_CWD, input, encoding: 'utf8', timeout: 10_000 });
+    if (result.error || result.status !== 0) throw new Error(`raw ${server} discovery failed: ${result.error?.message || result.stderr || `exit ${result.status}`}`);
+    const tools = result.stdout.split('\n').filter(Boolean).map((line) => JSON.parse(line)).find((message) => message.id === 2)?.result?.tools;
+    if (!Array.isArray(tools) || JSON.stringify(tools.map((tool) => tool.name).sort()) !== JSON.stringify([...config.tools].sort())) throw new Error(`raw ${server} tool inventory changed`);
+    for (const tool of tools) {
+      const actual = Object.keys(tool.inputSchema?.properties ?? {}).sort();
+      const pinned = [...(UPSTREAM_TOOL_ARG_KEYS[tool.name] ?? [])].sort();
+      if (tool.inputSchema?.additionalProperties !== false || JSON.stringify(actual) !== JSON.stringify(pinned)) throw new Error(`raw ${tool.name} argument schema changed: live=${actual.join(',')} pinned=${pinned.join(',')}`);
+    }
+    discovered[server] = tools;
+  }
+  const historyTools = discovered['computer-history'];
+  for (const tool of historyTools) {
     const readOnly = tool.name === 'computer_history_status' || tool.name === 'computer_history_get_settings';
     if (tool.annotations?.readOnlyHint !== readOnly || tool.annotations?.destructiveHint !== false || tool.annotations?.idempotentHint !== true || tool.annotations?.openWorldHint !== false) throw new Error(`raw ${tool.name} annotations changed`);
   }
-  const updateSettings = tools.find((tool) => tool.name === 'computer_history_update_settings')?.inputSchema;
+  const updateSettings = historyTools.find((tool) => tool.name === 'computer_history_update_settings')?.inputSchema;
   const observation = updateSettings?.properties?.observation;
   const required = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist'];
   const entry = observation?.properties?.allowlist?.items;
   if (updateSettings?.properties?.showMenuBarIcon?.type !== 'boolean' || updateSettings?.required?.includes('showMenuBarIcon') || !required.every((field) => observation?.required?.includes(field)) || !entry?.required?.includes('scope') || !entry?.properties?.urlDomain?.description?.includes('without a scheme or path')) throw new Error('raw computer_history_update_settings schema changed');
-  return '5 live tools; schemas and annotations match';
+  return 'all 18 live tool argument schemas match the pinned boundary';
 }
 
 function runCliAuxiliaryGuardSmoke() {
@@ -250,6 +259,8 @@ const factory = mod.default || mod;
 const tools = [];
 const handlers = new Map();
 const messages = [];
+const branchEntries = [];
+const sessionContext = { sessionManager: { getBranch() { return [...branchEntries]; } } };
 const excludedTools = new Set(['drag']);
 let activeTools = [];
 factory({
@@ -258,7 +269,7 @@ factory({
   on(name, handler) { handlers.set(name, handler); },
   getActiveTools() { return [...activeTools]; },
   setActiveTools(names) { activeTools = names.filter((name) => !excludedTools.has(name)); },
-  sendMessage(message) { messages.push(message); },
+  sendMessage(message) { messages.push(message); branchEntries.push({ type: 'custom', customType: message.customType }); },
 });
 const expectedTools = [
   'list_apps', 'get_app_state', 'perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag',
@@ -286,7 +297,7 @@ for (const name of ['perform_secondary_action', 'press_key', 'type_text', 'set_v
 (async () => {
   const signal = new AbortController().signal;
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
-  await handlers.get('session_start')({ reason: 'startup' }, {});
+  await handlers.get('session_start')({ reason: 'startup' }, sessionContext);
   const initialMacuseTools = activeTools.filter((name) => names.includes(name)).sort();
   const expectedInitialTools = ['get_app_state', 'list_apps', 'macuse_sequence', 'macuse_tools'].sort();
   if (JSON.stringify(initialMacuseTools) !== JSON.stringify(expectedInitialTools)) throw new Error('initial macuse tools are not lazy: ' + initialMacuseTools.join(','));
@@ -301,13 +312,17 @@ for (const name of ['perform_secondary_action', 'press_key', 'type_text', 'set_v
   }
   for (const reason of ['resume', 'fork', 'reload']) {
     activeTools = [...names];
-    await handlers.get('session_start')({ reason }, {});
+    branchEntries.push({ type: 'message', message: { role: 'toolResult', toolName: 'macuse_tools', details: { added: ['set_value'] } } });
+    await handlers.get('session_start')({ reason }, sessionContext);
     const resetTools = activeTools.filter((name) => names.includes(name)).sort();
     if (JSON.stringify(resetTools) !== JSON.stringify(expectedInitialTools)) throw new Error(reason + ' did not reset lazy macuse tools');
   }
   if (messages.length !== 3 || messages.some((message) => message.customType !== 'macuse-tools-reset' || message.display !== false || !message.content.includes('Call macuse_tools again'))) throw new Error('session boundary reset note is missing or visible');
   activeTools = [...names];
-  await handlers.get('session_start')({ reason: 'new' }, {});
+  await handlers.get('session_start')({ reason: 'reload' }, sessionContext);
+  if (messages.length !== 3) throw new Error('repeated boundaries duplicated the reset note without a new activation');
+  branchEntries.length = 0;
+  await handlers.get('session_start')({ reason: 'new' }, sessionContext);
   if (messages.length !== 3) throw new Error('new sessions should not receive a stale-activation note');
   const invalidObservation = { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [] };
   const invalidUrlObservation = { ...invalidObservation, allowlist: [{ scope: 'url' }] };
@@ -361,16 +376,21 @@ if (normalizePressKeyValue(',', ['COMMAND']) !== 'super+comma') throw new Error(
 if (normalizePressKeyValue('Command+,') !== 'super+comma') throw new Error('Command+, key normalization failed');
 const normalizedArgs = normalizeToolArguments({ app: 'CueboxItem24', key: 'Comma', modifiers: ['COMMAND'] });
 if (normalizedArgs.key !== 'super+comma' || 'modifiers' in normalizedArgs) throw new Error('press_key modifiers were not normalized away');
-const expectedUpstreamTools = ['list_apps', 'get_app_state', 'click', 'perform_secondary_action', 'set_value', 'select_text', 'scroll', 'drag', 'press_key', 'type_text', 'event_stream_start', 'event_stream_status', 'event_stream_stop', 'computer_history_pause', 'computer_history_resume', 'computer_history_status', 'computer_history_get_settings', 'computer_history_update_settings'];
-if (JSON.stringify(Object.keys(UPSTREAM_TOOL_ARG_KEYS).sort()) !== JSON.stringify(expectedUpstreamTools.sort())) throw new Error('upstream argument boundary does not cover all 18 tools');
+const expectedUpstreamTools = Object.values(jiti('./tools/macuse-utils.mjs').MCP_SERVERS).flatMap((server) => server.tools).sort();
+if (JSON.stringify(Object.keys(UPSTREAM_TOOL_ARG_KEYS).sort()) !== JSON.stringify(expectedUpstreamTools)) throw new Error('upstream argument boundary does not cover all 18 tools');
 for (const [tool, keys] of Object.entries(UPSTREAM_TOOL_ARG_KEYS)) {
   const legal = Object.fromEntries(keys.map((key, index) => [key, index]));
-  const picked = pickUpstreamToolArgs(tool, { ...legal, elementId: 'host-only', allowMutating: true, notARealArg: 'unknown' });
-  if (JSON.stringify(picked) !== JSON.stringify(legal)) throw new Error(tool + ' forwarded a host-only or unknown argument');
+  const picked = pickUpstreamToolArgs(tool, { ...legal, elementId: 'host-only', allowMutating: true });
+  if (JSON.stringify(picked) !== JSON.stringify(legal)) throw new Error(tool + ' forwarded a host-only argument');
 }
-let rejectedUnknownTool = false;
-try { pickUpstreamToolArgs('not_a_tool', {}); } catch { rejectedUnknownTool = true; }
-if (!rejectedUnknownTool) throw new Error('upstream argument boundary accepted an unknown tool');
+for (const [tool, args, expected] of [
+  ['click', { app: 'Activity Monitor', x: 1, y: 1, mouseButton: 'right' }, /Unsupported arguments for click: mouseButton/],
+  ['constructor', {}, /Unsupported upstream Computer Use tool: constructor/],
+]) {
+  let rejected = false;
+  try { pickUpstreamToolArgs(tool, args); } catch (error) { rejected = expected.test(error.message || ''); }
+  if (!rejected) throw new Error('upstream argument boundary accepted invalid input for ' + tool);
+}
 const stopSentinelResult = { content: [{ type: 'text', text: 'This application session has been explicitly stopped by the user for this turn. Stop your work and send a final message noting they stopped the session and you\'re ready to continue if they want you to. Computer Use can be used again in the next assistant turn.' }] };
 const stopped = filterToolResult(stopSentinelResult, { maxTextChars: 1000 });
 const stoppedText = stopped.content[0]?.text || '';
@@ -646,7 +666,7 @@ async function main() {
     const directDiscover = run('direct raw-MCP discover', process.execPath, ['tools/probe-codex-computer-use-mcp.mjs', 'discover'], { timeoutMs: 120_000, verbose: opts.verbose });
     if (!directDiscover.includes('Tools (10):') || !directDiscover.includes('list_apps')) throw new Error('direct discover did not show expected tools');
     printPass('direct raw-MCP discover', 'expected tool family found');
-    printPass('direct raw Computer History contract', runRawComputerHistoryContractSmoke());
+    printPass('direct raw tool argument contracts', runRawToolContractSmoke());
   }
 
   const status = parseJsonOutput('app-server status', run('app-server status', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'status', '--quiet'], { timeoutMs: 180_000, verbose: opts.verbose }));

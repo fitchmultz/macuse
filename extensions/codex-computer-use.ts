@@ -413,10 +413,16 @@ function registerAuxiliaryTool(pi: ExtensionAPI, spec: ToolSpec & { server: "eve
 }
 
 export default function (pi: ExtensionAPI) {
-	pi.on("session_start", (event) => {
+	pi.on("session_start", (event, ctx) => {
 		sessionElementCache.clear();
 		pi.setActiveTools(pi.getActiveTools().filter((name) => !lazyToolNameSet.has(name)));
-		if (event.reason === "resume" || event.reason === "fork" || event.reason === "reload") {
+		const needsResetNote = [...ctx.sessionManager.getBranch()].reverse().find((entry) => {
+			if (entry.type === "custom" && entry.customType === "macuse-tools-reset") return true;
+			if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.toolName !== "macuse_tools") return false;
+			const added = (entry.message.details as { added?: unknown } | undefined)?.added;
+			return Array.isArray(added) && added.length > 0;
+		});
+		if ((event.reason === "resume" || event.reason === "fork" || event.reason === "reload") && needsResetNote?.type === "message") {
 			pi.sendMessage({ customType: "macuse-tools-reset", content: "macuse reset direct, recording, history, and recovery tools at this session boundary. Call macuse_tools again before using them.", display: false });
 		}
 	});

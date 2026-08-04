@@ -19,8 +19,17 @@ export const UPSTREAM_TOOL_ARG_KEYS = Object.freeze({
 	computer_history_update_settings: ["observation", "showMenuBarIcon"],
 });
 
+const HOST_ONLY_TOOL_ARG_KEYS = new Set([
+	"element", "elementId", "element_id", "elementDescription", "element_description", "role", "elementRole", "name", "elementName", "targets",
+	"expectedRole", "expectedName", "expectedDescription", "expectedId", "expectedValue", "approval", "allowMutating", "safetyNote", "allowPointer",
+	"allowPointerClick", "allowPointerDrag", "allowRecording", "allowPrivacyChange", "requireStateChange", "includeImage", "saveImagePath", "detail",
+	"targetScope", "maxTextChars", "toolTimeoutMs", "trackFocus", "runningOnly", "filter", "screenshotStep", "modifiers",
+]);
+
 export function pickUpstreamToolArgs(tool, args) {
+	if (!Object.hasOwn(UPSTREAM_TOOL_ARG_KEYS, tool)) throw new Error(`Unsupported upstream Computer Use tool: ${tool}`);
 	const keys = UPSTREAM_TOOL_ARG_KEYS[tool];
-	if (!keys) throw new Error(`Unsupported upstream Computer Use tool: ${tool}`);
+	const unknown = Object.keys(args).filter((key) => !keys.includes(key) && !HOST_ONLY_TOOL_ARG_KEYS.has(key));
+	if (unknown.length) throw new Error(`Unsupported arguments for ${tool}: ${unknown.join(", ")}`);
 	return Object.fromEntries(keys.filter((key) => Object.hasOwn(args, key)).map((key) => [key, args[key]]));
 }
