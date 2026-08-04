@@ -375,12 +375,7 @@ async function executeAuxiliaryTool(tool: string, server: "event-stream" | "comp
 		if (input.allowPrivacyChange !== true || !note) throw new Error(`${tool} requires allowPrivacyChange:true and a non-empty safetyNote.`);
 		validateComputerHistoryObservation(input, tool);
 	}
-	const args = { ...input };
-	delete args.allowRecording;
-	delete args.allowPrivacyChange;
-	delete args.safetyNote;
-	delete args.toolTimeoutMs;
-	const call = await getClient().callTool(tool, args, { approval: "inherit", timeoutMs: asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS), signal, server });
+	const call = await getClient().callTool(tool, input, { approval: "inherit", timeoutMs: asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS), signal, server });
 	const result = filterToolResult(call.result, { maxTextChars: DEFAULT_MAX_TEXT_CHARS });
 	return {
 		content: result.content as (TextContentBlock | ImageContentBlock)[],
@@ -416,7 +411,6 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", (event, ctx) => {
 		sessionElementCache.clear();
 		pi.setActiveTools(pi.getActiveTools().filter((name) => !lazyToolNameSet.has(name)));
-		if (event.reason !== "resume" && event.reason !== "fork" && event.reason !== "reload") return;
 		const latestActivationMarker = [...ctx.sessionManager.getBranch()].reverse().find((entry) => {
 			if (entry.type === "custom_message" && entry.customType === "macuse-tools-reset") return true;
 			if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.toolName !== "macuse_tools") return false;

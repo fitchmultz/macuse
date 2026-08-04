@@ -342,9 +342,12 @@ for (const name of ['perform_secondary_action', 'press_key', 'type_text', 'set_v
   activeTools = [...names];
   await handlers.get('session_start')({ reason: 'reload' }, sessionContext);
   if (messages.length !== 3) throw new Error('repeated boundaries duplicated the reset note without a new activation');
+  branchEntries.push({ type: 'message', message: { role: 'toolResult', toolName: 'macuse_tools', details: { added: ['set_value'] } } });
+  await handlers.get('session_start')({ reason: 'startup' }, sessionContext);
+  if (messages.length !== 4) throw new Error('startup continuation did not correct a stale activation claim');
   branchEntries.length = 0;
   await handlers.get('session_start')({ reason: 'new' }, sessionContext);
-  if (messages.length !== 3) throw new Error('new sessions should not receive a stale-activation note');
+  if (messages.length !== 4) throw new Error('empty new sessions should not receive a stale-activation note');
   const invalidObservation = { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [] };
   const invalidUrlObservation = { ...invalidObservation, allowlist: [{ scope: 'url' }] };
   const schemeUrlObservation = { ...invalidObservation, allowlist: [{ scope: 'url', urlDomain: 'https://example.com' }] };
