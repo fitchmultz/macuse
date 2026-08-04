@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { accessSync, constants, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, DEFAULT_CODEX_BIN, MCP_SERVERS, VERSION, mcpServerConfigs } from './macuse-utils.mjs';
+import { pickUpstreamToolArgs } from '../extensions/codex-computer-use-modules/upstream-tool-args.mjs';
 import {
   contentText,
   appServerSessionRecoverySummary,
@@ -182,13 +183,6 @@ function listAppsHostOptions(args, opts = {}) {
     filter: typeof args?.filter === 'string' ? args.filter : opts.filter,
     maxTextChars: opts.maxTextChars ?? DEFAULT_MAX_TEXT_CHARS,
   };
-}
-
-function stripListAppsHostArguments(args) {
-  const normalized = { ...args };
-  delete normalized.runningOnly;
-  delete normalized.filter;
-  return normalized;
 }
 
 function resolveElementTarget(args, cache) {
@@ -713,7 +707,7 @@ async function runTool(opts) {
     let args = opts.arguments;
     if (targetsElement(opts.tool, args)) await refreshElementCache(client, threadId, args, elementCache, opts);
     args = resolveElementTarget(args, elementCache);
-    const callArgs = opts.tool === 'list_apps' ? stripListAppsHostArguments(args) : args;
+    const callArgs = pickUpstreamToolArgs(opts.tool, args);
     const result = await client.request('mcpServer/tool/call', {
       threadId,
       server: opts.server,
@@ -752,7 +746,7 @@ async function runSequence(opts) {
       try {
         if (targetsElement(step.tool, stepArgs)) await refreshElementCache(client, threadId, stepArgs, elementCache, opts);
         stepArgs = resolveElementTarget(stepArgs, elementCache);
-        const callArgs = step.tool === 'list_apps' ? stripListAppsHostArguments(stepArgs) : stepArgs;
+        const callArgs = pickUpstreamToolArgs(step.tool, stepArgs);
         const result = await client.request('mcpServer/tool/call', {
           threadId,
           server: 'computer-use',

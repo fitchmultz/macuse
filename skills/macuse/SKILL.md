@@ -34,7 +34,7 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
 
 ## Default workflow
 
-1. Start read-only: call `list_apps({ runningOnly: true })` or use `filter` when the target app name is uncertain. `list_apps`, `get_app_state`, `macuse_sequence`, and `macuse_tools` start active; use `macuse_tools({ tools: [...] })` to enable only the exact direct, recording, history, or recovery tools needed.
+1. Start read-only: call `list_apps({ runningOnly: true })` or use `filter` when the target app name is uncertain. `list_apps`, `get_app_state`, `macuse_sequence`, and `macuse_tools` start active; use `macuse_tools({ tools: [...] })` to enable only the exact direct, recording, history, or recovery tools needed. New-session, resume, fork, and reload boundaries reset activation, so enable them again afterward.
 2. Inspect before acting: call `get_app_state({ app, detail: "minimal", targetScope: "main" })`; use `detail: "compact"` only when you need more target context. Focus capture is opt-in with `trackFocus: true`. Mutating tools and sequences capture native frontmost focus before/after and report whether it changed; they do not auto-restore frontmost focus. If Computer Use reports a stopped app session or transport-closed state, read-only calls auto-restart only the macuse app-server session once; enable `macuse_restart` with `macuse_tools`, then call it before retrying when an explicit Computer Use helper restart is needed.
 3. Prefer stable targets in this order:
    - `elementId`

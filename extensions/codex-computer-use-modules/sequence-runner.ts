@@ -52,7 +52,6 @@ import {
 	resolveElementRoleName,
 	resolveElementTargetFallbacks,
 	stateSummary,
-	stripHostOnlyKeys,
 	targetStateChanged,
 	updateElementCache,
 	validateIndexedTarget,
@@ -231,7 +230,7 @@ export async function executeSequence(
 					const targetWarnings = validateIndexedTarget(stepArgs, elementCache, hasStableSelector(originalStepArgs));
 					targetResolution = describeTargetResolution(originalStepArgs, stepArgs, elementCache);
 					let callTool = step.tool;
-					let callArgs = stripHostOnlyKeys(stepArgs);
+					let callArgs = stepArgs;
 					if (step.tool === "set_value" && stepArgs.value === "" && typeof stepArgs.app === "string") {
 						const setValueTarget = (elementCache.get(stepArgs.app) ?? []).find((element) => element.index === stepArgs.element_index);
 						const targetCanUseClearControl = Boolean(setValueTarget && (setValueTarget.role === "search" || setValueTarget.tags.includes("search-field")));

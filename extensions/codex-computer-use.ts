@@ -413,9 +413,12 @@ function registerAuxiliaryTool(pi: ExtensionAPI, spec: ToolSpec & { server: "eve
 }
 
 export default function (pi: ExtensionAPI) {
-	pi.on("session_start", () => {
+	pi.on("session_start", (event) => {
 		sessionElementCache.clear();
 		pi.setActiveTools(pi.getActiveTools().filter((name) => !lazyToolNameSet.has(name)));
+		if (event.reason === "resume" || event.reason === "fork" || event.reason === "reload") {
+			pi.sendMessage({ customType: "macuse-tools-reset", content: "macuse reset direct, recording, history, and recovery tools at this session boundary. Call macuse_tools again before using them.", display: false });
+		}
 	});
 	pi.on("session_shutdown", async () => {
 		sessionElementCache.clear();
@@ -504,10 +507,10 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "macuse_tools",
 		label: "macuse Tools",
-		description: "Enable exact registered macuse tools for this session. Load only the tools needed for the current task.",
+		description: "Enable exact registered macuse tools until the next session start. Load only the tools needed for the current task.",
 		promptSnippet: "Enable inactive macuse tools for direct Computer Use, recording, history, or recovery",
 		promptGuidelines: [
-			"Use macuse_tools to enable only the exact inactive macuse tools needed; enabled tools stay active for the session.",
+			"Use macuse_tools to enable only the exact inactive macuse tools needed; resume, fork, reload, and new-session boundaries reset them.",
 			"macuse_tools only changes visibility; direct mutations still require recent get_app_state evidence, allowMutating:true, and a concrete safetyNote.",
 		],
 		parameters: loadToolsParam,
@@ -519,7 +522,7 @@ export default function (pi: ExtensionAPI) {
 			const added = params.tools.filter((name) => !active.includes(name) && enabled.includes(name));
 			const unavailable = params.tools.filter((name) => !enabled.includes(name));
 			const text = [
-				added.length ? `Enabled macuse tools: ${added.join(", ")}.` : "No new macuse tools enabled.",
+				added.length ? `Enabled macuse tools until the next session start: ${added.join(", ")}.` : "No new macuse tools enabled.",
 				unavailable.length ? `Unavailable or excluded: ${unavailable.join(", ")}.` : "",
 			].filter(Boolean).join(" ");
 			return { content: [{ type: "text" as const, text }], details: { added, unavailable } };

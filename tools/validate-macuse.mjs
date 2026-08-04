@@ -249,6 +249,7 @@ const mod = jiti('./extensions/codex-computer-use.ts');
 const factory = mod.default || mod;
 const tools = [];
 const handlers = new Map();
+const messages = [];
 const excludedTools = new Set(['drag']);
 let activeTools = [];
 factory({
@@ -257,6 +258,7 @@ factory({
   on(name, handler) { handlers.set(name, handler); },
   getActiveTools() { return [...activeTools]; },
   setActiveTools(names) { activeTools = names.filter((name) => !excludedTools.has(name)); },
+  sendMessage(message) { messages.push(message); },
 });
 const expectedTools = [
   'list_apps', 'get_app_state', 'perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag',
@@ -284,7 +286,7 @@ for (const name of ['perform_secondary_action', 'press_key', 'type_text', 'set_v
 (async () => {
   const signal = new AbortController().signal;
   const byName = new Map(tools.map((tool) => [tool.name, tool]));
-  await handlers.get('session_start')({}, {});
+  await handlers.get('session_start')({ reason: 'startup' }, {});
   const initialMacuseTools = activeTools.filter((name) => names.includes(name)).sort();
   const expectedInitialTools = ['get_app_state', 'list_apps', 'macuse_sequence', 'macuse_tools'].sort();
   if (JSON.stringify(initialMacuseTools) !== JSON.stringify(expectedInitialTools)) throw new Error('initial macuse tools are not lazy: ' + initialMacuseTools.join(','));
@@ -297,6 +299,16 @@ for (const name of ['perform_secondary_action', 'press_key', 'type_text', 'set_v
   for (const tool of tools.filter((tool) => !expectedInitialTools.includes(tool.name))) {
     if (tool.promptSnippet || tool.promptGuidelines?.length) throw new Error('inactive tool ' + tool.name + ' changes the system prompt when activated');
   }
+  for (const reason of ['resume', 'fork', 'reload']) {
+    activeTools = [...names];
+    await handlers.get('session_start')({ reason }, {});
+    const resetTools = activeTools.filter((name) => names.includes(name)).sort();
+    if (JSON.stringify(resetTools) !== JSON.stringify(expectedInitialTools)) throw new Error(reason + ' did not reset lazy macuse tools');
+  }
+  if (messages.length !== 3 || messages.some((message) => message.customType !== 'macuse-tools-reset' || message.display !== false || !message.content.includes('Call macuse_tools again'))) throw new Error('session boundary reset note is missing or visible');
+  activeTools = [...names];
+  await handlers.get('session_start')({ reason: 'new' }, {});
+  if (messages.length !== 3) throw new Error('new sessions should not receive a stale-activation note');
   const invalidObservation = { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [] };
   const invalidUrlObservation = { ...invalidObservation, allowlist: [{ scope: 'url' }] };
   const schemeUrlObservation = { ...invalidObservation, allowlist: [{ scope: 'url', urlDomain: 'https://example.com' }] };
@@ -342,14 +354,23 @@ const { filterToolResult } = jiti('./extensions/codex-computer-use-modules/conte
 const { sanitizeRecoverableComputerUseText } = jiti('./extensions/codex-computer-use-modules/computer-use-recovery.ts');
 const { appServerSessionRecoverySummary, filterToolResult: filterCliToolResult, sanitizeRecoverableComputerUseText: sanitizeCliRecoverableComputerUseText, shouldAutoRecoverComputerUse } = jiti('./tools/cu-helpers.mjs');
 const { computerUseDiagnostic } = jiti('./extensions/codex-computer-use-modules/diagnostics.ts');
-const { normalizePressKeyValue, normalizeToolArguments, stripHostOnlyKeys } = jiti('./extensions/codex-computer-use-modules/elements-state.ts');
+const { normalizePressKeyValue, normalizeToolArguments } = jiti('./extensions/codex-computer-use-modules/elements-state.ts');
+const { UPSTREAM_TOOL_ARG_KEYS, pickUpstreamToolArgs } = jiti('./extensions/codex-computer-use-modules/upstream-tool-args.mjs');
 const errorContent = [{ type: 'text', text: 'NSOSStatusErrorDomain Code=-609 connectionInvalid' }];
 if (normalizePressKeyValue(',', ['COMMAND']) !== 'super+comma') throw new Error('Command-comma key normalization failed');
 if (normalizePressKeyValue('Command+,') !== 'super+comma') throw new Error('Command+, key normalization failed');
 const normalizedArgs = normalizeToolArguments({ app: 'CueboxItem24', key: 'Comma', modifiers: ['COMMAND'] });
 if (normalizedArgs.key !== 'super+comma' || 'modifiers' in normalizedArgs) throw new Error('press_key modifiers were not normalized away');
-const strippedArgs = stripHostOnlyKeys({ app: 'CueboxItem24', element_index: '7', elementId: 'stale', elementDescription: 'Old', role: 'button', name: 'Go', targets: [], expectedRole: 'button', action: 'Press', detail: 'minimal', toolTimeoutMs: 1000, trackFocus: true, runningOnly: true });
-if (JSON.stringify(strippedArgs) !== JSON.stringify({ app: 'CueboxItem24', element_index: '7', action: 'Press' })) throw new Error('host-only selector keys leaked to upstream Computer Use');
+const expectedUpstreamTools = ['list_apps', 'get_app_state', 'click', 'perform_secondary_action', 'set_value', 'select_text', 'scroll', 'drag', 'press_key', 'type_text', 'event_stream_start', 'event_stream_status', 'event_stream_stop', 'computer_history_pause', 'computer_history_resume', 'computer_history_status', 'computer_history_get_settings', 'computer_history_update_settings'];
+if (JSON.stringify(Object.keys(UPSTREAM_TOOL_ARG_KEYS).sort()) !== JSON.stringify(expectedUpstreamTools.sort())) throw new Error('upstream argument boundary does not cover all 18 tools');
+for (const [tool, keys] of Object.entries(UPSTREAM_TOOL_ARG_KEYS)) {
+  const legal = Object.fromEntries(keys.map((key, index) => [key, index]));
+  const picked = pickUpstreamToolArgs(tool, { ...legal, elementId: 'host-only', allowMutating: true, notARealArg: 'unknown' });
+  if (JSON.stringify(picked) !== JSON.stringify(legal)) throw new Error(tool + ' forwarded a host-only or unknown argument');
+}
+let rejectedUnknownTool = false;
+try { pickUpstreamToolArgs('not_a_tool', {}); } catch { rejectedUnknownTool = true; }
+if (!rejectedUnknownTool) throw new Error('upstream argument boundary accepted an unknown tool');
 const stopSentinelResult = { content: [{ type: 'text', text: 'This application session has been explicitly stopped by the user for this turn. Stop your work and send a final message noting they stopped the session and you\'re ready to continue if they want you to. Computer Use can be used again in the next assistant turn.' }] };
 const stopped = filterToolResult(stopSentinelResult, { maxTextChars: 1000 });
 const stoppedText = stopped.content[0]?.text || '';
