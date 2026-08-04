@@ -728,12 +728,6 @@ export function validateIndexedTarget(args: Record<string, JsonValue>, cache: Ma
 	return [];
 }
 
-export function stripHostOnlyKeys(args: Record<string, JsonValue>): Record<string, JsonValue> {
-	const normalized = { ...args };
-	for (const key of ["element", "elementId", "element_id", "elementDescription", "element_description", "role", "elementRole", "name", "elementName", "targets", "expectedRole", "expectedName", "expectedDescription", "expectedId", "expectedValue", "approval", "allowMutating", "safetyNote", "allowPointer", "requireStateChange", "includeImage", "saveImagePath", "detail", "targetScope", "maxTextChars", "toolTimeoutMs", "trackFocus", "runningOnly", "filter", "screenshotStep", "allowPointerClick", "allowPointerDrag"] as const) delete normalized[key];
-	return normalized;
-}
-
 export function describeTargetResolution(originalArgs: Record<string, JsonValue>, resolvedArgs: Record<string, JsonValue>, cache: Map<string, ElementInfo[]>): string | undefined {
 	if (typeof resolvedArgs.app !== "string" || typeof resolvedArgs.element_index !== "string") return undefined;
 	const element = (cache.get(resolvedArgs.app) ?? []).find((item) => item.index === resolvedArgs.element_index);

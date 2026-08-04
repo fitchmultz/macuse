@@ -20,7 +20,7 @@ Allowed today:
 - direct `perform_secondary_action`, `press_key`, `type_text`, `set_value`, `select_text`, `scroll`, `click`, and `drag` only with explicit `allowMutating: true`, a concrete `safetyNote`, and a recent `get_app_state`; direct pointer tools also require `allowPointer: true`
 - `macuse_sequence` with the same mutation guard, ordered evidence, and `allowPointerClick` / `allowPointerDrag` for pointer steps
 
-The packaged pi extension registers all 18 tools in its three configured MCP families, plus `macuse_sequence`, `macuse_tools`, and `macuse_restart`. Only `list_apps`, `get_app_state`, `macuse_sequence`, and `macuse_tools` start active; the loader enables exact additional tools additively. The separate Messages MCP is intentionally excluded because sends cross a hard safety boundary. `turn-ended` remains excluded because no payload contract is published, and the private `@oai/sky` Node REPL adapter is not MCP and is not exposed.
+The packaged pi extension registers all 18 tools in its three configured MCP families, plus `macuse_sequence`, `macuse_tools`, and `macuse_restart`. Only `list_apps`, `get_app_state`, `macuse_sequence`, and `macuse_tools` start active; the loader enables exact additional tools additively until startup, new-session, resume, fork, or reload resets activation. The separate Messages MCP is intentionally excluded because sends cross a hard safety boundary. `turn-ended` remains excluded because no payload contract is published, and the private `@oai/sky` Node REPL adapter is not MCP and is not exposed.
 
 ## Preconditions before any mutating action
 

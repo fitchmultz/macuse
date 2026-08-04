@@ -4,6 +4,7 @@ import {
 	DEFAULT_MAX_TEXT_CHARS,
 	DEFAULT_TOOL_TIMEOUT_MS,
 	READ_ONLY_TOOLS,
+	WAIT_TOOLS,
 	asInt,
 	bridgeDetails,
 	errorMessage,
@@ -25,6 +26,7 @@ import {
 	type TextContentBlock,
 } from "./core";
 import { AppServerClient } from "./app-server-client";
+import { pickUpstreamToolArgs } from "./upstream-tool-args.mjs";
 import { filterToolResult, isTextBlock, toolResultText } from "./content";
 import { appendComputerUseDiagnostic, appendImageWarning, failureResult } from "./diagnostics";
 import { focusSnapshot } from "./apps";
@@ -52,7 +54,6 @@ import {
 	resolveElementRoleName,
 	resolveElementTargetFallbacks,
 	stateSummary,
-	stripHostOnlyKeys,
 	targetStateChanged,
 	updateElementCache,
 	validateIndexedTarget,
@@ -143,6 +144,10 @@ export async function executeSequence(
 			const safetyNote = String(input.safetyNote || "").trim();
 			if (safetyNote.length < 20) throw new Error(`${toolName} mutations require a safetyNote describing target, intended effect, and stop boundary.`);
 		}
+		for (const step of steps) {
+			if (Object.hasOwn(step.arguments, "approval")) throw new Error(`${toolName} step arguments cannot set approval; use the top-level approval option.`);
+			if (!WAIT_TOOLS.has(step.tool)) pickUpstreamToolArgs(step.tool, step.arguments);
+		}
 		const approval = input.approval || "inherit";
 		onUpdate?.({ content: [{ type: "text", text: `Running ${toolName} through persistent Codex Computer Use (${steps.length} step${steps.length === 1 ? "" : "s"}, mutating=${mutating})...` }], details: {} });
 		const toolTimeoutMs = asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
@@ -231,7 +236,7 @@ export async function executeSequence(
 					const targetWarnings = validateIndexedTarget(stepArgs, elementCache, hasStableSelector(originalStepArgs));
 					targetResolution = describeTargetResolution(originalStepArgs, stepArgs, elementCache);
 					let callTool = step.tool;
-					let callArgs = stripHostOnlyKeys(stepArgs);
+					let callArgs = stepArgs;
 					if (step.tool === "set_value" && stepArgs.value === "" && typeof stepArgs.app === "string") {
 						const setValueTarget = (elementCache.get(stepArgs.app) ?? []).find((element) => element.index === stepArgs.element_index);
 						const targetCanUseClearControl = Boolean(setValueTarget && (setValueTarget.role === "search" || setValueTarget.tags.includes("search-field")));

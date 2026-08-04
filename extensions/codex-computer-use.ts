@@ -375,12 +375,7 @@ async function executeAuxiliaryTool(tool: string, server: "event-stream" | "comp
 		if (input.allowPrivacyChange !== true || !note) throw new Error(`${tool} requires allowPrivacyChange:true and a non-empty safetyNote.`);
 		validateComputerHistoryObservation(input, tool);
 	}
-	const args = { ...input };
-	delete args.allowRecording;
-	delete args.allowPrivacyChange;
-	delete args.safetyNote;
-	delete args.toolTimeoutMs;
-	const call = await getClient().callTool(tool, args, { approval: "inherit", timeoutMs: asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS), signal, server });
+	const call = await getClient().callTool(tool, input, { approval: "inherit", timeoutMs: asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS), signal, server });
 	const result = filterToolResult(call.result, { maxTextChars: DEFAULT_MAX_TEXT_CHARS });
 	return {
 		content: result.content as (TextContentBlock | ImageContentBlock)[],
@@ -413,9 +408,18 @@ function registerAuxiliaryTool(pi: ExtensionAPI, spec: ToolSpec & { server: "eve
 }
 
 export default function (pi: ExtensionAPI) {
-	pi.on("session_start", () => {
+	pi.on("session_start", (event, ctx) => {
 		sessionElementCache.clear();
 		pi.setActiveTools(pi.getActiveTools().filter((name) => !lazyToolNameSet.has(name)));
+		const latestActivationMarker = ctx.sessionManager.getBranch().findLast((entry) => {
+			if (entry.type === "custom_message" && entry.customType === "macuse-tools-reset") return true;
+			if (entry.type !== "message" || entry.message.role !== "toolResult" || entry.message.toolName !== "macuse_tools") return false;
+			const added = (entry.message.details as { added?: unknown } | undefined)?.added;
+			return Array.isArray(added) && added.length > 0;
+		});
+		if (latestActivationMarker?.type === "message") {
+			pi.sendMessage({ customType: "macuse-tools-reset", content: "macuse reset direct, recording, history, and recovery tools at this session boundary. Call macuse_tools again before using them.", display: false });
+		}
 	});
 	pi.on("session_shutdown", async () => {
 		sessionElementCache.clear();
@@ -504,10 +508,10 @@ export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "macuse_tools",
 		label: "macuse Tools",
-		description: "Enable exact registered macuse tools for this session. Load only the tools needed for the current task.",
+		description: "Enable exact registered macuse tools until the next session start. Load only the tools needed for the current task.",
 		promptSnippet: "Enable inactive macuse tools for direct Computer Use, recording, history, or recovery",
 		promptGuidelines: [
-			"Use macuse_tools to enable only the exact inactive macuse tools needed; enabled tools stay active for the session.",
+			"Use macuse_tools to enable only the exact inactive macuse tools needed; resume, fork, reload, and new-session boundaries reset them.",
 			"macuse_tools only changes visibility; direct mutations still require recent get_app_state evidence, allowMutating:true, and a concrete safetyNote.",
 		],
 		parameters: loadToolsParam,
@@ -519,7 +523,7 @@ export default function (pi: ExtensionAPI) {
 			const added = params.tools.filter((name) => !active.includes(name) && enabled.includes(name));
 			const unavailable = params.tools.filter((name) => !enabled.includes(name));
 			const text = [
-				added.length ? `Enabled macuse tools: ${added.join(", ")}.` : "No new macuse tools enabled.",
+				added.length ? `Enabled macuse tools until the next session start: ${added.join(", ")}.` : "No new macuse tools enabled.",
 				unavailable.length ? `Unavailable or excluded: ${unavailable.join(", ")}.` : "",
 			].filter(Boolean).join(" ");
 			return { content: [{ type: "text" as const, text }], details: { added, unavailable } };

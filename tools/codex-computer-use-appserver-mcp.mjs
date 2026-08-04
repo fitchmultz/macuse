@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import process from 'node:process';
 import { DEFAULT_CODEX_BIN, MCP_SERVERS, VERSION, mcpServerConfigs } from './macuse-utils.mjs';
+import { pickUpstreamToolArgs } from '../extensions/codex-computer-use-modules/upstream-tool-args.mjs';
 import {
   appServerSessionRecoverySummary,
   getMousePosition,
@@ -283,7 +284,7 @@ class AppServerClient {
         this.acceptedElicitations = 0;
         try {
           const server = MCP_SERVERS['event-stream'].tools.includes(tool) ? 'event-stream' : MCP_SERVERS['computer-history'].tools.includes(tool) ? 'computer-history' : 'computer-use';
-          return sanitizeComputerUseResult(await this.request('mcpServer/tool/call', { threadId, server, tool, arguments: stripWrapperArgs(args) }, REQUEST_TIMEOUT_MS));
+          return sanitizeComputerUseResult(await this.request('mcpServer/tool/call', { threadId, server, tool, arguments: pickUpstreamToolArgs(tool, args) }, REQUEST_TIMEOUT_MS));
         } finally {
           this.currentApproval = 'deny';
         }
@@ -322,16 +323,6 @@ function validateAuxiliaryGuard(tool, args) {
     || !validEntries(observation.allowlist) || !validEntries(observation.blocklist)) {
     throw new Error(`${tool} requires all Computer History settings fields and valid scope-specific allowlist/blocklist entries`);
   }
-}
-
-function stripWrapperArgs(args) {
-  const out = { ...args };
-  delete out.approval;
-  delete out.allowPointer;
-  delete out.allowRecording;
-  delete out.allowPrivacyChange;
-  delete out.safetyNote;
-  return out;
 }
 
 let clientSupportsElicitation = false;
@@ -399,6 +390,7 @@ async function handleRequest(message) {
       let args = normalizeToolArguments(params.arguments || {});
       if (!TOOL_SCHEMAS[name]) throw new Error(`unknown tool: ${name}`);
       validateAuxiliaryGuard(name, args);
+      pickUpstreamToolArgs(name, args);
       if (POINTER_TOOLS.has(name) && args.allowPointer !== true) throw new Error(`${name} requires allowPointer:true; prefer non-pointer actions when possible`);
       if (targetsElement(name, args)) {
         const refresh = await appServer.callTool('get_app_state', { app: args.app, approval: args.approval || 'inherit' });

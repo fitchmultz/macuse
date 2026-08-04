@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { accessSync, constants, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, DEFAULT_CODEX_BIN, MCP_SERVERS, VERSION, mcpServerConfigs } from './macuse-utils.mjs';
+import { pickUpstreamToolArgs } from '../extensions/codex-computer-use-modules/upstream-tool-args.mjs';
 import {
   contentText,
   appServerSessionRecoverySummary,
@@ -184,13 +185,6 @@ function listAppsHostOptions(args, opts = {}) {
   };
 }
 
-function stripListAppsHostArguments(args) {
-  const normalized = { ...args };
-  delete normalized.runningOnly;
-  delete normalized.filter;
-  return normalized;
-}
-
 function resolveElementTarget(args, cache) {
   return resolveElementTargetHelper(args, cache, {
     closestSuggestions: true,
@@ -232,6 +226,14 @@ function normalizeStringList(value, name) {
   if (typeof value === 'string') return [value];
   if (Array.isArray(value) && value.every((item) => typeof item === 'string')) return value;
   throw new UsageError(`${name} must be a string or array of strings`);
+}
+
+function validateUpstreamToolArgs(tool, args) {
+  try {
+    pickUpstreamToolArgs(tool, args);
+  } catch (error) {
+    throw new UsageError(error.message || String(error));
+  }
 }
 
 function validateAuxiliaryGuard(tool, args, opts) {
@@ -350,6 +352,8 @@ function parseArgs(argv) {
   if (!MCP_SERVERS[opts.server]) throw new UsageError('--server must be computer-use, event-stream, or computer-history');
   if (opts.tool && !MCP_SERVERS[opts.server].tools.includes(opts.tool)) throw new UsageError(`tool ${opts.tool} is not exposed by ${opts.server}`);
   validateAuxiliaryGuard(opts.tool, opts.arguments, opts);
+  if (opts.tool && Object.hasOwn(opts.arguments, 'approval')) throw new UsageError('--arguments-json cannot set approval; use --approval');
+  if (opts.tool) validateUpstreamToolArgs(opts.tool, opts.arguments);
   if (opts.approval && !['inherit', 'accept-all', 'accept-once', 'deny'].includes(opts.approval)) {
     throw new UsageError('--approval must be inherit, accept-all, accept-once, or deny');
   }
@@ -357,9 +361,12 @@ function parseArgs(argv) {
     throw new UsageError(`tool ${opts.tool} is not read-only; pass --allow-mutating to acknowledge GUI mutation`);
   }
   for (const [index, step] of opts.steps.entries()) {
+    validateAuxiliaryGuard(step.tool, step.arguments, opts);
+    if (Object.hasOwn(step.arguments, 'approval')) throw new UsageError(`sequence step ${index} arguments cannot set approval; use --approval`);
     if (!READ_ONLY_TOOLS.has(step.tool) && !opts.allowMutating) {
       throw new UsageError(`sequence step ${index} tool ${step.tool} is not read-only; pass --allow-mutating to acknowledge GUI mutation`);
     }
+    validateUpstreamToolArgs(step.tool, step.arguments);
   }
   return opts;
 }
@@ -713,7 +720,7 @@ async function runTool(opts) {
     let args = opts.arguments;
     if (targetsElement(opts.tool, args)) await refreshElementCache(client, threadId, args, elementCache, opts);
     args = resolveElementTarget(args, elementCache);
-    const callArgs = opts.tool === 'list_apps' ? stripListAppsHostArguments(args) : args;
+    const callArgs = pickUpstreamToolArgs(opts.tool, args);
     const result = await client.request('mcpServer/tool/call', {
       threadId,
       server: opts.server,
@@ -752,7 +759,7 @@ async function runSequence(opts) {
       try {
         if (targetsElement(step.tool, stepArgs)) await refreshElementCache(client, threadId, stepArgs, elementCache, opts);
         stepArgs = resolveElementTarget(stepArgs, elementCache);
-        const callArgs = step.tool === 'list_apps' ? stripListAppsHostArguments(stepArgs) : stepArgs;
+        const callArgs = pickUpstreamToolArgs(step.tool, stepArgs);
         const result = await client.request('mcpServer/tool/call', {
           threadId,
           server: 'computer-use',

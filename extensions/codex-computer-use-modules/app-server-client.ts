@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { spawn, spawnSync, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { pickUpstreamToolArgs } from "./upstream-tool-args.mjs";
 import {
 	ComputerUseError,
 	DEFAULT_CODEX_BIN,
@@ -599,6 +600,7 @@ export class AppServerClient {
 	}
 
 	async callTool(tool: string, args: Record<string, JsonValue>, opts: { approval: ApprovalMode; timeoutMs: number; signal?: AbortSignal; server?: McpServerName }): Promise<{ result: ComputerUseToolResult; durationMs: number; acceptedElicitations: number; elicitationCount: number }> {
+		const upstreamArgs = pickUpstreamToolArgs(tool, args);
 		return this.runExclusive(async () => {
 			const acceptedBefore = this.acceptedElicitations;
 			const elicitationBefore = this.elicitationCount;
@@ -621,7 +623,7 @@ export class AppServerClient {
 							threadId,
 							server,
 							tool,
-							arguments: args,
+							arguments: upstreamArgs,
 						}, opts.timeoutMs, opts.signal) as ComputerUseToolResult;
 					} finally {
 						this.currentApproval = "inherit";
