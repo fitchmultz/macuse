@@ -19,7 +19,7 @@ export const UPSTREAM_TOOL_ARG_KEYS = Object.freeze({
 	computer_history_update_settings: ["observation", "showMenuBarIcon"],
 });
 
-const HOST_ONLY_TOOL_ARG_KEYS = new Set([
+export const HOST_ONLY_TOOL_ARG_KEYS = new Set([
 	"element", "elementId", "element_id", "elementDescription", "element_description", "role", "elementRole", "name", "elementName", "targets",
 	"expectedRole", "expectedName", "expectedDescription", "expectedId", "expectedValue", "approval", "allowMutating", "safetyNote", "allowPointer",
 	"allowPointerClick", "allowPointerDrag", "allowRecording", "allowPrivacyChange", "requireStateChange", "includeImage", "saveImagePath", "detail",

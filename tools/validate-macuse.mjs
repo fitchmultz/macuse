@@ -255,6 +255,7 @@ function runPiExtensionSmoke(verbose) {
 const { createJiti } = require('jiti');
 const jiti = createJiti(process.cwd() + '/validate-extension.js', { interopDefault: true });
 const mod = jiti('./extensions/codex-computer-use.ts');
+const { HOST_ONLY_TOOL_ARG_KEYS, UPSTREAM_TOOL_ARG_KEYS } = jiti('./extensions/codex-computer-use-modules/upstream-tool-args.mjs');
 const factory = mod.default || mod;
 const tools = [];
 const handlers = new Map();
@@ -269,7 +270,7 @@ factory({
   on(name, handler) { handlers.set(name, handler); },
   getActiveTools() { return [...activeTools]; },
   setActiveTools(names) { activeTools = names.filter((name) => !excludedTools.has(name)); },
-  sendMessage(message) { messages.push(message); branchEntries.push({ type: 'custom', customType: message.customType }); },
+  sendMessage(message) { messages.push(message); branchEntries.push({ type: 'custom_message', customType: message.customType, content: message.content, display: message.display }); },
 });
 const expectedTools = [
   'list_apps', 'get_app_state', 'perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag',
@@ -281,6 +282,13 @@ const names = tools.map((tool) => tool.name);
 if (JSON.stringify([...names].sort()) !== JSON.stringify([...expectedTools].sort())) throw new Error('extension tools do not match full surface: ' + names.join(','));
 if (tools.some((tool) => tool.executionMode !== 'sequential')) throw new Error('all extension tools must serialize the shared app-server thread and element cache');
 if (tools.some((tool) => tool.parameters?.additionalProperties !== false)) throw new Error('all public extension tool schemas must reject unknown top-level fields');
+for (const tool of tools) {
+  const upstreamKeys = UPSTREAM_TOOL_ARG_KEYS[tool.name];
+  if (!upstreamKeys) continue;
+  const supportedKeys = new Set([...upstreamKeys, ...HOST_ONLY_TOOL_ARG_KEYS]);
+  const unsupportedKeys = Object.keys(tool.parameters?.properties || {}).filter((key) => !supportedKeys.has(key));
+  if (unsupportedKeys.length) throw new Error(tool.name + ' schema keys are missing from the upstream boundary: ' + unsupportedKeys.join(','));
+}
 const sequenceStepSchema = tools.find((tool) => tool.name === 'macuse_sequence')?.parameters?.properties?.steps?.items;
 if (sequenceStepSchema?.additionalProperties !== true) throw new Error('macuse_sequence step schema must remain permissive for runtime-normalized step fields');
 if (tools.some((tool) => tool.name === 'macuse')) throw new Error('obsolete composite macuse tool is still registered');
