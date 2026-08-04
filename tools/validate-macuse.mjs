@@ -86,7 +86,7 @@ function runRawComputerHistoryContractSmoke() {
   const observation = updateSettings?.properties?.observation;
   const required = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist'];
   const entry = observation?.properties?.allowlist?.items;
-  if (updateSettings?.properties?.showMenuBarIcon?.type !== 'boolean' || !required.every((field) => observation?.required?.includes(field)) || !entry?.required?.includes('scope') || !entry?.properties?.urlDomain?.description?.includes('without a scheme or path')) throw new Error('raw computer_history_update_settings schema changed');
+  if (updateSettings?.properties?.showMenuBarIcon?.type !== 'boolean' || updateSettings?.required?.includes('showMenuBarIcon') || !required.every((field) => observation?.required?.includes(field)) || !entry?.required?.includes('scope') || !entry?.properties?.urlDomain?.description?.includes('without a scheme or path')) throw new Error('raw computer_history_update_settings schema changed');
   return '5 live tools; schemas and annotations match';
 }
 
@@ -177,7 +177,7 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
   const updateSettingsSchema = listed.tools.find((tool) => tool.name === 'computer_history_update_settings')?.inputSchema;
   const settingsSchema = updateSettingsSchema?.properties?.observation;
   const requiredSettings = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist'];
-  if (updateSettingsSchema?.properties?.showMenuBarIcon?.type !== 'boolean') throw new Error('computer_history_update_settings schema omits showMenuBarIcon');
+  if (updateSettingsSchema?.properties?.showMenuBarIcon?.type !== 'boolean' || updateSettingsSchema?.required?.includes('showMenuBarIcon')) throw new Error('computer_history_update_settings schema does not expose optional showMenuBarIcon');
   if (!requiredSettings.every((field) => settingsSchema?.required?.includes(field))) throw new Error('computer_history_update_settings schema does not require all observation fields');
   if (!settingsSchema?.properties?.allowlist?.items?.properties?.urlDomain?.description?.includes('without a scheme or path')) throw new Error('computer_history_update_settings schema omits URL domain guidance');
   const annotationExpectations = {
@@ -245,13 +245,14 @@ const mod = jiti('./extensions/codex-computer-use.ts');
 const factory = mod.default || mod;
 const tools = [];
 const handlers = new Map();
+const excludedTools = new Set(['drag']);
 let activeTools = [];
 factory({
   registerTool(def) { tools.push(def); activeTools.push(def.name); },
   registerCommand() {},
   on(name, handler) { handlers.set(name, handler); },
   getActiveTools() { return [...activeTools]; },
-  setActiveTools(names) { activeTools = [...names]; },
+  setActiveTools(names) { activeTools = names.filter((name) => !excludedTools.has(name)); },
 });
 const expectedTools = [
   'list_apps', 'get_app_state', 'perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag',
@@ -269,7 +270,7 @@ if (tools.some((tool) => tool.name === 'macuse')) throw new Error('obsolete comp
 const historySettings = tools.find((tool) => tool.name === 'computer_history_update_settings')?.parameters;
 const historyObservation = historySettings?.properties?.observation;
 const requiredSettings = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist'];
-if (historySettings?.properties?.showMenuBarIcon?.type !== 'boolean') throw new Error('Computer History schema omits showMenuBarIcon');
+if (historySettings?.properties?.showMenuBarIcon?.type !== 'boolean' || historySettings?.required?.includes('showMenuBarIcon')) throw new Error('Computer History schema does not expose optional showMenuBarIcon');
 if (!requiredSettings.every((field) => historyObservation?.required?.includes(field))) throw new Error('Computer History schema does not require all observation fields');
 if (!historyObservation?.properties?.allowlist?.items?.properties?.urlDomain?.description?.includes('without scheme or path')) throw new Error('Computer History schema omits URL domain guidance');
 for (const name of ['perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag']) {
@@ -285,6 +286,8 @@ for (const name of ['perform_secondary_action', 'press_key', 'type_text', 'set_v
   if (JSON.stringify(initialMacuseTools) !== JSON.stringify(expectedInitialTools)) throw new Error('initial macuse tools are not lazy: ' + initialMacuseTools.join(','));
   const loaded = await byName.get('macuse_tools').execute('load', { tools: ['set_value', 'computer_history_status'] }, signal);
   if (!activeTools.includes('set_value') || !activeTools.includes('computer_history_status') || !loaded.details.added.includes('set_value')) throw new Error('macuse_tools did not activate exact requested tools');
+  const excluded = await byName.get('macuse_tools').execute('load-excluded', { tools: ['drag'] }, signal);
+  if (!excluded.details.unavailable.includes('drag') || !excluded.content[0].text.includes('Unavailable or excluded: drag')) throw new Error('macuse_tools misreported an excluded tool as enabled');
   const invalidObservation = { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [] };
   const invalidUrlObservation = { ...invalidObservation, allowlist: [{ scope: 'url' }] };
   const schemeUrlObservation = { ...invalidObservation, allowlist: [{ scope: 'url', urlDomain: 'https://example.com' }] };
@@ -330,13 +333,13 @@ const { filterToolResult } = jiti('./extensions/codex-computer-use-modules/conte
 const { sanitizeRecoverableComputerUseText } = jiti('./extensions/codex-computer-use-modules/computer-use-recovery.ts');
 const { appServerSessionRecoverySummary, filterToolResult: filterCliToolResult, sanitizeRecoverableComputerUseText: sanitizeCliRecoverableComputerUseText, shouldAutoRecoverComputerUse } = jiti('./tools/cu-helpers.mjs');
 const { computerUseDiagnostic } = jiti('./extensions/codex-computer-use-modules/diagnostics.ts');
-const { normalizePressKeyValue, normalizeToolArguments, stripSelectorOnlyKeys } = jiti('./extensions/codex-computer-use-modules/elements-state.ts');
+const { normalizePressKeyValue, normalizeToolArguments, stripHostOnlyKeys } = jiti('./extensions/codex-computer-use-modules/elements-state.ts');
 const errorContent = [{ type: 'text', text: 'NSOSStatusErrorDomain Code=-609 connectionInvalid' }];
 if (normalizePressKeyValue(',', ['COMMAND']) !== 'super+comma') throw new Error('Command-comma key normalization failed');
 if (normalizePressKeyValue('Command+,') !== 'super+comma') throw new Error('Command+, key normalization failed');
 const normalizedArgs = normalizeToolArguments({ app: 'CueboxItem24', key: 'Comma', modifiers: ['COMMAND'] });
 if (normalizedArgs.key !== 'super+comma' || 'modifiers' in normalizedArgs) throw new Error('press_key modifiers were not normalized away');
-const strippedArgs = stripSelectorOnlyKeys({ app: 'CueboxItem24', element_index: '7', elementId: 'stale', elementDescription: 'Old', role: 'button', name: 'Go', targets: [], expectedRole: 'button', action: 'Press' });
+const strippedArgs = stripHostOnlyKeys({ app: 'CueboxItem24', element_index: '7', elementId: 'stale', elementDescription: 'Old', role: 'button', name: 'Go', targets: [], expectedRole: 'button', action: 'Press', detail: 'minimal', toolTimeoutMs: 1000 });
 if (JSON.stringify(strippedArgs) !== JSON.stringify({ app: 'CueboxItem24', element_index: '7', action: 'Press' })) throw new Error('host-only selector keys leaked to upstream Computer Use');
 const stopSentinelResult = { content: [{ type: 'text', text: 'This application session has been explicitly stopped by the user for this turn. Stop your work and send a final message noting they stopped the session and you\'re ready to continue if they want you to. Computer Use can be used again in the next assistant turn.' }] };
 const stopped = filterToolResult(stopSentinelResult, { maxTextChars: 1000 });

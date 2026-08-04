@@ -73,6 +73,7 @@ All 18 tools in macuse's configured scope are loaded from the installed SkyCompu
 - Drag has only a low-stakes TextEdit probe. It is guarded because pointer drag
   can move the user's cursor even when focus is preserved.
 - High-stakes workflows remain intentionally gated by the safety policy.
+- Upstream accepts an omitted `showMenuBarIcon` on settings replacement, but its omission semantics are unverified; guarded callers preserve the current value returned by `computer_history_get_settings`.
 - Browser-specific workflows should still prefer `agent_browser` when possible.
 
 ## Validation commands

@@ -1,7 +1,7 @@
 # macuse
 
 > [!WARNING]
-> **Experimental and unsupported.** macuse uses Codex app-server's documented experimental MCP bridge with proprietary Computer Use schemas that may change without notice. Review the [safety policy](docs/reference/codex-computer-use-safety-policy.md) before granting macOS permissions or running mutating or repair commands.
+> **Experimental and unsupported.** macuse uses Codex app-server's [documented experimental MCP bridge](https://learn.chatgpt.com/docs/app-server) with proprietary Computer Use schemas that may change without notice. Review the [safety policy](docs/reference/codex-computer-use-safety-policy.md) before granting macOS permissions or running mutating or repair commands.
 
 Local tooling and notes for testing whether OpenAI Codex Computer Use can be reused from non-Codex agents such as pi.
 
@@ -88,7 +88,7 @@ The packaged pi extension keeps one persistent Codex app-server thread and regis
 - Computer History: `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, and `computer_history_update_settings`.
 - Pi helpers: `macuse_sequence` for ordered flows/waits/assertions, `macuse_tools` for additive on-demand activation, and `macuse_restart` for an explicit Computer Use helper plus app-server restart.
 
-Pi starts with only `list_apps`, `get_app_state`, `macuse_sequence`, and `macuse_tools` active. Call `macuse_tools` with the exact direct, recording, history, or recovery tools needed; activated tools stay available for the session.
+Pi starts and resumes with only `list_apps`, `get_app_state`, `macuse_sequence`, and `macuse_tools` active. Call `macuse_tools` with the exact direct, recording, history, or recovery tools needed; activated tools stay available until the next session boundary.
 
 Direct mutating Computer Use tools require `allowMutating:true`, a `safetyNote` naming the target/effect/stop boundary, and a recent `get_app_state`. Element-targeted calls refresh app state and accept `element_index`/`element`, stable `elementId`, exact `elementDescription`, role/name selectors, ordered `targets` fallbacks, and raw-index `expected*` stale guards. Direct `click`/`drag` also require `allowPointer:true`; pointer tools restore mouse position. Prefer `perform_secondary_action` with `action:"Press"`, `press_key`, `set_value`, or `scroll` over pointer actions. `press_key` accepts xdotool-style combos such as `super+comma`, and `key:",", modifiers:["COMMAND"]` normalizes to that form.
 
