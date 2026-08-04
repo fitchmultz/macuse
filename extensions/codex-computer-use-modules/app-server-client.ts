@@ -600,6 +600,7 @@ export class AppServerClient {
 	}
 
 	async callTool(tool: string, args: Record<string, JsonValue>, opts: { approval: ApprovalMode; timeoutMs: number; signal?: AbortSignal; server?: McpServerName }): Promise<{ result: ComputerUseToolResult; durationMs: number; acceptedElicitations: number; elicitationCount: number }> {
+		const upstreamArgs = pickUpstreamToolArgs(tool, args);
 		return this.runExclusive(async () => {
 			const acceptedBefore = this.acceptedElicitations;
 			const elicitationBefore = this.elicitationCount;
@@ -622,7 +623,7 @@ export class AppServerClient {
 							threadId,
 							server,
 							tool,
-							arguments: pickUpstreamToolArgs(tool, args),
+							arguments: upstreamArgs,
 						}, opts.timeoutMs, opts.signal) as ComputerUseToolResult;
 					} finally {
 						this.currentApproval = "inherit";
