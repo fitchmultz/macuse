@@ -16,15 +16,6 @@ below are retained as historical snapshots where explicitly dated.
 For external-harness findings, probes, and refresh commands, see
 [`codex-computer-use-external-harness.md`](./codex-computer-use-external-harness.md).
 
-## Current host app
-
-| Purpose | Path / value |
-| --- | --- |
-| Host app | `/Applications/ChatGPT.app` |
-| Bundle ID | `com.openai.codex` |
-| App version | `26.727.51351` |
-| Build version | `6119` |
-
 Related local host-app state found:
 
 - `/Users/yourname/Library/Application Support/Codex`
