@@ -47,7 +47,7 @@ node tools/macuse-config.mjs cursor --pretty
 
 ## Validation
 
-The current local Pi extension baseline is Pi 0.83.0; Pi runtime packages remain wildcard peers supplied by the host.
+macuse requires Pi 0.84.0 or later. Pi runtime packages remain peer dependencies supplied by the host.
 
 Run the reusable smoke suite (add `--json` to `validate-macuse.mjs` for machine-readable pass/warn/fail summaries):
 
@@ -187,7 +187,7 @@ Tool details include saved image path, bytes, SHA-256, width, and height when an
 
 The installable extension entry lives at `extensions/codex-computer-use.ts`, uses modules in `extensions/codex-computer-use-modules/`, and is declared in `package.json#pi.extensions`. This package also declares `skills/` in `package.json#pi.skills`; there is no project-local `.pi/extensions` shim. Shared app-server/MCP helper code lives in `tools/cu-helpers.mjs`.
 
-For local global install testing from this checkout:
+For local global install testing from this checkout, use Pi 0.84.0 or later:
 
 ```bash
 pi install /Users/yourname/Projects/AI/macuse

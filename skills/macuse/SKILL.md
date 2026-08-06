@@ -3,7 +3,7 @@ name: macuse
 description: "Use for macuse pi tools: inspect, QA, dogfood, or safely control local macOS native apps through Codex Computer Use while preserving focus. Do not use for browser DOM automation, generic pi extension work, raw MCP probes, or sends/deletes/purchases/account/security/privacy changes without exact approval."
 compatibility: macOS with the macuse pi package/extension loaded and Codex Computer Use available.
 metadata:
-  version: "0.2.0"
+  version: "0.3.0"
   owner: "macuse"
 ---
 

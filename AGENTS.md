@@ -18,6 +18,7 @@ This repo investigates OpenAI Codex Computer Use reuse from non-Codex agents suc
 
 ## Development policy
 
+- Pi 0.84.0 is the minimum supported Pi version.
 - No backwards-compatibility shims for Codex app-server, Computer Use, or pi extension APIs during development. Cut fully to the protocol and runtime shape required by the currently installed pi and Codex Computer Use versions, update all repo tools/docs/tests together, and remove stale aliases instead of carrying compatibility paths.
 
 ## Safety
