@@ -4,7 +4,7 @@ Source: Local filesystem paths under `/Users/yourname/.codex/computer-use`, `/Us
 Author: [OpenAI](https://openai.com/)
 Posted: Not applicable; local installed app and plugin cache
 Scraped: May 22, 2026
-Refreshed: May 22, 2026 09:35 MDT after the Codex host app update, external-harness TCC probes, app-server bridge validation, and guarded Calculator click/key validation. Spot-checked again June 8 and July 18, 2026. Updated August 4, 2026 for current Computer Use schemas and Pi 0.83.0.
+Refreshed: May 22, 2026 09:35 MDT after the Codex host app update, external-harness TCC probes, app-server bridge validation, and guarded Calculator click/key validation. Spot-checked again June 8 and July 18, 2026. Updated August 6, 2026 for current Computer Use schemas and Pi 0.84.0.
 Observed install metadata at May 22 refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin still `1.0.799`; app bundle `com.openai.sky.CUAService`; notarized Developer ID app from OpenAI
 Current August 4 spot-check: ChatGPT host app `26.727.51351` build `6119` (bundle ID remains `com.openai.codex`); bundled Codex CLI `0.146.0-alpha.9.2`; Computer Use plugin `1.0.1000550`; Computer Use client `26.727.1000550`. Macuse configures `computer-use`/`mcp` (10 tools), `event-stream`/`event-stream mcp` (3), and `computer-history`/`computer-history mcp` (5). The client also exposes a separate Messages MCP that macuse intentionally excludes. Discover the cache version at runtime rather than using historical fallback paths.
 

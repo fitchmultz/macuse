@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { StringEnum, Type } from "@earendil-works/pi-ai";
-import type { TSchema } from "typebox";
+import { StringEnum } from "@earendil-works/pi-ai";
+import { Type, type TSchema } from "typebox";
 import {
 	DEFAULT_MAX_TEXT_CHARS,
 	DEFAULT_TOOL_TIMEOUT_MS,

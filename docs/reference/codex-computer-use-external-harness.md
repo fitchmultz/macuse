@@ -4,7 +4,7 @@ Source: Local Codex Computer Use app/plugin files and direct MCP probes against 
 Author: [OpenAI](https://openai.com/) for the installed app/plugin; local investigation notes captured in this repository
 Posted: Not applicable; local installed app and plugin cache
 Scraped: May 22, 2026
-Refreshed: May 22, 2026 09:35 MDT; spot-checked again June 8 and July 18, 2026; updated August 4, 2026 for current Computer Use schemas and Pi 0.83.0. Active validation uses Activity Monitor instead of Calculator.
+Refreshed: May 22, 2026 09:35 MDT; spot-checked again June 8 and July 18, 2026; updated August 6, 2026 for current Computer Use schemas and Pi 0.84.0. Active validation uses Activity Monitor instead of Calculator.
 Observed metadata at May 22 refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin `1.0.799`; MCP server name `Computer Use`; MCP server version `d10a51766bb4d162ef1eed308e86a0f8f3816fb860896cb92c18e6de998142af`
 Current August 4 spot-check: ChatGPT host app `26.727.51351` build `6119` (bundle ID `com.openai.codex`); bundled Codex CLI `0.146.0-alpha.9.2`; Computer Use plugin `1.0.1000550`; Computer Use client `26.727.1000550`. The app-server-mediated pi path configures and inventory-checks `computer-use` (10 tools), `event-stream` (3), and `computer-history` (5) in one explicit thread. The same client now exposes a separate Messages MCP, which macuse intentionally excludes because messaging is outside its app-control scope. Historical `/Applications/Codex.app` references below describe the pre-merge install. `turn-ended` remains unexposed because it has no published payload contract; the private `@oai/sky` Node REPL adapter is not MCP.
 
