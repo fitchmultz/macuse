@@ -207,19 +207,10 @@ class AppServerClient {
     this.buffer = '';
     proc.stdout.setEncoding('utf8');
     proc.stderr.setEncoding('utf8');
-    proc.stdout.on('data', (chunk) => this.onStdout(chunk));
+    proc.stdout.on('data', (chunk) => { if (this.proc === proc) this.onStdout(chunk); });
     proc.stderr.on('data', (chunk) => log('appserver.stderr', chunk.toString().trim()));
-    proc.on('exit', (code, signal) => {
-      for (const pending of this.pending.values()) {
-        clearTimeout(pending.timer);
-        pending.reject(new Error(`app-server exited code=${code} signal=${signal}`));
-      }
-      this.pending.clear();
-      if (this.proc === proc) {
-        this.proc = null;
-        this.threadId = null;
-      }
-    });
+    proc.on('error', (error) => this.failProcess(proc, error));
+    proc.on('exit', (code, signal) => this.failProcess(proc, new Error(`app-server exited code=${code} signal=${signal}`)));
     try {
       await this.request('initialize', { clientInfo: { name: 'macuse-appserver-mcp', version: VERSION }, capabilities: { experimentalApi: true, requestAttestation: false } }, 15_000);
       this.notify('initialized', {});
@@ -269,6 +260,19 @@ class AppServerClient {
     }
   }
 
+  failProcess(proc, error) {
+    for (const [id, pending] of this.pending) {
+      if (pending.proc !== proc) continue;
+      clearTimeout(pending.timer);
+      this.pending.delete(id);
+      pending.reject(error);
+    }
+    if (this.proc === proc) {
+      this.proc = null;
+      this.threadId = null;
+    }
+  }
+
   onStdout(chunk) {
     this.buffer += chunk;
     for (;;) {
@@ -302,8 +306,9 @@ class AppServerClient {
     this.write({ jsonrpc: '2.0', id: request.id, error: { code: -32601, message: `not implemented: ${request.method}` } });
   }
 
-  write(message) {
-    this.proc.stdin.write(`${JSON.stringify(message)}\n`);
+  write(message, proc = this.proc) {
+    if (!proc?.stdin?.writable) throw new Error('app-server stdin is unavailable');
+    proc.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
   notify(method, params) {
@@ -312,13 +317,20 @@ class AppServerClient {
 
   request(method, params, timeoutMs = REQUEST_TIMEOUT_MS) {
     const id = this.nextId++;
+    const proc = this.proc;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`${method} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
-      this.write({ jsonrpc: '2.0', id, method, params });
+      this.pending.set(id, { resolve, reject, timer, proc });
+      try {
+        this.write({ jsonrpc: '2.0', id, method, params }, proc);
+      } catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(error);
+      }
     });
   }
 
@@ -353,13 +365,21 @@ class AppServerClient {
     this.proc = null;
     this.threadId = null;
     if (!proc || proc.exitCode !== null || proc.signalCode !== null) return;
-    proc.kill('SIGTERM');
     await new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(forceTimer);
+        clearTimeout(giveUpTimer);
         resolve();
+      };
+      const forceTimer = setTimeout(() => {
+        if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');
       }, 3000);
-      proc.once('exit', () => { clearTimeout(timer); resolve(); });
+      const giveUpTimer = setTimeout(finish, 6000);
+      proc.once('exit', finish);
+      proc.kill('SIGTERM');
     });
   }
 }

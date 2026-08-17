@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { DEFAULT_BUNDLED_COMPUTER_USE_CLIENT, DEFAULT_COMPUTER_USE_CLIENT_CWD, MCP_SERVERS, frontmostApp, mcpServerConfigs, mcpServerForTool, mousePosition, parseJsonOutput, VERSION } from './macuse-utils.mjs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { HOST_ONLY_TOOL_ARG_KEYS, UPSTREAM_TOOL_ARG_KEYS } from '../extensions/codex-computer-use-modules/upstream-tool-args.mjs';
 
 const DEFAULT_APP = 'Activity Monitor';
@@ -83,7 +85,7 @@ function runCompatibilityContractSmoke() {
     if (!source.includes(expected) || source.includes('notify("notifications/initialized') || source.includes("notify('notifications/initialized")) throw new Error(`${file} does not use the current app-server initialized notification`);
   }
   const wrapper = readFileSync('tools/codex-computer-use-appserver-mcp.mjs', 'utf8');
-  for (const contract of ['if (this.initializing) return this.initializing;', 'if (this.proc === proc) await this.stop();', 'let toolCallQueue = Promise.resolve();']) {
+  for (const contract of ['if (this.initializing) return this.initializing;', 'if (this.proc === proc) await this.stop();', "proc.on('error', (error) => this.failProcess(proc, error));", 'if (pending.proc !== proc) continue;', 'let toolCallQueue = Promise.resolve();']) {
     if (!wrapper.includes(contract)) throw new Error(`standard MCP wrapper is missing startup/concurrency contract: ${contract}`);
   }
   return 'launchers, initialized handshake, routing, startup cleanup, and serialized MCP calls match current contracts';
@@ -321,6 +323,108 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
     verbose,
   });
   return stdout.trim();
+}
+
+function runMcpLifecycleSmoke(verbose) {
+  const dir = mkdtempSync(join(tmpdir(), 'macuse-mcp-lifecycle-'));
+  const fakeCodex = join(dir, 'fake-codex.cjs');
+  const statePath = join(dir, 'generation');
+  const inventories = Object.fromEntries(Object.entries(MCP_SERVERS).map(([name, server]) => [name, server.tools]));
+  writeFileSync(fakeCodex, `#!/usr/bin/env node
+const { readFileSync, writeFileSync } = require('node:fs');
+const statePath = process.env.MACUSE_FAKE_STATE;
+let generation = 1;
+try { generation = Number(readFileSync(statePath, 'utf8')) + 1; } catch {}
+writeFileSync(statePath, String(generation));
+const inventories = ${JSON.stringify(inventories)};
+if (generation === 1) process.on('SIGTERM', () => {});
+let buffer = '';
+function send(message) { process.stdout.write(JSON.stringify(message) + '\\n'); }
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  buffer += chunk;
+  for (;;) {
+    const index = buffer.indexOf('\\n');
+    if (index === -1) break;
+    const line = buffer.slice(0, index).trim();
+    buffer = buffer.slice(index + 1);
+    if (!line) continue;
+    const message = JSON.parse(line);
+    if (!Object.hasOwn(message, 'id')) continue;
+    if (message.method === 'initialize') send({ jsonrpc: '2.0', id: message.id, result: { capabilities: {}, serverInfo: { name: 'fake', version: '1' } } });
+    else if (message.method === 'thread/start') send({ jsonrpc: '2.0', id: message.id, result: { thread: { id: 'fake-' + generation } } });
+    else if (message.method === 'mcpServerStatus/list') send({ jsonrpc: '2.0', id: message.id, result: { data: Object.entries(inventories).map(([name, tools]) => ({ name, tools: Object.fromEntries(tools.map((tool) => [tool, {}])) })) } });
+    else if (message.method === 'mcpServer/tool/call' && generation === 1) send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'Transport closed' } });
+    else if (message.method === 'mcpServer/tool/call') send({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: 'App: Activity Monitor\\nWindow: Activity Monitor' }], isError: false } });
+    else send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'not implemented' } });
+  }
+});
+process.stdin.on('end', () => process.exit(0));
+`);
+  chmodSync(fakeCodex, 0o755);
+  const driver = String.raw`
+const { spawn } = require('node:child_process');
+const proc = spawn(process.execPath, ['tools/codex-computer-use-appserver-mcp.mjs'], { cwd: process.cwd(), env: { ...process.env, CODEX_BIN: process.env.MACUSE_FAKE_CODEX, CODEX_CU_MCP_CWD: process.env.MACUSE_FAKE_CWD, MACUSE_FAKE_STATE: process.env.MACUSE_FAKE_STATE }, stdio: ['pipe', 'pipe', 'pipe'] });
+let nextId = 1;
+let buffer = '';
+const pending = new Map();
+function send(message) { proc.stdin.write(JSON.stringify(message) + '\n'); }
+function request(method, params = {}, timeoutMs = 15000) {
+  const id = nextId++;
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { pending.delete(id); reject(new Error(method + ' timed out')); }, timeoutMs);
+    pending.set(id, { resolve, reject, timer });
+    send({ jsonrpc: '2.0', id, method, params });
+  });
+}
+proc.stdout.setEncoding('utf8');
+proc.stdout.on('data', (chunk) => {
+  buffer += chunk;
+  for (;;) {
+    const index = buffer.indexOf('\n');
+    if (index === -1) break;
+    const line = buffer.slice(0, index).trim();
+    buffer = buffer.slice(index + 1);
+    if (!line) continue;
+    const message = JSON.parse(line);
+    const entry = pending.get(message.id);
+    if (!entry) continue;
+    clearTimeout(entry.timer);
+    pending.delete(message.id);
+    if (message.error) entry.reject(new Error(message.error.message));
+    else entry.resolve(message.result);
+  }
+});
+proc.on('exit', (code, signal) => {
+  for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(new Error('wrapper exited code=' + code + ' signal=' + signal)); }
+  pending.clear();
+});
+(async () => {
+  await request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'lifecycle-test', version: '0' } }, 5000);
+  if (process.env.MACUSE_FAKE_MODE === 'spawn-error') {
+    let message = '';
+    try { await request('tools/call', { name: 'event_stream_status', arguments: {} }, 5000); } catch (error) { message = error.message || String(error); }
+    if (!/ENOENT|spawn/i.test(message)) throw new Error('spawn failure did not return a JSON-RPC error: ' + message);
+    const listed = await request('tools/list', {}, 5000);
+    if (listed.tools?.length !== 18) throw new Error('wrapper did not survive spawn failure');
+  } else {
+    const result = await request('tools/call', { name: 'get_app_state', arguments: { app: 'Activity Monitor' } }, 15000);
+    const text = (result.content || []).map((block) => block.text || '').join('\n');
+    if (!text.includes('Activity Monitor')) throw new Error('read-only recovery did not return replacement-process output');
+    if (Number(require('node:fs').readFileSync(process.env.MACUSE_FAKE_STATE, 'utf8')) < 2) throw new Error('fake app-server was not restarted');
+  }
+  proc.kill('SIGTERM');
+  console.log(process.env.MACUSE_FAKE_MODE);
+})().catch((error) => { proc.kill('SIGKILL'); console.error(error.stack || error.message); process.exitCode = 1; });
+`;
+  try {
+    const spawnFailure = run('MCP spawn failure smoke', process.execPath, ['-e', driver], { env: { MACUSE_FAKE_CODEX: fakeCodex, MACUSE_FAKE_CWD: join(dir, 'missing-cwd'), MACUSE_FAKE_STATE: statePath, MACUSE_FAKE_MODE: 'spawn-error' }, timeoutMs: 30_000, verbose });
+    rmSync(statePath, { force: true });
+    const recovery = run('MCP stale-exit recovery smoke', process.execPath, ['-e', driver], { env: { MACUSE_FAKE_CODEX: fakeCodex, MACUSE_FAKE_CWD: process.cwd(), MACUSE_FAKE_STATE: statePath, MACUSE_FAKE_MODE: 'stale-exit-recovery' }, timeoutMs: 30_000, verbose });
+    return `${spawnFailure.trim()}, ${recovery.trim()}`;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 function runPiExtensionSmoke(verbose) {
@@ -801,6 +905,7 @@ async function main() {
 
   const mcpSchemaSmoke = runMcpServerSmoke(opts.verbose, true);
   printPass('app-server MCP schema boundary smoke', `${mcpSchemaSmoke.split(',').length} tools`);
+  if (opts.mode === 'extension' || opts.mode === 'mcp') printPass('app-server MCP lifecycle faults', runMcpLifecycleSmoke(opts.verbose));
 
   if (opts.mode === 'extension') {
     if (jsonOutput) writeJsonSummary(opts, true);
