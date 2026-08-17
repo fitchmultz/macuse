@@ -340,9 +340,9 @@ appendFileSync(statePath + '.pids', String(process.pid) + '\\n');
 const inventories = ${JSON.stringify(inventories)};
 const ignoreAllSignals = process.env.MACUSE_FAKE_IGNORE_ALL_SIGTERM === '1';
 const staleExitDelayMs = Number(process.env.MACUSE_FAKE_STALE_EXIT_DELAY_MS || 0);
-if (ignoreAllSignals) process.on('SIGTERM', () => {});
-else if (generation === 1 && staleExitDelayMs > 0) process.on('SIGTERM', () => setTimeout(() => process.exit(0), staleExitDelayMs));
-else if (generation === 1) process.on('SIGTERM', () => {});
+const noteSignal = () => appendFileSync(statePath + '.sigterm', String(process.pid) + '\\n');
+if (ignoreAllSignals) process.on('SIGTERM', noteSignal);
+else if (generation === 1 && staleExitDelayMs > 0) process.on('SIGTERM', () => { noteSignal(); setTimeout(() => process.exit(0), staleExitDelayMs); });
 let buffer = '';
 function send(message) { process.stdout.write(JSON.stringify(message) + '\\n'); }
 process.stdin.setEncoding('utf8');
@@ -374,6 +374,7 @@ process.stdin.on('end', () => { if (!ignoreAllSignals) process.exit(0); });
   chmodSync(fakeCodex, 0o755);
   const driver = String.raw`
 const { spawn } = require('node:child_process');
+const fs = require('node:fs');
 const proc = spawn(process.execPath, ['tools/codex-computer-use-appserver-mcp.mjs'], { cwd: process.cwd(), env: { ...process.env, CODEX_BIN: process.env.MACUSE_FAKE_CODEX, CODEX_CU_MCP_CWD: process.env.MACUSE_FAKE_CWD, MACUSE_FAKE_STATE: process.env.MACUSE_FAKE_STATE }, stdio: ['pipe', 'pipe', 'pipe'] });
 let nextId = 1;
 let buffer = '';
@@ -388,6 +389,20 @@ function request(method, params = {}, timeoutMs = 15000) {
     pending.set(id, { resolve, reject, timer });
     send({ jsonrpc: '2.0', id, method, params });
   });
+}
+function waitForExit(timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('wrapper shutdown timed out')), timeoutMs);
+    exited.then((value) => { clearTimeout(timer); resolve(value); });
+  });
+}
+function assertChildrenStopped() {
+  const pids = fs.readFileSync(process.env.MACUSE_FAKE_STATE + '.pids', 'utf8').trim().split('\n').filter(Boolean).map(Number);
+  for (const pid of pids) {
+    let alive = true;
+    try { process.kill(pid, 0); } catch { alive = false; }
+    if (alive) throw new Error('wrapper left fake app-server child alive: ' + pid);
+  }
 }
 proc.stdout.setEncoding('utf8');
 proc.stdout.on('data', (chunk) => {
@@ -420,6 +435,18 @@ proc.on('exit', (code, signal) => {
     if (!/ENOENT|spawn/i.test(message)) throw new Error('spawn failure did not return a JSON-RPC error: ' + message);
     const listed = await request('tools/list', {}, 5000);
     if (listed.tools?.length !== 18) throw new Error('wrapper did not survive spawn failure');
+  } else if (process.env.MACUSE_FAKE_MODE === 'overlap-shutdown') {
+    const call = request('tools/call', { name: 'get_app_state', arguments: { app: 'Activity Monitor' } }, 15000).catch(() => null);
+    const marker = process.env.MACUSE_FAKE_STATE + '.sigterm';
+    const deadline = Date.now() + 5000;
+    while (!fs.existsSync(marker) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+    if (!fs.existsSync(marker)) throw new Error('recovery stop did not reach the fake child');
+    proc.kill('SIGTERM');
+    await waitForExit();
+    await call;
+    assertChildrenStopped();
+    console.log(process.env.MACUSE_FAKE_MODE);
+    return;
   } else {
     const result = await request('tools/call', { name: 'get_app_state', arguments: { app: 'Activity Monitor' } }, 15000);
     const text = (result.content || []).map((block) => block.text || '').join('\n');
@@ -427,15 +454,8 @@ proc.on('exit', (code, signal) => {
     if (process.env.MACUSE_FAKE_MODE === 'stale-exit-recovery' && Number(require('node:fs').readFileSync(process.env.MACUSE_FAKE_STATE, 'utf8')) < 2) throw new Error('fake app-server was not restarted');
   }
   proc.kill('SIGTERM');
-  await Promise.race([exited, new Promise((_, reject) => setTimeout(() => reject(new Error('wrapper shutdown timed out')), 5000))]);
-  if (process.env.MACUSE_FAKE_MODE === 'shutdown') {
-    const pids = require('node:fs').readFileSync(process.env.MACUSE_FAKE_STATE + '.pids', 'utf8').trim().split('\n').filter(Boolean).map(Number);
-    for (const pid of pids) {
-      let alive = true;
-      try { process.kill(pid, 0); } catch { alive = false; }
-      if (alive) throw new Error('wrapper left fake app-server child alive: ' + pid);
-    }
-  }
+  await waitForExit();
+  if (process.env.MACUSE_FAKE_MODE === 'shutdown') assertChildrenStopped();
   console.log(process.env.MACUSE_FAKE_MODE);
 })().catch((error) => { proc.kill('SIGKILL'); console.error(error.stack || error.message); process.exitCode = 1; });
 `;
@@ -447,7 +467,11 @@ proc.on('exit', (code, signal) => {
     rmSync(statePath, { force: true });
     rmSync(statePath + '.pids', { force: true });
     const shutdown = run('MCP awaited shutdown smoke', process.execPath, ['-e', driver], { env: { MACUSE_FAKE_CODEX: fakeCodex, MACUSE_FAKE_CWD: process.cwd(), MACUSE_FAKE_STATE: statePath, MACUSE_FAKE_MODE: 'shutdown', MACUSE_FAKE_IGNORE_ALL_SIGTERM: '1', MACUSE_MCP_TEST_STOP_FORCE_MS: '50', MACUSE_MCP_TEST_STOP_GIVE_UP_MS: '500' }, timeoutMs: 30_000, verbose });
-    return `${spawnFailure.trim()}, ${recovery.trim()}, ${shutdown.trim()}`;
+    rmSync(statePath, { force: true });
+    rmSync(statePath + '.pids', { force: true });
+    rmSync(statePath + '.sigterm', { force: true });
+    const overlap = run('MCP overlapping recovery/shutdown smoke', process.execPath, ['-e', driver], { env: { MACUSE_FAKE_CODEX: fakeCodex, MACUSE_FAKE_CWD: process.cwd(), MACUSE_FAKE_STATE: statePath, MACUSE_FAKE_MODE: 'overlap-shutdown', MACUSE_FAKE_FAIL_FIRST_CALL: '1', MACUSE_FAKE_IGNORE_ALL_SIGTERM: '1', MACUSE_MCP_TEST_STOP_FORCE_MS: '50', MACUSE_MCP_TEST_STOP_GIVE_UP_MS: '500' }, timeoutMs: 30_000, verbose });
+    return `${spawnFailure.trim()}, ${recovery.trim()}, ${shutdown.trim()}, ${overlap.trim()}`;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

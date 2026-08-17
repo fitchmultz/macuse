@@ -188,12 +188,15 @@ class AppServerClient {
     this.buffer = '';
     this.threadId = null;
     this.initializing = null;
+    this.stopping = null;
+    this.closed = false;
     this.currentApproval = 'deny';
     this.acceptedElicitations = 0;
     this.elicitationHandler = elicitationHandler;
   }
 
   async ensureThread() {
+    if (this.closed) throw new Error('app-server client is shutting down');
     if (this.threadId) return this.threadId;
     if (this.initializing) return this.initializing;
     const initializing = this.startThread();
@@ -368,6 +371,22 @@ class AppServerClient {
   }
 
   async stop() {
+    if (this.stopping) return this.stopping;
+    const stopping = this.stopProcess();
+    this.stopping = stopping;
+    try {
+      await stopping;
+    } finally {
+      if (this.stopping === stopping) this.stopping = null;
+    }
+  }
+
+  async close() {
+    this.closed = true;
+    await this.stop();
+  }
+
+  async stopProcess() {
     const proc = this.proc;
     this.proc = null;
     this.threadId = null;
@@ -541,7 +560,7 @@ process.stdin.on('data', (chunk) => {
 
 let shuttingDown = null;
 function shutdown(code) {
-  if (!shuttingDown) shuttingDown = appServer.stop().finally(() => process.exit(code));
+  if (!shuttingDown) shuttingDown = appServer.close().finally(() => process.exit(code));
   return shuttingDown;
 }
 
