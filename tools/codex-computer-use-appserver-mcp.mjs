@@ -19,6 +19,8 @@ import {
 const DEFAULT_CWD = process.cwd();
 const FEATURE_FLAGS = ['computer_use', 'plugins', 'tool_call_mcp_elicitation'];
 const REQUEST_TIMEOUT_MS = Number(process.env.CODEX_CU_MCP_TIMEOUT_MS || 90_000);
+const STOP_FORCE_MS = positiveEnvDuration('MACUSE_MCP_TEST_STOP_FORCE_MS', 3_000);
+const STOP_GIVE_UP_MS = positiveEnvDuration('MACUSE_MCP_TEST_STOP_GIVE_UP_MS', 6_000);
 const POINTER_TOOLS = new Set(['click', 'drag']);
 const MUTATING_COMPUTER_USE_TOOLS = new Set(MCP_SERVERS['computer-use'].tools.filter((tool) => tool !== 'list_apps' && tool !== 'get_app_state'));
 const MUTATION_GUARD_PROPERTIES = {
@@ -30,6 +32,11 @@ const ELEMENT_INDEX_SCHEMA = { type: ['string', 'number'], description: 'Compute
 const ELEMENT_ALIAS_SCHEMA = { type: ['string', 'number'], description: 'Alias for element_index. Coerced to string before calling upstream.' };
 const ELEMENT_ID_SCHEMA = { type: 'string', description: 'Stable element ID from get_app_state, resolved to the current element_index before calling upstream.' };
 const ELEMENT_DESCRIPTION_SCHEMA = { type: 'string', description: 'Exact case-insensitive element description from get_app_state, resolved to the current element_index before calling upstream.' };
+
+function positiveEnvDuration(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
 
 if (process.argv.includes('-h') || process.argv.includes('--help')) {
   process.stdout.write(`macuse Codex Computer Use MCP wrapper ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver-mcp.mjs\n\nThis is a stdio MCP server exposing all 18 verified app-control, Record & Replay,\nand Computer History tools with local mutation, pointer, recording, and privacy guards. Configure it in\nCursor or another MCP client; do not run it directly except for --help or syntax\nchecks.\n\nEnvironment:\n  CODEX_BIN          Codex app-server binary. Default: ${DEFAULT_CODEX_BIN}\n  CODEX_CU_MCP_CWD  Thread cwd. Default: current working directory.\n\nGenerate client config:\n  node tools/macuse-config.mjs cursor --pretty\n\nValidate:\n  node tools/validate-macuse.mjs mcp\n`);
@@ -376,8 +383,8 @@ class AppServerClient {
       };
       const forceTimer = setTimeout(() => {
         if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');
-      }, 3000);
-      const giveUpTimer = setTimeout(finish, 6000);
+      }, STOP_FORCE_MS);
+      const giveUpTimer = setTimeout(finish, STOP_GIVE_UP_MS);
       proc.once('exit', finish);
       proc.kill('SIGTERM');
     });
@@ -532,6 +539,12 @@ process.stdin.on('data', (chunk) => {
   }
 });
 
-process.on('exit', () => appServer.stop());
-process.on('SIGTERM', () => { appServer.stop(); process.exit(0); });
-process.on('SIGINT', () => { appServer.stop(); process.exit(130); });
+let shuttingDown = null;
+function shutdown(code) {
+  if (!shuttingDown) shuttingDown = appServer.stop().finally(() => process.exit(code));
+  return shuttingDown;
+}
+
+process.stdin.on('end', () => { void shutdown(0); });
+process.on('SIGTERM', () => { void shutdown(0); });
+process.on('SIGINT', () => { void shutdown(130); });

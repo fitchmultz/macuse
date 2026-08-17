@@ -331,13 +331,18 @@ function runMcpLifecycleSmoke(verbose) {
   const statePath = join(dir, 'generation');
   const inventories = Object.fromEntries(Object.entries(MCP_SERVERS).map(([name, server]) => [name, server.tools]));
   writeFileSync(fakeCodex, `#!/usr/bin/env node
-const { readFileSync, writeFileSync } = require('node:fs');
+const { appendFileSync, readFileSync, writeFileSync } = require('node:fs');
 const statePath = process.env.MACUSE_FAKE_STATE;
 let generation = 1;
 try { generation = Number(readFileSync(statePath, 'utf8')) + 1; } catch {}
 writeFileSync(statePath, String(generation));
+appendFileSync(statePath + '.pids', String(process.pid) + '\\n');
 const inventories = ${JSON.stringify(inventories)};
-if (generation === 1) process.on('SIGTERM', () => {});
+const ignoreAllSignals = process.env.MACUSE_FAKE_IGNORE_ALL_SIGTERM === '1';
+const staleExitDelayMs = Number(process.env.MACUSE_FAKE_STALE_EXIT_DELAY_MS || 0);
+if (ignoreAllSignals) process.on('SIGTERM', () => {});
+else if (generation === 1 && staleExitDelayMs > 0) process.on('SIGTERM', () => setTimeout(() => process.exit(0), staleExitDelayMs));
+else if (generation === 1) process.on('SIGTERM', () => {});
 let buffer = '';
 function send(message) { process.stdout.write(JSON.stringify(message) + '\\n'); }
 process.stdin.setEncoding('utf8');
@@ -354,12 +359,17 @@ process.stdin.on('data', (chunk) => {
     if (message.method === 'initialize') send({ jsonrpc: '2.0', id: message.id, result: { capabilities: {}, serverInfo: { name: 'fake', version: '1' } } });
     else if (message.method === 'thread/start') send({ jsonrpc: '2.0', id: message.id, result: { thread: { id: 'fake-' + generation } } });
     else if (message.method === 'mcpServerStatus/list') send({ jsonrpc: '2.0', id: message.id, result: { data: Object.entries(inventories).map(([name, tools]) => ({ name, tools: Object.fromEntries(tools.map((tool) => [tool, {}])) })) } });
-    else if (message.method === 'mcpServer/tool/call' && generation === 1) send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'Transport closed' } });
-    else if (message.method === 'mcpServer/tool/call') send({ jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: 'App: Activity Monitor\\nWindow: Activity Monitor' }], isError: false } });
+    else if (message.method === 'mcpServer/tool/call' && generation === 1 && process.env.MACUSE_FAKE_FAIL_FIRST_CALL === '1') send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'Transport closed' } });
+    else if (message.method === 'mcpServer/tool/call') {
+      const reply = { jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: 'App: Activity Monitor\\nWindow: Activity Monitor' }], isError: false } };
+      const delay = generation > 1 ? Number(process.env.MACUSE_FAKE_SECOND_CALL_DELAY_MS || 0) : 0;
+      if (delay > 0) setTimeout(() => send(reply), delay);
+      else send(reply);
+    }
     else send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'not implemented' } });
   }
 });
-process.stdin.on('end', () => process.exit(0));
+process.stdin.on('end', () => { if (!ignoreAllSignals) process.exit(0); });
 `);
   chmodSync(fakeCodex, 0o755);
   const driver = String.raw`
@@ -368,6 +378,8 @@ const proc = spawn(process.execPath, ['tools/codex-computer-use-appserver-mcp.mj
 let nextId = 1;
 let buffer = '';
 const pending = new Map();
+let resolveExit;
+const exited = new Promise((resolve) => { resolveExit = resolve; });
 function send(message) { proc.stdin.write(JSON.stringify(message) + '\n'); }
 function request(method, params = {}, timeoutMs = 15000) {
   const id = nextId++;
@@ -398,6 +410,7 @@ proc.stdout.on('data', (chunk) => {
 proc.on('exit', (code, signal) => {
   for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(new Error('wrapper exited code=' + code + ' signal=' + signal)); }
   pending.clear();
+  resolveExit({ code, signal });
 });
 (async () => {
   await request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'lifecycle-test', version: '0' } }, 5000);
@@ -410,18 +423,31 @@ proc.on('exit', (code, signal) => {
   } else {
     const result = await request('tools/call', { name: 'get_app_state', arguments: { app: 'Activity Monitor' } }, 15000);
     const text = (result.content || []).map((block) => block.text || '').join('\n');
-    if (!text.includes('Activity Monitor')) throw new Error('read-only recovery did not return replacement-process output');
-    if (Number(require('node:fs').readFileSync(process.env.MACUSE_FAKE_STATE, 'utf8')) < 2) throw new Error('fake app-server was not restarted');
+    if (!text.includes('Activity Monitor')) throw new Error('fake app-server did not return expected output');
+    if (process.env.MACUSE_FAKE_MODE === 'stale-exit-recovery' && Number(require('node:fs').readFileSync(process.env.MACUSE_FAKE_STATE, 'utf8')) < 2) throw new Error('fake app-server was not restarted');
   }
   proc.kill('SIGTERM');
+  await Promise.race([exited, new Promise((_, reject) => setTimeout(() => reject(new Error('wrapper shutdown timed out')), 5000))]);
+  if (process.env.MACUSE_FAKE_MODE === 'shutdown') {
+    const pids = require('node:fs').readFileSync(process.env.MACUSE_FAKE_STATE + '.pids', 'utf8').trim().split('\n').filter(Boolean).map(Number);
+    for (const pid of pids) {
+      let alive = true;
+      try { process.kill(pid, 0); } catch { alive = false; }
+      if (alive) throw new Error('wrapper left fake app-server child alive: ' + pid);
+    }
+  }
   console.log(process.env.MACUSE_FAKE_MODE);
 })().catch((error) => { proc.kill('SIGKILL'); console.error(error.stack || error.message); process.exitCode = 1; });
 `;
   try {
     const spawnFailure = run('MCP spawn failure smoke', process.execPath, ['-e', driver], { env: { MACUSE_FAKE_CODEX: fakeCodex, MACUSE_FAKE_CWD: join(dir, 'missing-cwd'), MACUSE_FAKE_STATE: statePath, MACUSE_FAKE_MODE: 'spawn-error' }, timeoutMs: 30_000, verbose });
     rmSync(statePath, { force: true });
-    const recovery = run('MCP stale-exit recovery smoke', process.execPath, ['-e', driver], { env: { MACUSE_FAKE_CODEX: fakeCodex, MACUSE_FAKE_CWD: process.cwd(), MACUSE_FAKE_STATE: statePath, MACUSE_FAKE_MODE: 'stale-exit-recovery' }, timeoutMs: 30_000, verbose });
-    return `${spawnFailure.trim()}, ${recovery.trim()}`;
+    rmSync(statePath + '.pids', { force: true });
+    const recovery = run('MCP stale-exit recovery smoke', process.execPath, ['-e', driver], { env: { MACUSE_FAKE_CODEX: fakeCodex, MACUSE_FAKE_CWD: process.cwd(), MACUSE_FAKE_STATE: statePath, MACUSE_FAKE_MODE: 'stale-exit-recovery', MACUSE_FAKE_FAIL_FIRST_CALL: '1', MACUSE_FAKE_STALE_EXIT_DELAY_MS: '100', MACUSE_FAKE_SECOND_CALL_DELAY_MS: '250', MACUSE_MCP_TEST_STOP_FORCE_MS: '1000', MACUSE_MCP_TEST_STOP_GIVE_UP_MS: '25' }, timeoutMs: 30_000, verbose });
+    rmSync(statePath, { force: true });
+    rmSync(statePath + '.pids', { force: true });
+    const shutdown = run('MCP awaited shutdown smoke', process.execPath, ['-e', driver], { env: { MACUSE_FAKE_CODEX: fakeCodex, MACUSE_FAKE_CWD: process.cwd(), MACUSE_FAKE_STATE: statePath, MACUSE_FAKE_MODE: 'shutdown', MACUSE_FAKE_IGNORE_ALL_SIGTERM: '1', MACUSE_MCP_TEST_STOP_FORCE_MS: '50', MACUSE_MCP_TEST_STOP_GIVE_UP_MS: '500' }, timeoutMs: 30_000, verbose });
+    return `${spawnFailure.trim()}, ${recovery.trim()}, ${shutdown.trim()}`;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
