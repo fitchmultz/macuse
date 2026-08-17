@@ -39,7 +39,7 @@ import { captureFocusSnapshot, executeSequence } from "./codex-computer-use-modu
 
 const timeoutParam = Type.Optional(Type.Number({ minimum: 1_000, maximum: 300_000, description: "Tool timeout ms. Default 90000." }));
 const maxTextParam = Type.Optional(Type.Number({ minimum: 1_000, maximum: 200_000, description: "Max characters per text block. Default 20000." }));
-const approvalParam = Type.Optional(StringEnum(["inherit", "accept-all", "accept-once", "deny"] as const, { description: "App-approval prompt handling. Default inherit auto-accepts, matching Codex's Any App setting." }));
+const approvalParam = Type.Optional(StringEnum(["inherit", "accept-all", "accept-once", "deny"] as const, { description: "App-approval prompt handling. Default inherit auto-accepts under macuse's standing app-access policy." }));
 const detailParam = Type.Optional(StringEnum(["minimal", "compact", "full"] as const, { description: "Output detail: minimal (app/window summary + target hints), compact (interactive elements only), full (raw text)." }));
 const targetScopeParam = Type.Optional(StringEnum(["all", "main"] as const, { description: "main suppresses likely app/browser chrome and window controls." }));
 const appParam = Type.String({ description: "App name, path, or bundle ID, e.g. Activity Monitor or com.apple.ActivityMonitor." });
@@ -206,14 +206,14 @@ const auxiliaryToolSpecs = [
 		name: "event_stream_start",
 		server: "event-stream",
 		label: "Record & Replay Start",
-		description: "Start Record & Replay activity recording. Requires exact user intent, allowRecording:true, and a safety note.",
+		description: "Start up to 30 minutes of Record & Replay activity recording, or return the active session. Requires exact user intent, allowRecording:true, and a safety note.",
 		parameters: Type.Object({ allowRecording: Type.Boolean(), safetyNote: Type.String({ minLength: 1 }), toolTimeoutMs: timeoutParam }, { additionalProperties: false }),
 	},
 	{
 		name: "event_stream_status",
 		server: "event-stream",
 		label: "Record & Replay Status",
-		description: "Read Record & Replay status. Read-only, but exposes activity and artifact metadata.",
+		description: "Read current or recent Record & Replay status, duration, and artifact paths. Read-only, but exposes activity metadata.",
 		parameters: Type.Object({ toolTimeoutMs: timeoutParam }, { additionalProperties: false }),
 	},
 	{
@@ -241,14 +241,14 @@ const auxiliaryToolSpecs = [
 		name: "computer_history_status",
 		server: "computer-history",
 		label: "Computer History Status",
-		description: "Read Computer History status. Read-only, but exposes activity metadata.",
+		description: "Read Computer History status and recent local activity paths. Read-only, but exposes activity metadata.",
 		parameters: Type.Object({ toolTimeoutMs: timeoutParam }, { additionalProperties: false }),
 	},
 	{
 		name: "computer_history_get_settings",
 		server: "computer-history",
 		label: "Computer History Settings",
-		description: "Read all Computer History settings. Read-only, but exposes privacy metadata; call immediately before update_settings.",
+		description: "Read all Computer History observation and menu-bar settings. Read-only, but exposes privacy metadata; call immediately before update_settings.",
 		parameters: Type.Object({ toolTimeoutMs: timeoutParam }, { additionalProperties: false }),
 	},
 	{

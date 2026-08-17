@@ -2,10 +2,11 @@
 import { existsSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
-  COMPUTER_USE_TOOL_NAMES,
+  DEFAULT_CHATGPT_RESOURCES,
   DEFAULT_CODEX_BIN,
   DEFAULT_COMPUTER_USE_APP,
   DEFAULT_COMPUTER_USE_PLUGIN_DIR,
+  MCP_SERVERS,
   REPO_ROOT,
   VERSION,
   commandLine,
@@ -79,8 +80,9 @@ function commandCheck(name, command, args, opts = {}) {
   };
 }
 
-function toolNamesFromStatus(statusJson) {
-  return statusJson?.computerUse?.toolNames || statusJson?.status?.servers?.find((server) => server.name === 'computer-use')?.toolNames || [];
+function configuredToolNamesFromStatus(statusJson) {
+  if (statusJson?.inventories) return Object.values(statusJson.inventories).flatMap((server) => server.toolNames || []);
+  return (statusJson?.status?.servers || []).filter((server) => MCP_SERVERS[server.name]).flatMap((server) => server.toolNames || []);
 }
 
 function renderMarkdown(report) {
@@ -91,7 +93,7 @@ function renderMarkdown(report) {
   ]);
   const failed = report.checks.filter((check) => check.status === 'fail');
   const warned = report.checks.filter((check) => check.status === 'warn');
-  return `# macuse doctor report\n\nGenerated: ${report.generatedAt}\nMode: ${report.full ? 'full' : 'standard'}\nRepo: ${report.repoRoot}\n\n## Verdict\n\n${report.ok ? '✅ macuse is ready.' : '❌ macuse needs attention.'}\n\n- Failed checks: ${failed.length}\n- Warnings: ${warned.length}\n- Computer Use tools found: ${report.computerUseTools.length}\n\n## Checks\n\n${markdownTable(['Status', 'Check', 'Summary'], rows)}\n\n## Tool surface\n\n${report.computerUseTools.length ? report.computerUseTools.map((tool) => `- ${tool}`).join('\n') : 'No Computer Use tools were discovered.'}\n\n## Recommended next commands\n\n\`\`\`bash\nnode tools/validate-macuse.mjs quick\nnode tools/validate-macuse.mjs mutating\nnode tools/validate-macuse.mjs focus\nnode tools/validate-macuse.mjs mcp\n\`\`\`\n`;
+  return `# macuse doctor report\n\nGenerated: ${report.generatedAt}\nMode: ${report.full ? 'full' : 'standard'}\nRepo: ${report.repoRoot}\n\n## Verdict\n\n${report.ok ? '✅ macuse is ready.' : '❌ macuse needs attention.'}\n\n- Failed checks: ${failed.length}\n- Warnings: ${warned.length}\n- Configured tools found: ${report.configuredTools.length}\n\n## Checks\n\n${markdownTable(['Status', 'Check', 'Summary'], rows)}\n\n## Tool surface\n\n${report.configuredTools.length ? report.configuredTools.map((tool) => `- ${tool}`).join('\n') : 'No configured tools were discovered.'}\n\n## Recommended next commands\n\n\`\`\`bash\nnode tools/validate-macuse.mjs quick\nnode tools/validate-macuse.mjs mutating\nnode tools/validate-macuse.mjs focus\nnode tools/validate-macuse.mjs mcp\n\`\`\`\n`;
 }
 
 async function main() {
@@ -110,8 +112,10 @@ async function main() {
     full: opts.full,
     codexBin: opts.codex,
     computerUsePluginDir: DEFAULT_COMPUTER_USE_PLUGIN_DIR,
+    computerUsePlugins: {},
     computerUseApp: DEFAULT_COMPUTER_USE_APP,
     computerUseTools: [],
+    configuredTools: [],
     checks,
   };
 
@@ -120,13 +124,42 @@ async function main() {
   addCheck(checks, { status: checkStatus(fileExists(DEFAULT_COMPUTER_USE_APP), true), name: 'Computer Use app bundle', summary: DEFAULT_COMPUTER_USE_APP });
   addCheck(checks, { status: checkStatus(fileExists(DEFAULT_COMPUTER_USE_PLUGIN_DIR), true), name: 'Computer Use plugin cache', summary: DEFAULT_COMPUTER_USE_PLUGIN_DIR });
 
-  const pluginJsonPath = resolve(DEFAULT_COMPUTER_USE_PLUGIN_DIR, '.codex-plugin/plugin.json');
-  if (existsSync(pluginJsonPath)) {
+  const pluginVersions = new Set();
+  for (const [serverName, server] of Object.entries(MCP_SERVERS)) {
+    const pluginJsonPath = resolve(server.pluginDir, '.codex-plugin/plugin.json');
+    const mcpJsonPath = resolve(server.pluginDir, '.mcp.json');
+    const launcherPath = resolve(server.pluginDir, 'bin/computer-use-client-launcher');
+    if (!existsSync(pluginJsonPath) || !existsSync(mcpJsonPath)) {
+      addCheck(checks, { status: 'fail', name: `${serverName} plugin`, summary: `missing current plugin metadata under ${server.pluginDir}` });
+      continue;
+    }
     const plugin = readJsonFile(pluginJsonPath);
-    report.plugin = { name: plugin.name, version: plugin.version, description: plugin.description };
-    addCheck(checks, { status: 'pass', name: 'Computer Use plugin metadata', summary: `${plugin.name} ${plugin.version}` });
-  } else {
-    addCheck(checks, { status: 'warn', name: 'Computer Use plugin metadata', summary: `missing ${pluginJsonPath}` });
+    const mcp = readJsonFile(mcpJsonPath)?.mcpServers?.[serverName];
+    const manifestMatches = mcp?.command === './bin/computer-use-client-launcher'
+      && JSON.stringify(mcp?.args) === JSON.stringify(server.args)
+      && mcp?.cwd === '.'
+      && Array.isArray(mcp?.env_vars)
+      && mcp.env_vars.includes('CODEX_HOME');
+    report.computerUsePlugins[serverName] = { name: plugin.name, version: plugin.version, description: plugin.description, pluginDir: server.pluginDir };
+    if (plugin.version) pluginVersions.add(plugin.version);
+    addCheck(checks, {
+      status: manifestMatches && isExecutable(launcherPath) ? 'pass' : 'fail',
+      name: `${serverName} plugin`,
+      summary: manifestMatches && isExecutable(launcherPath) ? `${plugin.name} ${plugin.version}; launcher manifest matches` : `launcher or .mcp.json mismatch under ${server.pluginDir}`,
+    });
+  }
+  addCheck(checks, {
+    status: pluginVersions.size === 1 ? 'pass' : 'fail',
+    name: 'Computer Use plugin version parity',
+    summary: pluginVersions.size ? [...pluginVersions].join(', ') : 'no plugin versions found',
+  });
+
+  for (const [name, plist] of [
+    ['ChatGPT app version', resolve(DEFAULT_CHATGPT_RESOURCES, '../Info.plist')],
+    ['Computer Use client version', resolve(DEFAULT_COMPUTER_USE_APP, 'Contents/SharedSupport/SkyComputerUseClient.app/Contents/Info.plist')],
+  ]) {
+    const version = commandCheck(name, '/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleShortVersionString', '-c', 'Print :CFBundleVersion', plist], { warn: true });
+    addCheck(checks, { ...version.check, summary: version.result.ok ? version.result.stdout.trim().split('\n').join(' build ') : version.check.summary });
   }
 
   const nodeVersion = commandCheck('Node version', process.execPath, ['--version']);
@@ -153,18 +186,20 @@ async function main() {
   if (statusRun.result.ok) {
     try {
       const json = parseJsonOutput('app-server status', statusRun.result.stdout);
-      const names = toolNamesFromStatus(json).sort();
-      report.computerUseTools = names;
-      const missing = COMPUTER_USE_TOOL_NAMES.filter((tool) => !names.includes(tool));
+      const names = configuredToolNamesFromStatus(json).sort();
+      report.configuredTools = names;
+      report.computerUseTools = json.computerUse?.toolNames || [];
+      const expected = Object.values(MCP_SERVERS).flatMap((server) => server.tools);
+      const missing = expected.filter((tool) => !names.includes(tool));
       addCheck(checks, {
         status: missing.length ? 'fail' : 'pass',
-        name: 'Computer Use app-server tool surface',
+        name: 'Configured app-server tool surface',
         summary: missing.length ? `missing ${missing.join(', ')}` : `${names.length} expected tools`,
         command: statusRun.check.command,
         durationMs: statusRun.result.durationMs,
       });
     } catch (error) {
-      addCheck(checks, { status: 'fail', name: 'Computer Use app-server tool surface', summary: error.message, command: statusRun.check.command, durationMs: statusRun.result.durationMs });
+      addCheck(checks, { status: 'fail', name: 'Configured app-server tool surface', summary: error.message, command: statusRun.check.command, durationMs: statusRun.result.durationMs });
     }
   } else {
     addCheck(checks, statusRun.check);

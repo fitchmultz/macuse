@@ -20,7 +20,10 @@ export const VERSION = (() => {
 })();
 export const DEFAULT_CHATGPT_RESOURCES = '/Applications/ChatGPT.app/Contents/Resources';
 export const DEFAULT_CODEX_BIN = resolve(DEFAULT_CHATGPT_RESOURCES, 'codex');
-export const DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR = resolve(DEFAULT_CHATGPT_RESOURCES, 'plugins/openai-bundled/plugins/computer-use');
+const DEFAULT_BUNDLED_PLUGIN_ROOT = resolve(DEFAULT_CHATGPT_RESOURCES, 'plugins/openai-bundled/plugins');
+export const DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR = resolve(DEFAULT_BUNDLED_PLUGIN_ROOT, 'computer-use');
+export const DEFAULT_BUNDLED_RECORD_AND_REPLAY_PLUGIN_DIR = resolve(DEFAULT_BUNDLED_PLUGIN_ROOT, 'record-and-replay');
+export const DEFAULT_BUNDLED_COMPUTER_HISTORY_PLUGIN_DIR = resolve(DEFAULT_BUNDLED_PLUGIN_ROOT, 'computer-history');
 export const DEFAULT_CODEX_HOME = process.env.CODEX_HOME || resolve(homedir(), '.codex');
 // Plugin no longer embeds the app; use the installed client under $CODEX_HOME/computer-use.
 export const DEFAULT_COMPUTER_USE_PLUGIN_ROOT = resolve(DEFAULT_CODEX_HOME, 'plugins/cache/openai-bundled/computer-use');
@@ -29,9 +32,9 @@ export const DEFAULT_BUNDLED_COMPUTER_USE_CLIENT = resolve(DEFAULT_COMPUTER_USE_
 export const DEFAULT_COMPUTER_USE_CLIENT_CWD = dirname(DEFAULT_BUNDLED_COMPUTER_USE_CLIENT);
 export const DEFAULT_COMPUTER_USE_PLUGIN_DIR = discoverComputerUsePluginDir();
 export const MCP_SERVERS = Object.freeze({
-  'computer-use': { args: ['mcp'], tools: ['click', 'drag', 'get_app_state', 'list_apps', 'perform_secondary_action', 'press_key', 'scroll', 'select_text', 'set_value', 'type_text'] },
-  'event-stream': { args: ['event-stream', 'mcp'], tools: ['event_stream_start', 'event_stream_status', 'event_stream_stop'] },
-  'computer-history': { args: ['computer-history', 'mcp'], tools: ['computer_history_get_settings', 'computer_history_pause', 'computer_history_resume', 'computer_history_status', 'computer_history_update_settings'] },
+  'computer-use': { pluginDir: DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, args: ['mcp'], tools: ['click', 'drag', 'get_app_state', 'list_apps', 'perform_secondary_action', 'press_key', 'scroll', 'select_text', 'set_value', 'type_text'] },
+  'event-stream': { pluginDir: DEFAULT_BUNDLED_RECORD_AND_REPLAY_PLUGIN_DIR, args: ['event-stream', 'mcp'], tools: ['event_stream_start', 'event_stream_status', 'event_stream_stop'] },
+  'computer-history': { pluginDir: DEFAULT_BUNDLED_COMPUTER_HISTORY_PLUGIN_DIR, args: ['computer-history', 'mcp'], tools: ['computer_history_get_settings', 'computer_history_pause', 'computer_history_resume', 'computer_history_status', 'computer_history_update_settings'] },
 });
 export const COMPUTER_USE_TOOL_NAMES = MCP_SERVERS['computer-use'].tools;
 
@@ -45,11 +48,18 @@ function compareVersionLike(a, b) {
   return a.localeCompare(b);
 }
 
+export function mcpServerForTool(tool) {
+  const match = Object.entries(MCP_SERVERS).find(([, server]) => server.tools.includes(tool));
+  if (!match) throw new Error(`Unsupported upstream Computer Use tool: ${tool}`);
+  return match[0];
+}
+
 export function mcpServerConfigs() {
   return Object.fromEntries(Object.entries(MCP_SERVERS).map(([name, server]) => [name, {
-    command: DEFAULT_BUNDLED_COMPUTER_USE_CLIENT,
+    command: resolve(server.pluginDir, 'bin/computer-use-client-launcher'),
     args: server.args,
-    cwd: DEFAULT_COMPUTER_USE_CLIENT_CWD,
+    cwd: server.pluginDir,
+    env_vars: ['CODEX_HOME'],
     enabled: true,
   }]));
 }

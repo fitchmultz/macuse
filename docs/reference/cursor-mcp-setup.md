@@ -2,6 +2,7 @@
 
 Source: Local `macuse` app-server-backed MCP wrapper
 Created: May 22, 2026
+Updated: August 17, 2026 for ChatGPT 26.810.52044 and plugin 1.0.1000717
 Status: Working local example; refresh paths if this repo moves
 
 ## Config
@@ -41,20 +42,20 @@ node tools/macuse-config.mjs cursor --pretty --out configs/cursor-mcp.local.json
 
 The wrapper:
 
-- starts Codex app-server with Computer Use feature flags,
-- creates an ephemeral app-server thread with `computer-use`, `event-stream`, and `computer-history`,
+- starts Codex app-server with Computer Use feature flags, sends the current `initialized` notification, and waits for asynchronous MCP startup,
+- creates an ephemeral app-server thread with `computer-use`, `event-stream`, and `computer-history` using each current bundled plugin launcher/working directory/arguments,
 - exposes all 18 tools in the configured Computer Use, Record & Replay, and Computer History families over standard MCP,
-- defaults to `approval: "inherit"`, auto-accepting Computer Use app approvals
-  to match Codex's Any App setting,
+- defaults to `approval: "inherit"`, auto-accepting Computer Use app approvals under macuse's standing app-access policy,
 - routes tool execution through app-server `mcpServer/tool/call`,
 - sanitizes stopped-session sentinels and restarts only its app-server session before retrying read-only app/status/settings calls once,
+- requires `allowMutating:true`, a `safetyNote`, and an immediate `get_app_state` before every Computer Use mutation,
 - requires `allowRecording:true` plus `safetyNote` for Record & Replay starts and Computer History resume,
 - requires `allowPrivacyChange:true`, `safetyNote`, the complete `observation` object, and the current `showMenuBarIcon` value when present for Computer History settings updates, and
 - restores mouse position after pointer `click` / `drag` calls.
 
 ## Tool use rules
 
-1. Call `get_app_state` before mutating a target app.
+1. Every mutation requires `allowMutating:true` and a `safetyNote`; the wrapper immediately refreshes `get_app_state` before dispatch.
 2. Prefer `perform_secondary_action` with `action: "Press"`, `press_key`,
    `set_value`, `select_text`, or element-targeted `scroll` over pointer tools.
 3. Pointer `click` and `drag` require `allowPointer: true`.
@@ -62,9 +63,7 @@ The wrapper:
    when a client should surface MCP elicitation prompts, or `approval: "deny"`
    for denial-path tests.
 5. Use `event_stream_status`, `computer_history_status`, and `computer_history_get_settings` only when activity/artifact/privacy metadata is relevant. Record & Replay starts and Computer History resume require explicit user intent, `allowRecording:true`, and `safetyNote`; settings changes require fresh exact approval, `allowPrivacyChange:true`, the complete `observation` object, and the current `showMenuBarIcon` value when present.
-6. Stop before purchases, sends, deletes, credential/account/security/privacy
-   changes, installs, or ambiguous wrong-window actions unless the user gives
-   fresh explicit approval for that exact operation.
+6. Stop before purchases, sends, deletes, account/privacy changes, installs, or ambiguous wrong-window actions unless the user gives fresh exact approval. Hand off credential/authentication changes, browser/security warning bypasses, consequential financial transactions, and high-impact sensitive-domain decisions to the user.
 
 ## Validation
 
@@ -77,8 +76,8 @@ This validates:
 - wrapper syntax,
 - MCP initialize,
 - `tools/list` with all 18 expected tools and upstream-matching auxiliary annotations,
-- MCP elicitation proxying on a Finder denial path,
+- MCP elicitation proxy behavior when upstream emits an app-approval prompt,
 - `get_app_state` for Activity Monitor,
 - safe `event_stream_status` routing without starting recording,
-- pointer, recording-start, and privacy-change guards, and
+- mutation, safety-note, pointer, recording-start, and privacy-change guards, and
 - default-inherit app approval behavior.

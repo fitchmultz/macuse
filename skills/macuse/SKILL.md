@@ -3,7 +3,7 @@ name: macuse
 description: "Use for macuse pi tools: inspect, QA, dogfood, or safely control local macOS native apps through Codex Computer Use while preserving focus. Do not use for browser DOM automation, generic pi extension work, raw MCP probes, or sends/deletes/purchases/account/security/privacy changes without exact approval."
 compatibility: macOS with the macuse pi package/extension loaded and Codex Computer Use available.
 metadata:
-  version: "0.3.0"
+  version: "0.4.0"
   owner: "macuse"
 ---
 
@@ -30,7 +30,8 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
 - The task is ordinary website automation that `agent_browser` can do without native browser chrome.
 - The task is generic pi extension development rather than using macuse tools.
 - The task only needs raw MCP/app-server protocol investigation.
-- The next action would send, delete, purchase, install, terminate processes, change credentials/account/security/privacy settings, or act in an ambiguous window without fresh explicit approval.
+- The next action would send, delete, purchase, install, terminate processes, change account/privacy settings, or act in an ambiguous window without fresh exact approval.
+- The next action would change credentials/authentication, bypass a browser/security warning, make a consequential financial transaction, or make a high-impact sensitive-domain decision; hand control back to the user instead.
 
 ## Default workflow
 
@@ -43,8 +44,8 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
    - `targets` fallback objects (inside step `arguments` for `macuse_sequence`)
    - raw `element_index` only with `expectedRole`/`expectedName` guards.
 4. For dynamic controls, prefer `targets` fallback objects that include both stable IDs and visible descriptions when available.
-5. Enable the exact tool with `macuse_tools` before using a direct tool. Prefer direct non-pointer tools: `perform_secondary_action`, `set_value`, `press_key`, `type_text`, `select_text`, and `scroll`. Each direct mutation requires `allowMutating:true`, a narrow `safetyNote`, and a recent `get_app_state`; use `requireStateChange:true` when a no-op should fail closed. Prefer `set_value` only on a verified settable target and `type_text` only after verified focus. `select_text` selects by text string, not offsets. Direct `click`/`drag` additionally require `allowPointer:true`.
-6. Use the direct `event_stream_*` and `computer_history_*` tools only when requested. Record & Replay start and Computer History resume require `allowRecording:true` plus `safetyNote`; `computer_history_update_settings` requires `allowPrivacyChange:true`, a safety note, the complete `observation`, and the current `showMenuBarIcon` value when present; call `computer_history_get_settings` immediately first and preserve every unchanged field. Stop/pause need no allow flag. Status/settings calls are read-only but expose activity/privacy metadata.
+5. Enable the exact tool with `macuse_tools` before using a direct tool. Prefer direct non-pointer tools: `perform_secondary_action`, `set_value`, `press_key`, `type_text`, `select_text`, and `scroll`. Each direct mutation requires `allowMutating:true`, a narrow `safetyNote`, and an immediate pre-dispatch `get_app_state`; use `requireStateChange:true` when a no-op should fail closed. Prefer `set_value` only on a verified settable target and `type_text` only after verified focus. `select_text` selects by text string, not offsets. Direct `click`/`drag` additionally require `allowPointer:true`.
+6. Use the direct `event_stream_*` and `computer_history_*` tools only when requested. Record & Replay captures clicks, typed text, and interacted-window content for up to 30 minutes; an already-active start returns that session. Record & Replay start and Computer History resume require `allowRecording:true` plus `safetyNote`; `computer_history_update_settings` requires `allowPrivacyChange:true`, a safety note, the complete `observation`, and the current `showMenuBarIcon` value when present; call `computer_history_get_settings` immediately first and preserve every unchanged field. Stop/pause need no allow flag. Status/settings calls are read-only but expose activity/privacy metadata.
 7. Use `macuse_sequence` when the flow needs ordered actions, waits, assertions, or shared cleanup. Pass:
    - `allowMutating: true` and a narrow `safetyNote` for mutating steps
    - before/after `get_app_state`
@@ -60,7 +61,7 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
 - Keep the user's frontmost app and mouse focus intact when possible. Treat focus changes as evidence to report.
 - Treat `risk-sensitive-control` tags and the “Risk-sensitive controls visible” note as stop-and-review signals, even when the requested action seems small. Prefer summaries that surface `transient-editor` tags when working with popovers/editors.
 - Use `expectVisibleText` for UI-visible assertions; it matches substrings within parsed visible text nodes, window titles, visible control labels, and exposed field/search/edit values, including multiline continuations when upstream exposes them. Use `expectText` only for app content text/value checks; it intentionally ignores macuse/upstream metadata such as CUA version headers.
-- Do not clear text, select files, open files, submit forms, or press destructive controls unless that exact operation is low-risk and covered by the safety note or user approval. Treat browser address/search fields tagged `navigation-field` as submitting/navigation controls: `set_value` or `type_text` may change URL/title state or send a search, not merely stage text. `type_text` goes to current keyboard focus, which may be page content, not the omnibox.
+- Do not clear text, select files, open files, submit forms, or press destructive controls unless that exact operation is low-risk and covered by the safety note or user approval. Never bypass browser/security warnings. Hand off credential/authentication changes, consequential financial transactions, and high-impact sensitive-domain decisions to the user. Treat browser address/search fields tagged `navigation-field` as submitting/navigation controls: `set_value` or `type_text` may change URL/title state or send a search, not merely stage text. `type_text` goes to current keyboard focus, which may be page content, not the omnibox.
 - If Computer Use times out or state looks stale, stop mutation and report the blocker. For stopped-session or transport-closed states, enable and use `macuse_restart`, or use `/macuse-restart`; for timeouts, try a larger `toolTimeoutMs` or a read-only re-snapshot before considering another action.
 - Treat `actionDispatchedButNoStateChange` as a failed intended open/navigation unless the action was expected to be a no-op. Retry from a fresh state read; direct pointer fallback requires `allowPointer:true`, while sequence pointer fallback requires `allowPointerClick`/`allowPointerDrag`, always with an unambiguous target/window. For transient popovers/editors, a delayed readback is attempted automatically, but upstream may still miss very short-lived or hidden UI.
 - Scope waits when possible. `waitForText` accepts `visibleOnly: true` plus optional `title` or `url` guards to avoid matching stale/recent-list text. `title` is a strict window-title guard; if browser chrome reports a stale/non-intuitive title, omit the title guard and rely on a specific visible/url assertion instead.
@@ -68,7 +69,7 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
 - Finder sidebar/file rows and Calendar toolbar/popover controls are known to have sparse or unstable AX actions. If `Press` is invalid, switch target strategy or stop before pointer fallback unless explicitly approved.
 - For repeated `cgWindowNotFound`, `frontmost=<none>`, service timeouts, `connectionInvalid`, `errAETimeout`, `Computer Use server error -1743`, or suspected macOS TCC/Automation failures, run `node tools/macuse-doctor.mjs --out .scratch/doctor` when you are in this repo. Use `node tools/macuse-repair.mjs --repair-tcc --responsible auto` for a dry-run responsible-launcher preview. Apply repairs only with explicit user approval because `--apply`, `--unlock-with-env`, and `--repair-tcc` mutate broader local GUI/process/privacy state; applying TCC repair requires a host with Full Disk Access. Restarting Computer Use for the current session is allowed through `macuse_restart`.
 
-Do not expose or attempt the separate Messages MCP, `turn-ended` (no published payload contract), or the private `@oai/sky` Node REPL adapter (not MCP).
+Do not expose or attempt the separate Messages MCP, `turn-ended` (no published payload contract), or the app-server's `node_repl` MCP (`js`, `js_add_node_module_dir`, `js_reset`), which permits unrestricted JavaScript/module access outside macuse's guards.
 
 ## Evidence to report
 

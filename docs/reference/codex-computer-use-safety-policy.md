@@ -3,7 +3,8 @@
 Source: Local policy for this `macuse` investigation, based on the installed Codex Computer Use skill, OpenAI's Computer Use docs snapshot, and local bridge behavior.
 Author: Local investigation notes
 Created: May 22, 2026
-Status: Active guardrails for the packaged pi extension; all 18 configured upstream tools are registered and guarded, with additive activation through `macuse_tools`
+Updated: August 17, 2026 for the ChatGPT 26.810.52044 / plugin 1.0.1000717 release
+Status: Active guardrails for the packaged pi extension, CLI bridge, and standard MCP wrapper; all 18 configured upstream tools are guarded
 
 ## Current allowed scope
 
@@ -15,12 +16,13 @@ Allowed today:
 - app-server status/discovery probes for all 18 public tools
 - read-only `event_stream_status`, `computer_history_status`, and `computer_history_get_settings` (these expose activity/artifact/privacy metadata)
 - guarded Record & Replay stop and Computer History pause operations
-- Record & Replay start or Computer History resume only when the user requested recording, with explicit `allowRecording: true` and a non-empty safety note
+- Record & Replay start only when the user requested up to 30 minutes of click, typed-text, and interacted-window recording, with explicit `allowRecording: true` and a non-empty safety note; an already-active session is returned rather than restarted
+- Computer History resume only when the user requested local activity history, with explicit `allowRecording: true` and a non-empty safety note
 - `computer_history_update_settings` only with fresh exact user approval, explicit `allowPrivacyChange: true`, a non-empty safety note, and the complete `observation` plus current `showMenuBarIcon` value when present, copied from an immediately preceding `computer_history_get_settings` result with only the approved fields changed
-- direct `perform_secondary_action`, `press_key`, `type_text`, `set_value`, `select_text`, `scroll`, `click`, and `drag` only with explicit `allowMutating: true`, a concrete `safetyNote`, and a recent `get_app_state`; direct pointer tools also require `allowPointer: true`
+- direct `perform_secondary_action`, `press_key`, `type_text`, `set_value`, `select_text`, `scroll`, `click`, and `drag` only with explicit `allowMutating: true`, a concrete `safetyNote`, and an immediate pre-dispatch `get_app_state`; direct pointer tools also require `allowPointer: true`
 - `macuse_sequence` with the same mutation guard, ordered evidence, and `allowPointerClick` / `allowPointerDrag` for pointer steps
 
-The packaged pi extension registers all 18 tools in its three configured MCP families, plus `macuse_sequence`, `macuse_tools`, and `macuse_restart`. Only `list_apps`, `get_app_state`, `macuse_sequence`, and `macuse_tools` start active; the loader enables exact additional tools additively until startup, new-session, resume, fork, or reload resets activation. The separate Messages MCP is intentionally excluded because sends cross a hard safety boundary. `turn-ended` remains excluded because no payload contract is published, and the private `@oai/sky` Node REPL adapter is not MCP and is not exposed.
+The packaged pi extension registers all 18 tools in its three configured MCP families, plus `macuse_sequence`, `macuse_tools`, and `macuse_restart`. Only `list_apps`, `get_app_state`, `macuse_sequence`, and `macuse_tools` start active; the loader enables exact additional tools additively until startup, new-session, resume, fork, or reload resets activation. The separate Messages MCP is intentionally excluded because sends cross a hard safety boundary. The current app-server's `node_repl` MCP (`js`, `js_add_node_module_dir`, `js_reset`) is excluded because it permits unrestricted JavaScript and module access outside these guards. `turn-ended` remains excluded because no payload contract is published.
 
 ## Preconditions before any mutating action
 
@@ -39,18 +41,18 @@ state probe or stop and request explicit user direction.
 
 ## Hard stop boundaries
 
-Never perform these actions without fresh, explicit user approval for the exact
-operation:
+Always hand control back to the user instead of executing credential or authentication changes, attempts to bypass browser or security warnings, consequential financial transactions, or high-impact medical, legal, financial, hiring, identity, or government decisions based on sensitive data. Tool flags never authorize those operations.
+
+Never perform these other actions without fresh, explicit user approval for the exact operation:
 
 - purchases, orders, payments, trades, or financial transfers
 - account deletion, subscription changes, or plan changes
-- credential, key, token, password, recovery-code, or MFA changes
-- privacy, security, firewall, device-management, or remote-access settings
+- privacy, security, firewall, device-management, or remote-access settings that are not already covered by the handoff rule
 - sending messages, emails, comments, posts, invitations, or notifications
 - deleting files, records, conversations, data, or cloud resources
 - installing/uninstalling software or browser extensions
 - accepting legal terms, consent prompts, data-sharing prompts, or policy prompts
-- actions in medical, legal, financial, hiring, identity, or government systems
+- non-decisional actions in medical, legal, financial, hiring, identity, or government systems
 - actions in the wrong app, wrong account, wrong workspace, or ambiguous window
 
 ## Browser and signed-in app handling
@@ -63,19 +65,15 @@ For browser/app Computer Use:
 - Keep the task narrow.
 - Do not navigate to sensitive account pages unless required.
 - Do not submit forms that create external side effects without explicit approval.
-- Stop before final submit/order/post/send/pay/delete actions unless the user has
-  explicitly authorized that exact final action.
+- Stop before final submit/order/post/send/pay/delete actions unless the user has explicitly authorized that exact final action; hand off rather than executing when the action falls under the stricter handoff rule.
+- Never bypass or dismiss browser security, privacy, certificate, or download warnings for the user.
 
 ## App approval prompts
 
 Computer Use app approval is separate from macOS Screen Recording,
 Accessibility, and Automation permissions.
 
-The user has enabled Codex's **Any App** Computer Use setting and explicitly
-requested that the pi bridge not add a second per-app confirmation layer. The
-current bridge therefore defaults to `approval: "inherit"`, which auto-accepts
-Computer Use app-approval elicitations for the external bridge. Explicit
-`approval: "deny"` remains available for denial-path tests.
+The user has explicitly requested that the pi bridge not add a second per-app confirmation layer. The current bridge therefore defaults to `approval: "inherit"`, which auto-accepts Computer Use app-approval elicitations under macuse's standing app-access policy. Explicit `approval: "deny"` remains available for denial-path tests, and the standard MCP wrapper offers `approval: "ask"` for clients that want elicitation prompts.
 
 This only removes the redundant app-approval prompt layer. macOS TCC permissions
 and hard stop boundaries still apply.
@@ -85,12 +83,11 @@ and hard stop boundaries still apply.
 The mutating validation now uses a non-destructive Activity Monitor probe:
 
 1. Run `get_app_state` for `Activity Monitor`.
-2. Set the search field to `Codex`.
-3. Verify filtered Activity Monitor state exposes `Codex`.
-4. Clear the search field after its accessibility name drifts to the typed value.
-5. Switch to the `Memory` tab with `perform_secondary_action`.
-6. Switch back to the `CPU` tab with `perform_secondary_action`.
-7. Verify CPU/search state and native frontmost focus did not change.
+2. Normalize to the `CPU` tab with `perform_secondary_action`.
+3. Press `Escape` to prove non-element mutations receive an immediate fresh-state preflight.
+4. Switch to the `Memory` tab with `perform_secondary_action`.
+5. Switch back to the `CPU` tab with `perform_secondary_action`.
+6. Verify CPU state. The separate `focus` mode also fails if a mutating action brings Activity Monitor frontmost.
 
 Reusable commands:
 
@@ -100,9 +97,7 @@ node tools/validate-macuse.mjs focus
 node tools/validate-macuse.mjs mcp
 ```
 
-The focus validation records the frontmost app before/after the mutating probe
-and fails if native frontmost focus changes. Whole-run mouse coordinate drift is
-reported separately because the user may move the mouse during the run. Pointer
+The focus validation records the frontmost app before/after each mutating probe and fails if Computer Use brings Activity Monitor frontmost. Unrelated user-driven frontmost drift and whole-run mouse coordinate drift are reported rather than misattributed to Computer Use. Pointer
 sequences check their own before/restored coordinates separately.
 
 Separate controlled TextEdit probes were also run:
@@ -121,7 +116,7 @@ Separate controlled TextEdit probes were also run:
 
 ## Implementation guidance
 
-Direct mutating tools and `macuse_sequence` share the same persistent executor, stable-target refresh, focus evidence, and fail-closed guards. Post-action readback runs when evidence is requested with `requireStateChange`, assertions, or image capture. Use a direct tool for one action and `macuse_sequence` for ordered multi-step workflows. `macuse_sequence` requires or enforces:
+Direct mutating tools and `macuse_sequence` share the same persistent executor, immediate pre-dispatch app-state refresh for every mutation, focus evidence, and fail-closed guards. A failed refresh blocks the mutation. Post-action readback runs when evidence is requested with `requireStateChange`, assertions, or image capture. Use a direct tool for one action and `macuse_sequence` for ordered multi-step workflows. `macuse_sequence` requires or enforces:
 
 - ordered `steps`, preferably starting and ending with `get_app_state`
 - optional sequence-level `app` to apply a default target app to steps that omit
@@ -187,12 +182,6 @@ Direct mutating tools and `macuse_sequence` share the same persistent executor, 
 
 Lifecycle safety: the pi extension owns only its spawned `codex app-server` process and descendants. It stops them on normal `session_shutdown`, exposes `/macuse-stop` for manual cleanup, records macOS PID/start-time fingerprints under `/tmp/macuse-appserver`, starts a watchdog for hard-crash cleanup, and reaps only matching macuse-owned orphaned app-server processes at startup. It does not kill Codex's global `SkyComputerUseService` helper.
 
-The app-server-backed standard MCP wrapper at
-`tools/codex-computer-use-appserver-mcp.mjs` proxies MCP `elicitation/create`
-app-approval prompts when the client advertises elicitation support. It also uses
-the same focus policy for external MCP clients: pointer `click` / `drag` require
-`allowPointer: true`, and mouse position is restored after the pointer call.
+The app-server-backed standard MCP wrapper at `tools/codex-computer-use-appserver-mcp.mjs` proxies MCP `elicitation/create` app-approval prompts when the client advertises elicitation support. Every Computer Use mutation requires `allowMutating:true`, a safety note naming target/effect/stop boundary, and an immediate `get_app_state`. Pointer `click` / `drag` additionally require `allowPointer:true`, and mouse position is restored after the pointer call.
 
-The wrapper should continue to refuse mutating calls unless the prompt and
-parameters make the risk boundary explicit. It should return before/after
-`get_app_state` evidence for every mutating action when practical.
+The CLI bridge enforces the same safety-note requirement through `--safety-note`; pointer calls additionally require `--allow-pointer` and automatically restore the mouse.

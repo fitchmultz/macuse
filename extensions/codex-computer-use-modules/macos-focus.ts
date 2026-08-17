@@ -23,7 +23,7 @@ export function restoreMousePosition(position: MousePosition | null): boolean {
 
 export function nativeFrontmostApps(): AppMetadata[] | null {
 	const front = spawnSync("/usr/bin/lsappinfo", ["front"], { encoding: "utf8", timeout: 5_000 });
-	const asn = front.stdout.trim();
+	const asn = front.stdout?.trim() ?? "";
 	if (front.status !== 0 || !asn) return null;
 	const read = (field: string) => lsappinfoValue(spawnSync("/usr/bin/lsappinfo", ["info", "-only", field, asn], { encoding: "utf8", timeout: 5_000 }).stdout || "");
 	const name = read("name") || "<unknown>";

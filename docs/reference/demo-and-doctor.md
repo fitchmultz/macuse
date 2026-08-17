@@ -1,6 +1,7 @@
 # macuse doctor, demo, and config tools
 
 Created: May 22, 2026
+Updated: August 17, 2026
 Status: Current operator entrypoints for proving the integration works
 
 ## Tools
@@ -37,11 +38,11 @@ Outputs:
 The standard doctor pass checks:
 
 - repo root and expected local paths,
-- Codex app-server binary and version,
-- Computer Use plugin metadata,
+- ChatGPT, Codex app-server, and installed Computer Use client versions,
+- all three current plugin versions, launcher executability, and `.mcp.json` manifest parity,
 - console frontmost app health,
 - Node/script syntax,
-- app-server Computer Use tool surface,
+- app-server inventories for all 18 tools after asynchronous MCP startup,
 - direct raw-MCP discovery,
 - app-server filtered/running `list_apps` for the target app, including a warning when Computer Use reports `frontmost=<none>`,
 - app-server `get_app_state`, including classification for `cgWindowNotFound`, timeouts, and AppleEvents/TCC denials, and
@@ -112,11 +113,11 @@ The demo proves:
 
 1. Codex app-server exposes all expected Computer Use tools.
 2. External Computer Use can capture app screenshots/state.
-3. Activity Monitor search is filtered and cleared after the search field name changes.
+3. A non-element Escape action refreshes Activity Monitor state before dispatch.
 4. CPU/Memory tab actions work through accessibility actions without pointer clicks.
-5. The sequence restores CPU/search state.
+5. The sequence restores CPU state.
 6. Native frontmost focus is unchanged.
-7. The standard MCP wrapper validates, including app-approval elicitation and pointer guard behavior.
+7. The standard MCP wrapper validates mutation/safety-note/pointer guards and app-approval elicitation behavior when upstream emits a prompt.
 
 ## Config generator
 

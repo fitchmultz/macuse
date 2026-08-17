@@ -6,7 +6,10 @@ import path from "node:path";
 export const VERSION = resolveMacuseVersion();
 export const DEFAULT_CHATGPT_RESOURCES = "/Applications/ChatGPT.app/Contents/Resources";
 export const DEFAULT_CODEX_BIN = path.join(DEFAULT_CHATGPT_RESOURCES, "codex");
-export const DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR = path.join(DEFAULT_CHATGPT_RESOURCES, "plugins/openai-bundled/plugins/computer-use");
+const DEFAULT_BUNDLED_PLUGIN_ROOT = path.join(DEFAULT_CHATGPT_RESOURCES, "plugins/openai-bundled/plugins");
+export const DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR = path.join(DEFAULT_BUNDLED_PLUGIN_ROOT, "computer-use");
+export const DEFAULT_BUNDLED_RECORD_AND_REPLAY_PLUGIN_DIR = path.join(DEFAULT_BUNDLED_PLUGIN_ROOT, "record-and-replay");
+export const DEFAULT_BUNDLED_COMPUTER_HISTORY_PLUGIN_DIR = path.join(DEFAULT_BUNDLED_PLUGIN_ROOT, "computer-history");
 // Plugin no longer embeds the app; use the installed client under $CODEX_HOME/computer-use.
 export const DEFAULT_CODEX_HOME = process.env.CODEX_HOME || path.join(homedir(), ".codex");
 export const DEFAULT_COMPUTER_USE_APP = path.join(DEFAULT_CODEX_HOME, "computer-use/Codex Computer Use.app");
@@ -14,17 +17,24 @@ export const DEFAULT_BUNDLED_COMPUTER_USE_CLIENT = path.join(DEFAULT_COMPUTER_US
 export const DEFAULT_COMPUTER_USE_CLIENT_CWD = path.dirname(DEFAULT_BUNDLED_COMPUTER_USE_CLIENT);
 
 export const MCP_SERVERS = {
-	"computer-use": { args: ["mcp"], tools: ["click", "drag", "get_app_state", "list_apps", "perform_secondary_action", "press_key", "scroll", "select_text", "set_value", "type_text"] },
-	"event-stream": { args: ["event-stream", "mcp"], tools: ["event_stream_start", "event_stream_status", "event_stream_stop"] },
-	"computer-history": { args: ["computer-history", "mcp"], tools: ["computer_history_get_settings", "computer_history_pause", "computer_history_resume", "computer_history_status", "computer_history_update_settings"] },
+	"computer-use": { pluginDir: DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, args: ["mcp"], tools: ["click", "drag", "get_app_state", "list_apps", "perform_secondary_action", "press_key", "scroll", "select_text", "set_value", "type_text"] },
+	"event-stream": { pluginDir: DEFAULT_BUNDLED_RECORD_AND_REPLAY_PLUGIN_DIR, args: ["event-stream", "mcp"], tools: ["event_stream_start", "event_stream_status", "event_stream_stop"] },
+	"computer-history": { pluginDir: DEFAULT_BUNDLED_COMPUTER_HISTORY_PLUGIN_DIR, args: ["computer-history", "mcp"], tools: ["computer_history_get_settings", "computer_history_pause", "computer_history_resume", "computer_history_status", "computer_history_update_settings"] },
 } as const;
 export type McpServerName = keyof typeof MCP_SERVERS;
 
+export function mcpServerForTool(tool: string): McpServerName {
+	const match = (Object.entries(MCP_SERVERS) as [McpServerName, (typeof MCP_SERVERS)[McpServerName]][]).find(([, server]) => (server.tools as readonly string[]).includes(tool));
+	if (!match) throw new Error(`Unsupported upstream Computer Use tool: ${tool}`);
+	return match[0];
+}
+
 export function mcpServerConfigs() {
 	return Object.fromEntries(Object.entries(MCP_SERVERS).map(([name, server]) => [name, {
-		command: DEFAULT_BUNDLED_COMPUTER_USE_CLIENT,
+		command: path.join(server.pluginDir, "bin/computer-use-client-launcher"),
 		args: [...server.args],
-		cwd: DEFAULT_COMPUTER_USE_CLIENT_CWD,
+		cwd: server.pluginDir,
+		env_vars: ["CODEX_HOME"],
 		enabled: true,
 	}]));
 }
@@ -55,7 +65,7 @@ export const DEFAULT_TOOL_TIMEOUT_MS = 90_000;
 export const DEFAULT_MAX_TEXT_CHARS = 20_000;
 export const WAIT_TOOLS = new Set(["waitForText", "waitForURL", "waitForTitle", "waitForElement", "waitUntilElementEnabled", "waitUntilElementDisabled"]);
 export const UPSTREAM_COMPUTER_USE_TOOLS = MCP_SERVERS["computer-use"].tools;
-export const READ_ONLY_TOOLS = new Set(["list_apps", "get_app_state", ...WAIT_TOOLS]);
+export const READ_ONLY_TOOLS = new Set(["list_apps", "get_app_state", "event_stream_status", "computer_history_status", "computer_history_get_settings", ...WAIT_TOOLS]);
 export const APP_SCOPED_TOOLS = new Set([
 	"get_app_state",
 	"perform_secondary_action",

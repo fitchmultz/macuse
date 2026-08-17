@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.0 - 2026-08-17
+
+- Follow ChatGPT's three current plugin launcher manifests, app-server `initialized` handshake, and asynchronous MCP startup behavior.
+- Route mixed Computer Use, Record & Replay, and Computer History sequences to the correct server.
+- Require mutation authorization, safety notes, and immediate fresh app state across the pi extension, CLI bridge, and standard MCP wrapper; keep pointer, recording, and privacy gates fail-closed.
+- Refresh doctor version/manifest diagnostics, live compatibility checks, current feature/safety guidance, and exclusion rationale for Messages and unrestricted `node_repl`.
+- Verify all 18 live schemas against ChatGPT `26.810.52044`, Codex CLI `0.148.0-alpha.9`, plugins `1.0.1000717`, and Computer Use client `26.727.1000550`.
+
 ## 0.3.0 - 2026-08-06
 
 - Add lazy activation for mutating, recording, history, and recovery tools, with activation reset across startup, reload, resume, fork, and new-session boundaries.
