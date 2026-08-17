@@ -4,9 +4,9 @@ Source: Local filesystem paths under `/Users/yourname/.codex/computer-use`, `/Us
 Author: [OpenAI](https://openai.com/)
 Posted: Not applicable; local installed app and plugin cache
 Scraped: May 22, 2026
-Refreshed: May 22, 2026 09:35 MDT after the Codex host app update, external-harness TCC probes, app-server bridge validation, and guarded Calculator click/key validation. Spot-checked again June 8 and July 18, 2026. Updated August 6, 2026 for current Computer Use schemas and Pi 0.84.0.
+Refreshed: May 22, 2026 09:35 MDT after the Codex host app update and external-harness probes. Spot-checked June 8 and July 18; updated August 6; refreshed August 17, 2026 for current ChatGPT plugins, launchers, and Pi 0.84.0+.
 Observed install metadata at May 22 refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin still `1.0.799`; app bundle `com.openai.sky.CUAService`; notarized Developer ID app from OpenAI
-Current August 6 spot-check: ChatGPT host app `26.730.61639` build `6234` (bundle ID remains `com.openai.codex`); bundled Codex CLI `0.147.0-alpha.1.2`; Computer Use plugin `1.0.1000621`; Computer Use client `26.727.1000550`. Macuse configures `computer-use`/`mcp` (10 tools), `event-stream`/`event-stream mcp` (3), and `computer-history`/`computer-history mcp` (5). The client also exposes a separate Messages MCP that macuse intentionally excludes. Discover the cache version at runtime rather than using historical fallback paths.
+Current August 17 spot-check: ChatGPT host app `26.810.52044` build `6662` (bundle ID remains `com.openai.codex`); bundled Codex CLI `0.148.0-alpha.9`; Computer Use, Record & Replay, and Computer History plugins `1.0.1000717`; Computer Use client `26.727.1000550`. Macuse configures `computer-use`/`mcp` (10 tools), `event-stream`/`event-stream mcp` (3), and `computer-history`/`computer-history mcp` (5) from each current plugin launcher. The client also exposes a separate Messages MCP, and app-server advertises `node_repl`; macuse intentionally excludes both.
 
 The host app, Codex CLI, and bundled Computer Use plugin now live inside
 `/Applications/ChatGPT.app`. The separate Computer Use service also remains
@@ -40,14 +40,12 @@ Related local host-app state found:
 | App name | `Codex Computer Use` |
 | Bundle ID | `com.openai.sky.CUAService` |
 | Executable | `SkyComputerUseService` |
-| Short version | `1.0` |
-| Build version | `799` |
+| Short version | `26.727.1000550` |
+| Build version | `1000550` |
 | Architecture | arm64 |
-| App bundle size | 51 MB |
+| App bundle size | 63 MB |
 | Signing authority | `Developer ID Application: OpenAI OpCo, LLC (2DC432GLL2)` |
 | Gatekeeper assessment | accepted; source `Notarized Developer ID` |
-| Code-signing timestamp | May 20, 2026 20:53:49 MDT |
-| CDHash | `e4a001c307d2541c9930a24b56ce833af6356d70` |
 
 The app entitlements observed were:
 
@@ -58,10 +56,10 @@ The app entitlements observed were:
 
 | Component | Bundle ID | Executable | Version / build | Path |
 | --- | --- | --- | --- | --- |
-| Codex Computer Use Installer | `com.openai.sky.CUAService.AuthorizationPluginInstaller` | `Codex Computer Use Installer` | `0.1.0` / `799` | `/Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/Codex Computer Use Installer.app` |
-| SkyComputerUseClient | `com.openai.sky.CUAService.cli` | `SkyComputerUseClient` | `1.0` / `799` | `/Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app` |
-| CUALockScreenGuardian | `com.openai.sky.CUAService.guardian` | `CUALockScreenGuardian` | `1.0` / `799` | `/Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/CUALockScreenGuardian.app` |
-| CodexComputerUseAuthorizationPlugin | `com.openai.sky.CUAService.AuthorizationPlugin` | `CodexComputerUseAuthorizationPlugin` | `0.1.0` / `799` | `/Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/Codex Computer Use Installer.app/Contents/Resources/CodexComputerUseAuthorizationPlugin.bundle` |
+| Codex Computer Use Installer | `com.openai.sky.CUAService.AuthorizationPluginInstaller` | `Codex Computer Use Installer` | `26.727.1000550` / `1000550` | `/Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/Codex Computer Use Installer.app` |
+| SkyComputerUseClient | `com.openai.sky.CUAService.cli` | `SkyComputerUseClient` | `26.727.1000550` / `1000550` | `/Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app` |
+| CUALockScreenGuardian | `com.openai.sky.CUAService.guardian` | `CUALockScreenGuardian` | `26.727.1000550` / `1000550` | `/Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/CUALockScreenGuardian.app` |
+| CodexComputerUseAuthorizationPlugin | `com.openai.sky.CUAService.AuthorizationPlugin` | `CodexComputerUseAuthorizationPlugin` | bundled with `1000550` | `/Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/Codex Computer Use Installer.app/Contents/Resources/CodexComputerUseAuthorizationPlugin.bundle` |
 
 ## Local config
 
@@ -85,7 +83,7 @@ settings only:
 A matching cached Computer Use plugin copy exists at:
 
 ```text
-/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799
+/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.1000717
 ```
 
 The ChatGPT host app contains the bundled copy used by macuse at:
@@ -98,45 +96,42 @@ Relevant files in that cache:
 
 | Purpose | Path |
 | --- | --- |
-| Plugin manifest | `/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799/.codex-plugin/plugin.json` |
-| MCP config | `/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799/.mcp.json` |
-| Cached app bundle | `/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799/Codex Computer Use.app` |
-| Computer Use skill | `/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799/skills/computer-use/SKILL.md` |
-| Plugin icon | `/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799/assets/app-icon.png` |
+| Plugin manifest | `/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.1000717/.codex-plugin/plugin.json` |
+| MCP config | `/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.1000717/.mcp.json` |
+| Computer Use skill | `/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.1000717/skills/computer-use/SKILL.md` |
+| Plugin icon | `/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.1000717/assets/app-icon.png` |
 
 The plugin manifest identifies the plugin as:
 
 - Name: `computer-use`
-- Version: `1.0.799`
-- Description: `Control desktop apps on macOS from Codex through Computer Use.`
+- Version: `1.0.1000717`
+- Description: `Control desktop apps on macOS from ChatGPT through Computer Use. Prefer purpose-built connectors, APIs, or CLIs.`
 - Author: OpenAI
 - License: Proprietary
 
-The MCP server entry points at the bundled client executable:
+The MCP server entry points at the current plugin launcher:
 
 ```json
 {
   "mcpServers": {
     "computer-use": {
-      "command": "./Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient",
+      "command": "./bin/computer-use-client-launcher",
       "args": ["mcp"],
-      "cwd": "."
+      "cwd": ".",
+      "env_vars": ["CODEX_HOME"]
     }
   }
 }
 ```
 
-At refresh time, only `1.0.799` was present under the bundled Computer Use cache;
-no newer Computer Use cache version was found. The main service and client
-executable hashes matched between the primary install, cached plugin copy, and
-host-app bundled copy.
+The current ChatGPT host also bundles separate `record-and-replay` and `computer-history` plugin roots at the same `1.0.1000717` version. All three use their own `computer-use-client-launcher` and family-specific arguments, while the executable itself stays in `$CODEX_HOME/computer-use`.
 
 ## App-specific instruction resources
 
 The Computer Use client bundle includes app-specific instruction files at:
 
 ```text
-/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799/Codex Computer Use.app/Contents/Resources/Package_ComputerUseClient.bundle/Contents/Resources/AppInstructions
+/Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/Resources/Package_ComputerUse.bundle/Contents/Resources/AppInstructions
 ```
 
 Files observed there:
@@ -147,9 +142,9 @@ Files observed there:
 - `Notion.md`
 - `Numbers.md`
 - `Spotify.md`
+- `Slack.md`
 
-Copies also exist inside the bundled `SkyComputerUseClient.app` and
-`CUALockScreenGuardian.app` resources.
+A copy also exists inside `CUALockScreenGuardian.app` resources.
 
 ## Use from non-Codex harnesses
 
@@ -165,8 +160,7 @@ The installed client is technically invocable outside Codex as a standard MCP
 server. Evidence:
 
 - The client help says `mcp` "Runs the Computer Use client as an MCP server".
-- The bundled `.mcp.json` registers a `computer-use` server with command
-  `SkyComputerUseClient` and args `["mcp"]`.
+- The bundled `.mcp.json` registers a `computer-use` server with `./bin/computer-use-client-launcher`, args `["mcp"]`, and `CODEX_HOME` forwarding.
 - A direct MCP probe from this shell succeeded for `initialize` and `tools/list`
   without running through Codex.
 
@@ -177,9 +171,10 @@ like this for **direct raw-MCP discovery and denial-path tests**:
 {
   "mcpServers": {
     "computer-use": {
-      "command": "./Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient",
+      "command": "./bin/computer-use-client-launcher",
       "args": ["mcp"],
-      "cwd": "/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799"
+      "cwd": "/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.1000717",
+      "env_vars": ["CODEX_HOME"]
     }
   }
 }
@@ -216,7 +211,7 @@ The MCP `serverInfo` returned:
 ```json
 {
   "name": "Computer Use",
-  "version": "d10a51766bb4d162ef1eed308e86a0f8f3816fb860896cb92c18e6de998142af"
+  "version": "14e7d17f1f59e77ca541a15071e980628cd08977a4dda111c96e0564d337056b"
 }
 ```
 
@@ -241,10 +236,7 @@ The bridge starts:
   --enable tool_call_mcp_elicitation
 ```
 
-It then creates an ephemeral app-server thread, explicitly configures the
-`computer-use`, `event-stream`, and `computer-history` transports from the
-ChatGPT-bundled plugin, verifies their paginated thread-scoped inventories, and
-calls the selected server through `mcpServer/tool/call`. The explicit transports
+It sends the current `initialized` notification, creates an ephemeral app-server thread, explicitly configures the `computer-use`, `event-stream`, and `computer-history` transports from their current ChatGPT-bundled plugin launchers, waits for asynchronous startup, verifies their paginated thread-scoped inventories, and calls the selected server through `mcpServer/tool/call`. The explicit transports
 prevent stale or disabled global Codex MCP config from shadowing them.
 
 Practical limits:
@@ -260,9 +252,7 @@ Practical limits:
   raw-MCP probes logged Apple Events acceptance but still timed out, so TCC
   acceptance is required for some hosts but not the whole direct raw-MCP contract.
 - A non-Codex harness must implement its own safety policy for risky UI actions.
-  This bridge intentionally does not add a second per-app confirmation layer when
-  Codex's Any App setting is enabled; it defaults to `approval: "inherit"` and
-  still keeps hard stop boundaries for high-risk actions.
+  This bridge intentionally does not add a second per-app confirmation layer; it defaults to `approval: "inherit"` under macuse's standing app-access policy and still keeps hard stop boundaries for high-risk actions.
 - Direct accepted raw-MCP service-backed probes (`get_app_state` for a target app
   and `list_apps`) timed out from external hosts. App-server-mediated read-only
   probes succeeded, which means the missing direct-MCP contract is likely around
@@ -292,13 +282,13 @@ SkyComputerUse, CUA, and `com.openai.sky` names:
 The preference files include Statsig/internal cache keys and app settings, so
 this reference records only their paths, not their full values.
 
-## Search notes from refresh
+## Historical May 22 search notes
+
+The following bullets preserve the original May 22 filesystem snapshot and are not current install guidance.
 
 - The Codex host app update was visible at `/Applications/Codex.app`, version
   `26.519.31651` build `3017`.
-- No newer Computer Use plugin cache was found; only
-  `/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799`
-  existed at refresh time.
+- No newer Computer Use plugin cache was found; only `/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799` existed at that time.
 - `grep` over the Codex plugin/cache area found Computer Use references only in
   the `computer-use/1.0.799` plugin and related resource bundles. It also found a
   separate bundled browser plugin at

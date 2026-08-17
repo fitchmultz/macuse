@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import process from 'node:process';
-import { DEFAULT_CODEX_BIN, MCP_SERVERS, VERSION, mcpServerConfigs } from './macuse-utils.mjs';
+import { DEFAULT_CODEX_BIN, MCP_SERVERS, VERSION, mcpServerConfigs, mcpServerForTool } from './macuse-utils.mjs';
 import { pickUpstreamToolArgs } from '../extensions/codex-computer-use-modules/upstream-tool-args.mjs';
 import {
   appServerSessionRecoverySummary,
@@ -11,7 +11,6 @@ import {
   resolveElementTarget,
   restoreMousePosition,
   sanitizeComputerUseText,
-  targetsElement,
   toolResultText,
   updateElementCache,
   withReadOnlyComputerUseRecovery,
@@ -20,14 +19,27 @@ import {
 const DEFAULT_CWD = process.cwd();
 const FEATURE_FLAGS = ['computer_use', 'plugins', 'tool_call_mcp_elicitation'];
 const REQUEST_TIMEOUT_MS = Number(process.env.CODEX_CU_MCP_TIMEOUT_MS || 90_000);
+const STOP_FORCE_MS = positiveEnvDuration('MACUSE_MCP_TEST_STOP_FORCE_MS', 3_000);
+const STOP_GIVE_UP_MS = positiveEnvDuration('MACUSE_MCP_TEST_STOP_GIVE_UP_MS', 6_000);
 const POINTER_TOOLS = new Set(['click', 'drag']);
+const MUTATING_COMPUTER_USE_TOOLS = new Set(MCP_SERVERS['computer-use'].tools.filter((tool) => tool !== 'list_apps' && tool !== 'get_app_state'));
+const MUTATION_GUARD_PROPERTIES = {
+  allowMutating: { type: 'boolean', description: 'Must be true. Explicitly authorizes this guarded app mutation.' },
+  safetyNote: { type: 'string', minLength: 20, description: 'Target app, intended effect, and stop boundary.' },
+};
+const MUTATION_GUARD_REQUIRED = ['allowMutating', 'safetyNote'];
 const ELEMENT_INDEX_SCHEMA = { type: ['string', 'number'], description: 'Computer Use element index. The wrapper coerces numbers to strings before calling upstream.' };
 const ELEMENT_ALIAS_SCHEMA = { type: ['string', 'number'], description: 'Alias for element_index. Coerced to string before calling upstream.' };
 const ELEMENT_ID_SCHEMA = { type: 'string', description: 'Stable element ID from get_app_state, resolved to the current element_index before calling upstream.' };
 const ELEMENT_DESCRIPTION_SCHEMA = { type: 'string', description: 'Exact case-insensitive element description from get_app_state, resolved to the current element_index before calling upstream.' };
 
+function positiveEnvDuration(name, fallback) {
+  const value = Number(process.env[name]);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 if (process.argv.includes('-h') || process.argv.includes('--help')) {
-  process.stdout.write(`macuse Codex Computer Use MCP wrapper ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver-mcp.mjs\n\nThis is a stdio MCP server exposing all 18 verified app-control, Record & Replay,\nand Computer History tools with local pointer/recording/privacy guards. Configure it in\nCursor or another MCP client; do not run it directly except for --help or syntax\nchecks.\n\nEnvironment:\n  CODEX_BIN          Codex app-server binary. Default: ${DEFAULT_CODEX_BIN}\n  CODEX_CU_MCP_CWD  Thread cwd. Default: current working directory.\n\nGenerate client config:\n  node tools/macuse-config.mjs cursor --pretty\n\nValidate:\n  node tools/validate-macuse.mjs mcp\n`);
+  process.stdout.write(`macuse Codex Computer Use MCP wrapper ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver-mcp.mjs\n\nThis is a stdio MCP server exposing all 18 verified app-control, Record & Replay,\nand Computer History tools with local mutation, pointer, recording, and privacy guards. Configure it in\nCursor or another MCP client; do not run it directly except for --help or syntax\nchecks.\n\nEnvironment:\n  CODEX_BIN          Codex app-server binary. Default: ${DEFAULT_CODEX_BIN}\n  CODEX_CU_MCP_CWD  Thread cwd. Default: current working directory.\n\nGenerate client config:\n  node tools/macuse-config.mjs cursor --pretty\n\nValidate:\n  node tools/validate-macuse.mjs mcp\n`);
   process.exit(0);
 }
 
@@ -62,12 +74,12 @@ const TOOL_SCHEMAS = {
   },
   get_app_state: {
     name: 'get_app_state',
-    description: 'Start/refresh a Computer Use session for an app and return accessibility tree plus screenshot. Read-only but may reveal visible app contents. Default approval:"inherit" auto-accepts app approvals to match Codex Any App.',
+    description: 'Start/refresh a Computer Use session for an app and return accessibility tree plus screenshot. Read-only but may reveal visible app contents. Default approval:"inherit" auto-accepts under the standing macuse app-access policy.',
     inputSchema: {
       type: 'object', additionalProperties: false,
       properties: {
         app: { type: 'string', description: 'App name, bundle identifier, or full app path.' },
-        approval: { type: 'string', enum: ['inherit', 'accept-all', 'ask', 'deny', 'accept-once'], description: 'How to answer Computer Use app-approval prompts. Default inherit auto-accepts app approvals to match Codex Any App.' },
+        approval: { type: 'string', enum: ['inherit', 'accept-all', 'ask', 'deny', 'accept-once'], description: 'How to answer Computer Use app-approval prompts. Default inherit auto-accepts under the standing macuse app-access policy.' },
       },
       required: ['app'],
     },
@@ -76,25 +88,25 @@ const TOOL_SCHEMAS = {
   perform_secondary_action: {
     name: 'perform_secondary_action',
     description: 'Invoke an accessibility secondary action on an element. Prefer action:"Press" over pointer click when available to preserve mouse focus. Stable IDs/descriptions are resolved against a fresh get_app_state.',
-    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, elementId: ELEMENT_ID_SCHEMA, element_id: ELEMENT_ID_SCHEMA, elementDescription: ELEMENT_DESCRIPTION_SCHEMA, element_description: ELEMENT_DESCRIPTION_SCHEMA, action: { type: 'string' } }, required: ['app', 'action'] },
+    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, elementId: ELEMENT_ID_SCHEMA, element_id: ELEMENT_ID_SCHEMA, elementDescription: ELEMENT_DESCRIPTION_SCHEMA, element_description: ELEMENT_DESCRIPTION_SCHEMA, action: { type: 'string' }, ...MUTATION_GUARD_PROPERTIES }, required: ['app', 'action', ...MUTATION_GUARD_REQUIRED] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   press_key: {
     name: 'press_key',
     description: 'Press a key or key combination in the target app. Requires prior get_app_state for the same app. Uses xdotool-style combos such as super+comma; key:",", modifiers:["COMMAND"] normalizes to that form.',
-    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, key: { type: 'string' }, modifiers: { type: 'array', items: { type: 'string' } } }, required: ['app', 'key'] },
+    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, key: { type: 'string' }, modifiers: { type: 'array', items: { type: 'string' } }, ...MUTATION_GUARD_PROPERTIES }, required: ['app', 'key', ...MUTATION_GUARD_REQUIRED] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   type_text: {
     name: 'type_text',
     description: 'Type literal text in the target app. Requires prior get_app_state for the same app.',
-    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, text: { type: 'string' } }, required: ['app', 'text'] },
+    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, text: { type: 'string' }, ...MUTATION_GUARD_PROPERTIES }, required: ['app', 'text', ...MUTATION_GUARD_REQUIRED] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   set_value: {
     name: 'set_value',
     description: 'Set the value of a settable accessibility element. Stable IDs/descriptions are resolved against a fresh get_app_state.',
-    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, elementId: ELEMENT_ID_SCHEMA, element_id: ELEMENT_ID_SCHEMA, elementDescription: ELEMENT_DESCRIPTION_SCHEMA, element_description: ELEMENT_DESCRIPTION_SCHEMA, value: { type: 'string' } }, required: ['app', 'value'] },
+    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, elementId: ELEMENT_ID_SCHEMA, element_id: ELEMENT_ID_SCHEMA, elementDescription: ELEMENT_DESCRIPTION_SCHEMA, element_description: ELEMENT_DESCRIPTION_SCHEMA, value: { type: 'string' }, ...MUTATION_GUARD_PROPERTIES }, required: ['app', 'value', ...MUTATION_GUARD_REQUIRED] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   select_text: {
@@ -104,36 +116,36 @@ const TOOL_SCHEMAS = {
       type: 'object', additionalProperties: false,
       properties: {
         app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, elementId: ELEMENT_ID_SCHEMA, element_id: ELEMENT_ID_SCHEMA, elementDescription: ELEMENT_DESCRIPTION_SCHEMA, element_description: ELEMENT_DESCRIPTION_SCHEMA, text: { type: 'string' },
-        prefix: { type: 'string' }, suffix: { type: 'string' }, selection: { type: 'string', enum: ['text', 'cursor_before', 'cursor_after'] },
+        prefix: { type: 'string' }, suffix: { type: 'string' }, selection: { type: 'string', enum: ['text', 'cursor_before', 'cursor_after'] }, ...MUTATION_GUARD_PROPERTIES,
       },
-      required: ['app', 'text'],
+      required: ['app', 'text', ...MUTATION_GUARD_REQUIRED],
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   scroll: {
     name: 'scroll',
     description: 'Scroll an element by direction/pages. Stable IDs/descriptions are resolved against a fresh get_app_state when provided.',
-    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, elementId: ELEMENT_ID_SCHEMA, element_id: ELEMENT_ID_SCHEMA, elementDescription: ELEMENT_DESCRIPTION_SCHEMA, element_description: ELEMENT_DESCRIPTION_SCHEMA, direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] }, pages: { type: 'number' } }, required: ['app', 'direction'] },
+    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, elementId: ELEMENT_ID_SCHEMA, element_id: ELEMENT_ID_SCHEMA, elementDescription: ELEMENT_DESCRIPTION_SCHEMA, element_description: ELEMENT_DESCRIPTION_SCHEMA, direction: { type: 'string', enum: ['up', 'down', 'left', 'right'] }, pages: { type: 'number' }, ...MUTATION_GUARD_PROPERTIES }, required: ['app', 'direction', ...MUTATION_GUARD_REQUIRED] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   click: {
     name: 'click',
     description: 'Pointer click by element index, stable target, or screenshot coordinates. Prefer perform_secondary_action when possible. Requires allowPointer:true. Mouse position is restored after the call.',
-    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, elementId: ELEMENT_ID_SCHEMA, element_id: ELEMENT_ID_SCHEMA, elementDescription: ELEMENT_DESCRIPTION_SCHEMA, element_description: ELEMENT_DESCRIPTION_SCHEMA, x: { type: 'number' }, y: { type: 'number' }, mouse_button: { type: 'string', enum: ['left', 'right', 'middle'] }, click_count: { type: 'integer' }, allowPointer: { type: 'boolean' } }, required: ['app', 'allowPointer'] },
+    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, elementId: ELEMENT_ID_SCHEMA, element_id: ELEMENT_ID_SCHEMA, elementDescription: ELEMENT_DESCRIPTION_SCHEMA, element_description: ELEMENT_DESCRIPTION_SCHEMA, x: { type: 'number' }, y: { type: 'number' }, mouse_button: { type: 'string', enum: ['left', 'right', 'middle'] }, click_count: { type: 'integer' }, allowPointer: { type: 'boolean' }, ...MUTATION_GUARD_PROPERTIES }, required: ['app', 'allowPointer', ...MUTATION_GUARD_REQUIRED] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
-  event_stream_start: auxiliarySchema('event_stream_start', 'Start Record & Replay activity recording. Requires allowRecording:true and a non-empty safetyNote.', false, { allowRecording: { type: 'boolean' }, safetyNote: { type: 'string' } }, ['allowRecording', 'safetyNote']),
-  event_stream_status: auxiliarySchema('event_stream_status', 'Read Record & Replay status. Read-only, but exposes activity/artifact metadata.', true),
+  event_stream_start: auxiliarySchema('event_stream_start', 'Start up to 30 minutes of Record & Replay activity recording, or return the active session. Requires allowRecording:true and a non-empty safetyNote.', false, { allowRecording: { type: 'boolean' }, safetyNote: { type: 'string' } }, ['allowRecording', 'safetyNote']),
+  event_stream_status: auxiliarySchema('event_stream_status', 'Read current or recent Record & Replay status, duration, and artifact paths. Read-only, but exposes activity metadata.', true),
   event_stream_stop: auxiliarySchema('event_stream_stop', 'Stop Record & Replay. Does not require allowRecording.', false, {}, [], true),
   computer_history_pause: auxiliarySchema('computer_history_pause', 'Pause Computer History. Does not require allowRecording.', false, {}, [], true),
   computer_history_resume: auxiliarySchema('computer_history_resume', 'Resume Computer History recording. Requires allowRecording:true and a non-empty safetyNote.', false, { allowRecording: { type: 'boolean' }, safetyNote: { type: 'string' } }, ['allowRecording', 'safetyNote'], true),
-  computer_history_status: auxiliarySchema('computer_history_status', 'Read Computer History status. Read-only, but exposes activity metadata.', true),
-  computer_history_get_settings: auxiliarySchema('computer_history_get_settings', 'Read Computer History settings. Read-only, but exposes privacy metadata.', true),
+  computer_history_status: auxiliarySchema('computer_history_status', 'Read Computer History status and recent local activity paths. Read-only, but exposes activity metadata.', true),
+  computer_history_get_settings: auxiliarySchema('computer_history_get_settings', 'Read Computer History observation and menu-bar settings. Read-only, but exposes privacy metadata.', true),
   computer_history_update_settings: auxiliarySchema('computer_history_update_settings', 'Replace all Computer History settings. Call computer_history_get_settings immediately first and preserve unchanged fields, including showMenuBarIcon. Requires allowPrivacyChange:true and a non-empty safetyNote.', false, { observation: OBSERVATION_SCHEMA, showMenuBarIcon: { type: 'boolean' }, allowPrivacyChange: { type: 'boolean' }, safetyNote: { type: 'string' } }, ['observation', 'allowPrivacyChange', 'safetyNote'], true),
   drag: {
     name: 'drag',
     description: 'Pointer drag using screenshot coordinates. Requires allowPointer:true and prior get_app_state for the same app. Mouse position is restored after the call.',
-    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, from_x: { type: 'number' }, from_y: { type: 'number' }, to_x: { type: 'number' }, to_y: { type: 'number' }, allowPointer: { type: 'boolean' } }, required: ['app', 'from_x', 'from_y', 'to_x', 'to_y', 'allowPointer'] },
+    inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, from_x: { type: 'number' }, from_y: { type: 'number' }, to_x: { type: 'number' }, to_y: { type: 'number' }, allowPointer: { type: 'boolean' }, ...MUTATION_GUARD_PROPERTIES }, required: ['app', 'from_x', 'from_y', 'to_x', 'to_y', 'allowPointer', ...MUTATION_GUARD_REQUIRED] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
 };
@@ -175,42 +187,100 @@ class AppServerClient {
     this.pending = new Map();
     this.buffer = '';
     this.threadId = null;
+    this.initializing = null;
+    this.stopping = null;
+    this.closed = false;
     this.currentApproval = 'deny';
     this.acceptedElicitations = 0;
     this.elicitationHandler = elicitationHandler;
   }
 
   async ensureThread() {
+    if (this.closed) throw new Error('app-server client is shutting down');
     if (this.threadId) return this.threadId;
+    if (this.initializing) return this.initializing;
+    const initializing = this.startThread();
+    this.initializing = initializing;
+    try {
+      return await initializing;
+    } finally {
+      if (this.initializing === initializing) this.initializing = null;
+    }
+  }
+
+  async startThread() {
     accessSync(this.codexBin, constants.X_OK);
     const args = ['app-server'];
     for (const flag of FEATURE_FLAGS) args.push('--enable', flag);
     const proc = spawn(this.codexBin, args, { cwd: this.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
     this.proc = proc;
+    this.buffer = '';
     proc.stdout.setEncoding('utf8');
     proc.stderr.setEncoding('utf8');
-    proc.stdout.on('data', (chunk) => this.onStdout(chunk));
+    proc.stdout.on('data', (chunk) => { if (this.proc === proc) this.onStdout(chunk); });
     proc.stderr.on('data', (chunk) => log('appserver.stderr', chunk.toString().trim()));
-    proc.on('exit', (code, signal) => {
-      for (const pending of this.pending.values()) pending.reject(new Error(`app-server exited code=${code} signal=${signal}`));
-      this.pending.clear();
-      if (this.proc === proc) this.threadId = null;
-    });
-    await this.request('initialize', { clientInfo: { name: 'macuse-appserver-mcp', version: VERSION }, capabilities: { experimentalApi: true, requestAttestation: false } }, 15_000);
-    this.notify('notifications/initialized', {});
-    const start = await this.request('thread/start', {
-      cwd: this.cwd,
-      ephemeral: true,
-      approvalPolicy: 'on-request',
-      sandbox: 'workspace-write',
-      config: {
-        features: { computer_use: true, plugins: true, tool_call_mcp_elicitation: true },
-        mcp_servers: mcpServerConfigs(),
-      },
-    }, 45_000);
-    this.threadId = start?.thread?.id;
-    if (!this.threadId) throw new Error('thread/start response missing thread.id');
-    return this.threadId;
+    proc.on('error', (error) => this.failProcess(proc, error));
+    proc.on('exit', (code, signal) => this.failProcess(proc, new Error(`app-server exited code=${code} signal=${signal}`)));
+    try {
+      await this.request('initialize', { clientInfo: { name: 'macuse-appserver-mcp', version: VERSION }, capabilities: { experimentalApi: true, requestAttestation: false } }, 15_000);
+      this.notify('initialized', {});
+      const start = await this.request('thread/start', {
+        cwd: this.cwd,
+        ephemeral: true,
+        approvalPolicy: 'on-request',
+        sandbox: 'workspace-write',
+        config: {
+          features: { computer_use: true, plugins: true, tool_call_mcp_elicitation: true },
+          mcp_servers: mcpServerConfigs(),
+        },
+      }, 45_000);
+      const threadId = start?.thread?.id;
+      if (!threadId) throw new Error('thread/start response missing thread.id');
+      await this.waitForConfiguredServers(threadId, 45_000);
+      if (this.proc !== proc) throw new Error('app-server exited during initialization');
+      this.threadId = threadId;
+      return threadId;
+    } catch (error) {
+      if (this.proc === proc) await this.stop();
+      throw error;
+    }
+  }
+
+  async waitForConfiguredServers(threadId, timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const servers = [];
+      let cursor;
+      for (let page = 0; page < 10; page += 1) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        const status = await this.request('mcpServerStatus/list', { threadId, detail: 'toolsAndAuthOnly', limit: 100, ...(cursor ? { cursor } : {}) }, Math.min(30_000, Math.max(1_000, remaining)));
+        servers.push(...(status?.data || []));
+        cursor = status?.nextCursor;
+        if (!cursor) break;
+      }
+      const missing = Object.entries(MCP_SERVERS).filter(([name, expected]) => {
+        const server = servers.find((candidate) => candidate.name === name);
+        const tools = server?.tools ? Object.keys(server.tools) : [];
+        return !server || expected.tools.some((tool) => !tools.includes(tool));
+      });
+      if (missing.length === 0) return;
+      if (Date.now() >= deadline) throw new Error(`configured MCP servers did not become ready: ${missing.map(([name]) => name).join(', ')}`);
+      await new Promise((resolve) => setTimeout(resolve, Math.min(250, deadline - Date.now())));
+    }
+  }
+
+  failProcess(proc, error) {
+    for (const [id, pending] of this.pending) {
+      if (pending.proc !== proc) continue;
+      clearTimeout(pending.timer);
+      this.pending.delete(id);
+      pending.reject(error);
+    }
+    if (this.proc === proc) {
+      this.proc = null;
+      this.threadId = null;
+    }
   }
 
   onStdout(chunk) {
@@ -246,8 +316,9 @@ class AppServerClient {
     this.write({ jsonrpc: '2.0', id: request.id, error: { code: -32601, message: `not implemented: ${request.method}` } });
   }
 
-  write(message) {
-    this.proc.stdin.write(`${JSON.stringify(message)}\n`);
+  write(message, proc = this.proc) {
+    if (!proc?.stdin?.writable) throw new Error('app-server stdin is unavailable');
+    proc.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
   notify(method, params) {
@@ -256,13 +327,20 @@ class AppServerClient {
 
   request(method, params, timeoutMs = REQUEST_TIMEOUT_MS) {
     const id = this.nextId++;
+    const proc = this.proc;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`${method} timed out after ${timeoutMs}ms`));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer });
-      this.write({ jsonrpc: '2.0', id, method, params });
+      this.pending.set(id, { resolve, reject, timer, proc });
+      try {
+        this.write({ jsonrpc: '2.0', id, method, params }, proc);
+      } catch (error) {
+        clearTimeout(timer);
+        this.pending.delete(id);
+        reject(error);
+      }
     });
   }
 
@@ -283,7 +361,7 @@ class AppServerClient {
         this.currentApproval = args.approval || 'inherit';
         this.acceptedElicitations = 0;
         try {
-          const server = MCP_SERVERS['event-stream'].tools.includes(tool) ? 'event-stream' : MCP_SERVERS['computer-history'].tools.includes(tool) ? 'computer-history' : 'computer-use';
+          const server = mcpServerForTool(tool);
           return sanitizeComputerUseResult(await this.request('mcpServer/tool/call', { threadId, server, tool, arguments: pickUpstreamToolArgs(tool, args) }, REQUEST_TIMEOUT_MS));
         } finally {
           this.currentApproval = 'deny';
@@ -293,19 +371,49 @@ class AppServerClient {
   }
 
   async stop() {
+    if (this.stopping) return this.stopping;
+    const stopping = this.stopProcess();
+    this.stopping = stopping;
+    try {
+      await stopping;
+    } finally {
+      if (this.stopping === stopping) this.stopping = null;
+    }
+  }
+
+  async close() {
+    this.closed = true;
+    await this.stop();
+  }
+
+  async stopProcess() {
     const proc = this.proc;
     this.proc = null;
     this.threadId = null;
     if (!proc || proc.exitCode !== null || proc.signalCode !== null) return;
-    proc.kill('SIGTERM');
     await new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(forceTimer);
+        clearTimeout(giveUpTimer);
         resolve();
-      }, 3000);
-      proc.once('exit', () => { clearTimeout(timer); resolve(); });
+      };
+      const forceTimer = setTimeout(() => {
+        if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');
+      }, STOP_FORCE_MS);
+      const giveUpTimer = setTimeout(finish, STOP_GIVE_UP_MS);
+      proc.once('exit', finish);
+      proc.kill('SIGTERM');
     });
   }
+}
+
+function validateMutationGuard(tool, args) {
+  if (!MUTATING_COMPUTER_USE_TOOLS.has(tool)) return;
+  if (args.allowMutating !== true) throw new Error(`${tool} requires allowMutating:true`);
+  if (String(args.safetyNote || '').trim().length < 20) throw new Error(`${tool} requires a safetyNote describing target, intended effect, and stop boundary`);
 }
 
 function validateAuxiliaryGuard(tool, args) {
@@ -372,6 +480,16 @@ function clientRequest(method, params, timeoutMs = REQUEST_TIMEOUT_MS) {
 const appServer = new AppServerClient({ codexBin: process.env.CODEX_BIN || DEFAULT_CODEX_BIN, cwd: process.env.CODEX_CU_MCP_CWD || DEFAULT_CWD, elicitationHandler: handleElicitation });
 const elementCache = new Map();
 let stdinBuffer = '';
+let toolCallQueue = Promise.resolve();
+
+function dispatchRequest(message) {
+  if (message.method !== 'tools/call') {
+    void handleRequest(message);
+    return;
+  }
+  const call = toolCallQueue.then(() => handleRequest(message));
+  toolCallQueue = call.catch(() => {});
+}
 
 async function handleRequest(message) {
   const { id, method, params = {} } = message;
@@ -389,11 +507,13 @@ async function handleRequest(message) {
       const name = params.name;
       let args = normalizeToolArguments(params.arguments || {});
       if (!TOOL_SCHEMAS[name]) throw new Error(`unknown tool: ${name}`);
+      validateMutationGuard(name, args);
       validateAuxiliaryGuard(name, args);
       pickUpstreamToolArgs(name, args);
       if (POINTER_TOOLS.has(name) && args.allowPointer !== true) throw new Error(`${name} requires allowPointer:true; prefer non-pointer actions when possible`);
-      if (targetsElement(name, args)) {
+      if (MUTATING_COMPUTER_USE_TOOLS.has(name) && typeof args.app === 'string') {
         const refresh = await appServer.callTool('get_app_state', { app: args.app, approval: args.approval || 'inherit' });
+        if (refresh.isError) throw new Error(`fresh app-state preflight failed before ${name}: ${toolResultText(refresh)}`);
         updateElementCache(elementCache, args.app, toolResultText(refresh));
       }
       args = resolveElementTarget(args, elementCache);
@@ -433,11 +553,17 @@ process.stdin.on('data', (chunk) => {
       if (msg.error) pending.reject(new Error(msg.error.message || 'client JSON-RPC error'));
       else pending.resolve(msg.result);
     } else if (Object.prototype.hasOwnProperty.call(msg, 'id')) {
-      void handleRequest(msg);
+      dispatchRequest(msg);
     }
   }
 });
 
-process.on('exit', () => appServer.stop());
-process.on('SIGTERM', () => { appServer.stop(); process.exit(0); });
-process.on('SIGINT', () => { appServer.stop(); process.exit(130); });
+let shuttingDown = null;
+function shutdown(code) {
+  if (!shuttingDown) shuttingDown = appServer.close().finally(() => process.exit(code));
+  return shuttingDown;
+}
+
+process.stdin.on('end', () => { void shutdown(0); });
+process.on('SIGTERM', () => { void shutdown(0); });
+process.on('SIGINT', () => { void shutdown(130); });

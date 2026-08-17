@@ -1,12 +1,12 @@
 # Codex Computer Use External Harness Investigation
 
-Source: Local Codex Computer Use app/plugin files and direct MCP probes against `SkyComputerUseClient mcp`
+Source: Local ChatGPT Computer Use app/plugin files, generated app-server schema, direct MCP probes against `SkyComputerUseClient mcp`, [Computer Use docs](https://learn.chatgpt.com/docs/computer-use), [Computer History docs](https://learn.chatgpt.com/docs/customization/computer-history), and [Codex 0.147.0 release notes](https://github.com/openai/codex/releases/tag/rust-v0.147.0)
 Author: [OpenAI](https://openai.com/) for the installed app/plugin; local investigation notes captured in this repository
 Posted: Not applicable; local installed app and plugin cache
 Scraped: May 22, 2026
-Refreshed: May 22, 2026 09:35 MDT; spot-checked again June 8 and July 18, 2026; updated August 6, 2026 for current Computer Use schemas and Pi 0.84.0. Active validation uses Activity Monitor instead of Calculator.
+Refreshed: May 22, 2026 09:35 MDT; spot-checked June 8 and July 18; updated August 6; refreshed August 17, 2026 for ChatGPT's current per-plugin launchers, app-server handshake/startup, safety guidance, and Pi 0.84.0+. Active validation uses Activity Monitor instead of Calculator.
 Observed metadata at May 22 refresh time: Codex host app `26.519.31651` build `3017`; Computer Use plugin `1.0.799`; MCP server name `Computer Use`; MCP server version `d10a51766bb4d162ef1eed308e86a0f8f3816fb860896cb92c18e6de998142af`
-Current August 6 spot-check: ChatGPT host app `26.730.61639` build `6234` (bundle ID `com.openai.codex`); bundled Codex CLI `0.147.0-alpha.1.2`; Computer Use plugin `1.0.1000621`; Computer Use client `26.727.1000550`. The app-server-mediated pi path configures and inventory-checks `computer-use` (10 tools), `event-stream` (3), and `computer-history` (5) in one explicit thread. The same client now exposes a separate Messages MCP, which macuse intentionally excludes because messaging is outside its app-control scope. Historical `/Applications/Codex.app` references below describe the pre-merge install. `turn-ended` remains unexposed because it has no published payload contract; the private `@oai/sky` Node REPL adapter is not MCP.
+Current August 17 spot-check: ChatGPT host app `26.810.52044` build `6662` (bundle ID `com.openai.codex`); bundled Codex CLI `0.148.0-alpha.9`; Computer Use, Record & Replay, and Computer History plugins `1.0.1000717`; Computer Use client `26.727.1000550`. The app-server-mediated path mirrors each plugin's launcher manifest and inventory-checks `computer-use` (10 tools), `event-stream` (3), and `computer-history` (5) after asynchronous startup. The client also exposes a separate Messages MCP, and app-server advertises `node_repl` (`js`, `js_add_node_module_dir`, `js_reset`); macuse intentionally excludes both. Historical `/Applications/Codex.app` and plugin `1.0.799` references below describe older installs. `turn-ended` remains unexposed because it has no published payload contract.
 
 ## Bottom line
 
@@ -30,8 +30,7 @@ What is proven:
   return.
 - Starting `/Applications/ChatGPT.app/Contents/Resources/codex app-server` with
   `--enable computer_use --enable plugins --enable tool_call_mcp_elicitation`,
-  then creating an ephemeral `thread/start` whose config explicitly points
-  `mcp_servers.computer-use` at ChatGPT's bundled Computer Use client, makes the
+  then sending `initialized` and creating an ephemeral `thread/start` whose config mirrors the three current plugin launchers, makes the
   app-server-mediated `mcpServer/tool/call` path work even when global config
   contains a stale or disabled server with the same name.
 - Through app-server, read-only `computer-use/list_apps` completed successfully.
@@ -73,56 +72,30 @@ Primary installed client:
 /Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient
 ```
 
-Bundled plugin copy used for MCP `cwd` in the plugin manifest:
+The current ChatGPT host app contains three separate bundled plugin roots:
 
-```text
-/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799
-```
+| Server | Plugin root | Launcher args |
+| --- | --- | --- |
+| `computer-use` | `/Applications/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins/computer-use` | `mcp` |
+| `event-stream` | `/Applications/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins/record-and-replay` | `event-stream mcp` |
+| `computer-history` | `/Applications/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins/computer-history` | `computer-history mcp` |
 
-Current ChatGPT host-app bundled copy:
+Each `.mcp.json` uses `./bin/computer-use-client-launcher`, `cwd: "."`, and `env_vars: ["CODEX_HOME"]`. Macuse mirrors these manifests instead of hard-coding the installed client for app-server transport. The launcher resolves the primary installed client shown above. A matching versioned plugin cache can exist under `$CODEX_HOME/plugins/cache/openai-bundled`, but it is not the canonical app-server config.
 
-```text
-/Applications/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins/computer-use
-```
+## MCP config exposed by the plugins
 
-The installed app, cache copy, and host-app bundled copy had matching executable
-hashes at refresh time.
-
-## MCP config exposed by the plugin
-
-Path:
-
-```text
-/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799/.mcp.json
-```
-
-Content at refresh time:
+The effective shape is:
 
 ```json
 {
-  "mcpServers": {
-    "computer-use": {
-      "command": "./Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient",
-      "args": ["mcp"],
-      "cwd": "."
-    }
-  }
+  "command": "./bin/computer-use-client-launcher",
+  "args": ["<family-specific arguments>"],
+  "cwd": ".",
+  "env_vars": ["CODEX_HOME"]
 }
 ```
 
-Equivalent direct non-Codex harness config:
-
-```json
-{
-  "mcpServers": {
-    "computer-use": {
-      "command": "/Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient",
-      "args": ["mcp"],
-      "cwd": "/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799"
-    }
-  }
-}
-```
+For direct raw-MCP discovery, use the installed executable with one of the three argument lists above. For positive operation, use macuse's app-server bridge so thread/session lifecycle and safety guards are present.
 
 ## Tool surface observed through `tools/list`
 
@@ -147,7 +120,7 @@ MCP. It is not, by itself, proof that every tool works outside Codex.
 Codex does ship a skill file for agents:
 
 ```text
-/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799/skills/computer-use/SKILL.md
+/Applications/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins/computer-use/skills/computer-use/SKILL.md
 ```
 
 The skill metadata says:
@@ -157,17 +130,15 @@ name: computer-use
 description: Control local Mac apps through Computer Use. Use for tasks that require reading or operating app UI by clicking, typing, scrolling, dragging, pressing keys, or setting values.
 ```
 
-The body of the skill is mostly a confirmation and safety policy. It does not
-teach much tool-by-tool usage beyond the general instruction to use Computer Use
-for local app UI interactions not exposed by a more specific plugin.
+The current skill prefers purpose-built plugins/skills, treats third-party content as untrusted authorization, and divides UI actions into handoff-required, action-time confirmation, pre-approval-eligible, and no-confirmation categories. Macuse keeps its stricter local safety policy rather than copying less-conservative upstream defaults.
 
 The app bundle also includes app-specific instruction files:
 
 ```text
-/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799/Codex Computer Use.app/Contents/Resources/Package_ComputerUseClient.bundle/Contents/Resources/AppInstructions
+/Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/Resources/Package_ComputerUse.bundle/Contents/Resources/AppInstructions
 ```
 
-Files observed:
+Files observed in the current bundle:
 
 - `AppleMusic.md`
 - `Clock.md`
@@ -175,6 +146,7 @@ Files observed:
 - `Notion.md`
 - `Numbers.md`
 - `Spotify.md`
+- `Slack.md`
 
 These should be considered supplemental runtime/app guidance, not a replacement
 for harness-level safety handling.
@@ -296,12 +268,11 @@ Computer Use MCP:
 The host client must then:
 
 1. Send app-server `initialize` with current camelCase capability fields, for example `capabilities: { experimentalApi: true, requestAttestation: false }`.
-2. Send `notifications/initialized`.
-3. Send `thread/start` to create an ephemeral thread with `approvalPolicy: "on-request"` and explicit `config.mcp_servers` entries for `computer-use` (`mcp`), `event-stream` (`event-stream mcp`), and `computer-history` (`computer-history mcp`) using the installed client under `~/.codex/computer-use` (resolved via `$CODEX_HOME` / home directory).
-4. Follow `nextCursor` across thread-scoped `mcpServerStatus/list` pages with `detail: "toolsAndAuthOnly"` to verify all 18 expected tools.
+2. Send app-server `initialized` (not MCP's `notifications/initialized`).
+3. Send `thread/start` to create an ephemeral thread with `approvalPolicy: "on-request"` and explicit `config.mcp_servers` entries that mirror each bundled plugin's `computer-use-client-launcher`, working directory, family-specific arguments, and `CODEX_HOME` forwarding.
+4. Poll thread-scoped `mcpServerStatus/list`, following `nextCursor` pages with `detail: "toolsAndAuthOnly"`, until asynchronous startup exposes all 18 expected tools or the thread timeout expires.
 5. Send `mcpServer/tool/call` with `threadId`, the matching `server`, tool name,
-   and tool arguments. Recording starts/resume and settings changes require the
-   local guards documented in the safety policy.
+   and tool arguments. All mutations, pointer calls, recording starts/resume, and settings changes require the local guards documented in the safety policy.
 6. Answer any app-server `mcpServer/elicitation/request` server-to-client
    requests with an explicit `accept`, `decline`, or `cancel` response.
 
@@ -310,9 +281,9 @@ Validated app-server calls from this repo:
 ```bash
 node tools/codex-computer-use-appserver.mjs status --quiet --pretty
 node tools/codex-computer-use-appserver.mjs list-apps --quiet --max-text-chars 1000 --pretty
-node tools/codex-computer-use-appserver.mjs get-state --app Calculator --quiet --max-text-chars 1200 --pretty
+node tools/codex-computer-use-appserver.mjs get-state --app "Activity Monitor" --quiet --max-text-chars 1200 --pretty
 node tools/codex-computer-use-appserver.mjs get-state --app Finder --approval deny --quiet --max-text-chars 500 --pretty
-node tools/codex-computer-use-appserver.mjs get-state --app Calculator --include-image --save-image /tmp/macuse-calculator.jpg --quiet --max-text-chars 200 --pretty
+node tools/codex-computer-use-appserver.mjs get-state --app "Activity Monitor" --include-image --save-image /tmp/macuse-activity-monitor.jpg --quiet --max-text-chars 200 --pretty
 node tools/validate-macuse.mjs mutating
 node tools/validate-macuse.mjs focus
 ```
@@ -457,10 +428,11 @@ The same binary also exposes separate subcommands:
 ```bash
 SkyComputerUseClient event-stream mcp
 SkyComputerUseClient computer-history mcp
+SkyComputerUseClient messages mcp
 SkyComputerUseClient turn-ended <payload>
 ```
 
-`event-stream mcp` exposes `event_stream_start`, `event_stream_status`, and `event_stream_stop` for Record & Replay. `computer-history mcp` exposes `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, and `computer_history_update_settings` for activity context and observation settings. `computer_history_update_settings` requires an `observation` object containing `defaultApplicationBehavior`, `defaultURLBehavior`, `allowlist`, `blocklist`; behavior values are `observe` or `do_not_observe`, and each list entry uses `scope: "app"` with `bundleID` or `scope: "url"` with a bare-domain `urlDomain` (no scheme or path); the other four upstream Computer History tools accept `{}`. These are native upstream features, but they are separate privacy-sensitive recording surfaces and are not part of the default app-server `computer-use` server.
+`event-stream mcp` exposes `event_stream_start`, `event_stream_status`, and `event_stream_stop` for Record & Replay. A recording captures clicks, typed text, and interacted-window content for up to 30 minutes; a start while active returns the current session. `computer-history mcp` exposes `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, and `computer_history_update_settings` for activity context and observation settings. `computer_history_update_settings` requires an `observation` object containing `defaultApplicationBehavior`, `defaultURLBehavior`, `allowlist`, `blocklist`; behavior values are `observe` or `do_not_observe`, and each list entry uses `scope: "app"` with `bundleID` or `scope: "url"` with a bare-domain `urlDomain` (no scheme or path); the other four upstream Computer History tools accept `{}`. These are native upstream features, but they are separate privacy-sensitive recording surfaces and are not part of the default app-server `computer-use` server. The current app-server also advertises `node_repl` with `js`, `js_add_node_module_dir`, and `js_reset`; macuse does not expose that unrestricted JavaScript/module surface. The Messages MCP is likewise excluded because sending falls outside app-control scope.
 
 Binary-string evidence shows private upstream internals such as `virtualCursor`, `focusEnforcer`, `focusRestoreTarget`, `ComputerUseIPCFrontmostWindow`, `ComputerUseIPCScreenshot`, `ComputerUseIPCSkyshot`, `ActivateCodingKeys`, and `DeactivateCodingKeys`. Treat those as upstream-owned implementation details unless OpenAI exposes stable MCP/app-server schemas.
 
@@ -489,11 +461,9 @@ Example MCP config:
 }
 ```
 
-The wrapper exposes the Computer Use tool family over MCP while routing execution
-through Codex app-server. It proxies MCP `elicitation/create` app-approval
+The wrapper exposes all three configured families over MCP while routing execution through Codex app-server. It proxies MCP `elicitation/create` app-approval
 prompts when the client advertises elicitation support; otherwise approval mode
-`ask` falls back to decline. It is stateful: call `get_app_state` for an app
-before mutating that app. Pointer `click` / `drag` require `allowPointer: true`
+`ask` falls back to decline. Every Computer Use mutation requires `allowMutating:true`, a safety note naming target/effect/stop boundary, and an immediate wrapper-managed `get_app_state`. Pointer `click` / `drag` additionally require `allowPointer:true`
 and restore mouse position after the call. Non-pointer AX actions do not need cursor restoration.
 
 This repository also includes a validation wrapper for repeated checks:
@@ -518,10 +488,7 @@ The working app-server bridge is:
 tools/codex-computer-use-appserver.mjs
 ```
 
-It launches Codex app-server with the required feature flags, initializes the
-app-server protocol, starts an ephemeral thread, and calls Computer Use through
-`mcpServer/tool/call`. It blocks non-read-only tools unless `--allow-mutating` is
-explicitly passed.
+It launches Codex app-server with the required feature flags, sends the current app-server `initialized` notification, starts an ephemeral thread with the three current per-plugin launchers, waits for asynchronous MCP startup, and calls the selected family through `mcpServer/tool/call`. Computer Use mutations require `--allow-mutating` and `--safety-note`; pointer calls also require `--allow-pointer` and restore the mouse.
 
 Useful commands:
 
@@ -542,14 +509,14 @@ It is declared through `package.json#pi.extensions` and registers all 18 tools i
 
 The pi extension keeps one persistent Codex app-server process/thread instead of shelling out to the CLI bridge for every tool call. Normal `session_shutdown` stops it; `/macuse-stop` stops only app-server while leaving lazy restart available. Read-only app state and auxiliary status/settings calls recover stopped-session or transport-closed failures once by restarting only the extension-owned app-server session. `/macuse-restart` / `macuse_restart` explicitly restart Computer Use helpers plus app-server. PID records/watchdog state remain under `/tmp/macuse-appserver`.
 
-`get_app_state`, direct mutations, and `macuse_sequence` default to `approval:"inherit"`, matching Codex Any App. Direct `perform_secondary_action`, `press_key`, `type_text`, `set_value`, `select_text`, `scroll`, `click`, and `drag` require `allowMutating:true`, a concrete `safetyNote`, and a recent app-state read; direct pointer tools additionally require `allowPointer:true`. `macuse_sequence` uses the same executor with ordered assertions/waits, `allowPointerClick` / `allowPointerDrag`, and a sequence-level `app` default. Sequence steps can include `expectText`, `expectAbsentText`, `expectVisibleText`, `allowError`, and `requireStateChange`; output defaults to `detail:"compact"` and keeps resumable failure details. Element-targeted tools accept
+`get_app_state`, direct mutations, and `macuse_sequence` default to `approval:"inherit"` under macuse's standing app-access policy. Direct `perform_secondary_action`, `press_key`, `type_text`, `set_value`, `select_text`, `scroll`, `click`, and `drag` require `allowMutating:true`, a concrete `safetyNote`, and an immediate pre-dispatch app-state read; direct pointer tools additionally require `allowPointer:true`. `macuse_sequence` uses the same executor with ordered assertions/waits, `allowPointerClick` / `allowPointerDrag`, dedicated top-level `allowRecording` / `allowPrivacyChange` gates for auxiliary mutations, and a sequence-level `app` default. Sequence steps can include `expectText`, `expectAbsentText`, `expectVisibleText`, `allowError`, and `requireStateChange`; output defaults to `detail:"compact"` and keeps resumable failure details. Element-targeted tools accept
 `element_index` as a string or number, `element` as an alias, `elementId` /
 `element_id` resolved from the latest `get_app_state` tree, exact
 `elementDescription` / `element_description` matches for descriptions such as
 Calculator `Add`, role/name selectors such as `{ "role": "button", "name":
 "Add" }`, or `arguments.targets` fallback objects such as
 `[{"elementId":"AllClear"},{"elementDescription":"Clear"},{"role":"button","name":"Clear"}]`.
-The extension refreshes app state before element-targeted sequence steps so
+The extension refreshes app state before every mutating sequence step so
 stale numeric indices are easier to diagnose, but ID/description/role-name
 targeting remains safer. Raw `element_index` targets can include
 `expectedRole`, `expectedName`, `expectedDescription`, `expectedId`, or
@@ -958,7 +925,7 @@ grep -RIl 'Control local Mac apps through Computer Use\|Computer Use Confirmatio
   '/Applications/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins' \
   2>/dev/null | sort
 
-find '/Users/yourname/.codex/plugins/cache/openai-bundled/computer-use/1.0.799/Codex Computer Use.app/Contents/Resources/Package_ComputerUseClient.bundle/Contents/Resources/AppInstructions' \
+find '/Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/Resources/Package_ComputerUse.bundle/Contents/Resources/AppInstructions' \
   -maxdepth 1 -type f -name '*.md' -print | sort
 ```
 

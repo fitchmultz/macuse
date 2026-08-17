@@ -12,6 +12,7 @@ import {
 	MCP_SERVERS,
 	VERSION,
 	mcpServerConfigs,
+	mcpServerForTool,
 	type McpServerName,
 	errorMessage,
 	isRecord,
@@ -411,7 +412,7 @@ export class AppServerClient {
 			clientInfo: { name: "pi-macuse-computer-use", version: VERSION },
 			capabilities: { experimentalApi: true, requestAttestation: false },
 		}, Math.min(timeoutMs, 15_000), signal);
-		this.notify("notifications/initialized");
+		this.notify("initialized");
 		const threadStart = await this.request("thread/start", {
 			cwd: this.cwd,
 			ephemeral: true,
@@ -434,23 +435,30 @@ export class AppServerClient {
 
 	private async verifyComputerUseInventory(threadId: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {
 		const deadline = Date.now() + timeoutMs;
-		const inventories = summarizeInventories(null);
-		let cursor: string | null = null;
-		for (let page = 0; page < 10; page += 1) {
-			const params: Record<string, unknown> = { threadId, detail: "toolsAndAuthOnly", limit: 100 };
-			if (cursor) params.cursor = cursor;
-			const status = await this.request("mcpServerStatus/list", params, Math.min(Math.max(1_000, deadline - Date.now()), 30_000), signal);
-			const pageInventories = summarizeInventories(status);
-			for (const name of Object.keys(MCP_SERVERS) as McpServerName[]) {
-				if (pageInventories[name].present) inventories[name] = pageInventories[name];
+		for (;;) {
+			const inventories = summarizeInventories(null);
+			let cursor: string | null = null;
+			for (let page = 0; page < 10; page += 1) {
+				signal?.throwIfAborted();
+				const remaining = deadline - Date.now();
+				if (remaining <= 0) break;
+				const params: Record<string, unknown> = { threadId, detail: "toolsAndAuthOnly", limit: 100 };
+				if (cursor) params.cursor = cursor;
+				const status = await this.request("mcpServerStatus/list", params, Math.min(Math.max(1_000, remaining), 30_000), signal);
+				const pageInventories = summarizeInventories(status);
+				for (const name of Object.keys(MCP_SERVERS) as McpServerName[]) {
+					if (pageInventories[name].present) inventories[name] = pageInventories[name];
+				}
+				cursor = isRecord(status) && typeof status.nextCursor === "string" ? status.nextCursor : null;
+				if (!cursor) break;
 			}
-			if (Object.values(inventories).every((inventory) => inventory.present)) break;
-			cursor = isRecord(status) && typeof status.nextCursor === "string" ? status.nextCursor : null;
-			if (!cursor) break;
+			this.inventories = inventories;
+			if (Object.values(inventories).every((inventory) => inventory.present && inventory.missingTools.length === 0)) return;
+			if (Date.now() >= deadline) break;
+			await new Promise((resolve) => setTimeout(resolve, Math.min(250, deadline - Date.now())));
 		}
-		this.inventories = inventories;
-		for (const inventory of Object.values(inventories)) {
-			if (!inventory.present) throw new ComputerUseError(`Codex app-server did not list the ${inventory.server} MCP server.`, inventory);
+		for (const inventory of Object.values(this.inventories)) {
+			if (!inventory.present) throw new ComputerUseError(`Codex app-server did not list the ${inventory.server} MCP server before startup timed out.`, inventory);
 			if (inventory.missingTools.length) throw new ComputerUseError(`${inventory.server} MCP server is missing required tools: ${inventory.missingTools.join(", ")}`, inventory);
 		}
 	}
@@ -605,7 +613,7 @@ export class AppServerClient {
 			const acceptedBefore = this.acceptedElicitations;
 			const elicitationBefore = this.elicitationCount;
 			const started = Date.now();
-			const server = opts.server ?? "computer-use";
+			const server = opts.server ?? mcpServerForTool(tool);
 			const result = await withReadOnlyComputerUseRecovery({
 				tool,
 				resultText: computerUseToolResultText,

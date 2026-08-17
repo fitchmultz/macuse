@@ -8,7 +8,9 @@ import {
 	asInt,
 	bridgeDetails,
 	errorMessage,
+	mcpServerForTool,
 	truncateString,
+	validateAuxiliarySafety,
 	type AppMetadata,
 	type ApprovalMode,
 	type ChangeSummary,
@@ -146,6 +148,12 @@ export async function executeSequence(
 		}
 		for (const step of steps) {
 			if (Object.hasOwn(step.arguments, "approval")) throw new Error(`${toolName} step arguments cannot set approval; use the top-level approval option.`);
+			validateAuxiliarySafety(step.tool, {
+				...step.arguments,
+				allowRecording: input.allowRecording === true,
+				allowPrivacyChange: input.allowPrivacyChange === true,
+				safetyNote: input.safetyNote ?? "",
+			});
 			if (!WAIT_TOOLS.has(step.tool)) pickUpstreamToolArgs(step.tool, step.arguments);
 		}
 		const approval = input.approval || "inherit";
@@ -199,21 +207,11 @@ export async function executeSequence(
 						results.push(row);
 						continue;
 					}
-					const elementId = stepArgs.elementId ?? stepArgs.element_id;
-					const elementDescription = stepArgs.elementDescription ?? stepArgs.element_description;
-					const elementRole = stepArgs.role ?? stepArgs.elementRole;
-					const elementName = stepArgs.name ?? stepArgs.elementName;
-					const targetsElement = step.tool !== "get_app_state" && typeof stepArgs.app === "string" && (
-						stepArgs.element_index !== undefined ||
-						typeof elementId === "string" ||
-						typeof elementDescription === "string" ||
-						typeof elementRole === "string" ||
-						typeof elementName === "string" ||
-						Array.isArray(stepArgs.targets)
-					);
-					if (targetsElement && typeof stepArgs.app === "string") {
+					const server = mcpServerForTool(step.tool);
+					if (server === "computer-use" && !READ_ONLY_TOOLS.has(step.tool) && typeof stepArgs.app === "string") {
 						const refresh = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
 						const refreshed = filterToolResult(refresh.result, { maxTextChars });
+						if (refreshed.isError) throw new ComputerUseError(`Fresh app-state preflight failed before ${step.tool}: ${toolResultText(refreshed)}`);
 						updateElementCache(elementCache, stepArgs.app, refreshed.content);
 						updateElementCache(sessionElementCache, stepArgs.app, refreshed.content);
 						beforeState = stateSummary(refreshed.content, targetScope);

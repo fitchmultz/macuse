@@ -2,7 +2,7 @@
 import { spawn } from 'node:child_process';
 import { accessSync, constants, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, DEFAULT_CODEX_BIN, MCP_SERVERS, VERSION, mcpServerConfigs } from './macuse-utils.mjs';
+import { DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, DEFAULT_CODEX_BIN, MCP_SERVERS, VERSION, mcpServerConfigs, mcpServerForTool } from './macuse-utils.mjs';
 import { pickUpstreamToolArgs } from '../extensions/codex-computer-use-modules/upstream-tool-args.mjs';
 import {
   contentText,
@@ -13,7 +13,6 @@ import {
   resolveElementTarget as resolveElementTargetHelper,
   restoreMousePosition,
   sanitizeRecoverableComputerUseText,
-  targetsElement,
   toolResultText,
   truncateString,
   updateElementCache,
@@ -42,8 +41,7 @@ const JSON_RPC_ERROR = Object.freeze({
   INTERNAL_ERROR: -32603,
 });
 
-const READ_ONLY_TOOLS = new Set(['list_apps', 'get_app_state']);
-const AUTO_RECOVERY_TOOLS = new Set([...READ_ONLY_TOOLS, 'event_stream_status', 'computer_history_status', 'computer_history_get_settings']);
+const READ_ONLY_TOOLS = new Set(['list_apps', 'get_app_state', 'event_stream_status', 'computer_history_status', 'computer_history_get_settings']);
 
 process.stdout.on('error', (error) => {
   if (error.code === 'EPIPE') process.exit(0);
@@ -84,11 +82,12 @@ class ChildExitError extends CliError {
 }
 
 function printHelp() {
-  process.stdout.write(`Codex Computer Use app-server bridge ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver.mjs status [--full] [options]\n  node tools/codex-computer-use-appserver.mjs list-apps [options]\n  node tools/codex-computer-use-appserver.mjs get-state --app <app> [--approval inherit|accept-all|accept-once|deny] [options]\n  node tools/codex-computer-use-appserver.mjs call --server <server> --tool <tool> --arguments-json <json> [options]\n  node tools/codex-computer-use-appserver.mjs sequence --steps-json <json-array> [options]\n\nModes:\n  status\n      Start Codex app-server and print all three public MCP inventories:\n      computer-use (10), event-stream (3), and computer-history (5).\n      Pass --full to print every app-server MCP server for diagnostics.\n\n  list-apps\n      Call the read-only Computer Use list_apps tool through Codex app-server.\n      This is the safest positive service-backed regression probe.\n\n  get-state --app <app> [--approval inherit|accept-all|accept-once|deny]\n      Call the read-only get_app_state tool through Codex app-server.\n      Default approval=inherit auto-accepts Computer Use app-approval\n      elicitations, matching Codex's Any App setting for this external bridge.\n\n  call --server <server> --tool <tool> --arguments-json <json>\n      Call any of the 18 public tools. App mutation, recording starts/resumes,\n      and settings changes have separate guards. Status/get_settings calls may\n      expose activity, artifact, or privacy metadata.\n\n  sequence --steps-json <json-array>\n      Run multiple Computer Use tool calls in one app-server thread. Each step\n      is {\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Activity Monitor\"}}.\n      Steps may include label, expectText, expectAbsentText, and allowError.\n      Element-targeted tools accept element_index as a string or number,\n      element as an alias, stable elementId / element_id values, or exact\n      elementDescription / element_description matches. press_key accepts\n      xdotool-style combos or key plus modifiers, e.g. key=\",\" with COMMAND\n      normalizes to super+comma. The bridge refreshes app state before\n      resolving stable targets and coerces indexes to strings.\n      Use this for get_app_state -> action -> get_app_state validation.\n\nOptions:\n  --codex <path>                 Codex CLI/app-server binary.\n                                 Default: ${DEFAULT_CODEX_BIN}\n                                 Env: CODEX_BIN\n  --cwd <path>                   Thread cwd. Default: current directory.\n  --app <name|bundle|path>       App for get-state.\n  --server <name>                computer-use (default), event-stream, or computer-history.
-  --tool <name>                  Tool for call mode.\n  --arguments-json <json>        JSON object arguments for call mode.\n  --steps-json <json-array>      JSON array of sequence steps.\n  --approval <mode>              inherit, accept-all, accept-once, or deny. Default: inherit.\n  --running-only                 For list-apps, return only currently running apps.\n  --filter <text>                For list-apps, substring-filter app name/path/bundle lines.\n  --include-image                Keep image blocks in JSON output. Default: omit.\n  --save-image <path>            Save the first returned image block to a file.\n  --max-text-chars <n>           Truncate each text block in output. Default: ${DEFAULT_MAX_TEXT_CHARS}\n  --tool-timeout-ms <ms>         Tool call timeout. Default: ${DEFAULT_TOOL_TIMEOUT_MS}\n  --startup-timeout-ms <ms>      initialize timeout. Default: ${DEFAULT_STARTUP_TIMEOUT_MS}\n  --thread-timeout-ms <ms>       thread/start timeout. Default: ${DEFAULT_THREAD_TIMEOUT_MS}\n  --shutdown-timeout-ms <ms>     app-server shutdown grace period. Default: ${DEFAULT_SHUTDOWN_TIMEOUT_MS}\n  --allow-mutating               Permit app-control mutation.
+  process.stdout.write(`Codex Computer Use app-server bridge ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver.mjs status [--full] [options]\n  node tools/codex-computer-use-appserver.mjs list-apps [options]\n  node tools/codex-computer-use-appserver.mjs get-state --app <app> [--approval inherit|accept-all|accept-once|deny] [options]\n  node tools/codex-computer-use-appserver.mjs call --server <server> --tool <tool> --arguments-json <json> [options]\n  node tools/codex-computer-use-appserver.mjs sequence --steps-json <json-array> [options]\n\nModes:\n  status\n      Start Codex app-server and print all three public MCP inventories:\n      computer-use (10), event-stream (3), and computer-history (5).\n      Pass --full to print every app-server MCP server for diagnostics.\n\n  list-apps\n      Call the read-only Computer Use list_apps tool through Codex app-server.\n      This is the safest positive service-backed regression probe.\n\n  get-state --app <app> [--approval inherit|accept-all|accept-once|deny]\n      Call the read-only get_app_state tool through Codex app-server.\n      Default approval=inherit auto-accepts Computer Use app-approval\n      elicitations under macuse's standing app-access policy.\n\n  call --server <server> --tool <tool> --arguments-json <json>\n      Call any of the 18 public tools. App mutation, recording starts/resumes,\n      and settings changes have separate guards. Status/get_settings calls may\n      expose activity, artifact, or privacy metadata.\n\n  sequence --steps-json <json-array>\n      Run calls across Computer Use, Record & Replay, and Computer History in one app-server thread. Each step\n      is {\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Activity Monitor\"}}.\n      Steps may include label, expectText, expectAbsentText, and allowError.\n      Element-targeted tools accept element_index as a string or number,\n      element as an alias, stable elementId / element_id values, or exact\n      elementDescription / element_description matches. press_key accepts\n      xdotool-style combos or key plus modifiers, e.g. key=\",\" with COMMAND\n      normalizes to super+comma. The bridge refreshes app state before every\n      Computer Use mutation, then resolves stable targets and coerces indexes.\n      Use this for get_app_state -> action -> get_app_state validation or ordered auxiliary status/control calls.\n\nOptions:\n  --codex <path>                 Codex CLI/app-server binary.\n                                 Default: ${DEFAULT_CODEX_BIN}\n                                 Env: CODEX_BIN\n  --cwd <path>                   Thread cwd. Default: current directory.\n  --app <name|bundle|path>       App for get-state.\n  --server <name>                computer-use (default), event-stream, or computer-history.
+  --tool <name>                  Tool for call mode.\n  --arguments-json <json>        JSON object arguments for call mode.\n  --steps-json <json-array>      JSON array of sequence steps.\n  --approval <mode>              inherit, accept-all, accept-once, or deny. Default: inherit.\n  --running-only                 For list-apps, return only currently running apps.\n  --filter <text>                For list-apps, substring-filter app name/path/bundle lines.\n  --include-image                Keep image blocks in JSON output. Default: omit.\n  --save-image <path>            Save the first returned image block to a file.\n  --max-text-chars <n>           Truncate each text block in output. Default: ${DEFAULT_MAX_TEXT_CHARS}\n  --tool-timeout-ms <ms>         Tool call timeout. Default: ${DEFAULT_TOOL_TIMEOUT_MS}\n  --startup-timeout-ms <ms>      initialize timeout. Default: ${DEFAULT_STARTUP_TIMEOUT_MS}\n  --thread-timeout-ms <ms>       thread/start timeout. Default: ${DEFAULT_THREAD_TIMEOUT_MS}\n  --shutdown-timeout-ms <ms>     app-server shutdown grace period. Default: ${DEFAULT_SHUTDOWN_TIMEOUT_MS}\n  --allow-mutating               Permit app-control mutation; requires --safety-note.
+  --allow-pointer                Permit click/drag and restore the mouse afterward.
   --allow-recording              Required for event_stream_start and computer_history_resume.
   --allow-privacy-change         Required for computer_history_update_settings.
-  --safety-note <text>           Required with recording/privacy allow flags.\n  --preserve-mouse               Restore mouse cursor position after the call/sequence.\n  --no-auto-restart-computer-use Disable one-shot app-server session restart/retry for read-only stopped-session/transport failures.\n  --full                         For status mode, include every app-server MCP server.\n  --pretty                       Pretty-print JSON output.\n  --quiet                        Suppress stderr event logs.\n  -h, --help                     Show this help.\n\nExit codes:\n  0  success\n  1  bridge/app-server failure\n  2  usage error\n  3  missing Codex app-server binary\n  4  timeout\n  5  child process exited unexpectedly\n\nSafety:\n  list-apps and get-state are read-only Computer Use tools, though get-state can\n  reveal screen/app contents and may launch or foreground an app. Mutating tools\n  are blocked unless --allow-mutating is explicitly passed.\n\nExamples:\n  node tools/codex-computer-use-appserver.mjs status --pretty\n  node tools/codex-computer-use-appserver.mjs status --full --pretty\n  node tools/codex-computer-use-appserver.mjs list-apps --running-only --filter "Activity Monitor" --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app "Activity Monitor" --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app "Activity Monitor" --include-image --save-image .scratch/activity-monitor.jpg\n  node tools/codex-computer-use-appserver.mjs call --tool list_apps --arguments-json '{}' --pretty\n  node tools/codex-computer-use-appserver.mjs sequence --allow-mutating --steps-json '[{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Activity Monitor\"}},{\"tool\":\"perform_secondary_action\",\"arguments\":{\"app\":\"Activity Monitor\",\"elementDescription\":\"Memory\",\"action\":\"Press\"}},{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Activity Monitor\"}}]'\n`);
+  --safety-note <text>           Required with mutation, recording, or privacy allow flags.\n  --preserve-mouse               Restore mouse cursor position after the call/sequence.\n  --no-auto-restart-computer-use Disable one-shot app-server session restart/retry for read-only stopped-session/transport failures.\n  --full                         For status mode, include every app-server MCP server.\n  --pretty                       Pretty-print JSON output.\n  --quiet                        Suppress stderr event logs.\n  -h, --help                     Show this help.\n\nExit codes:\n  0  success\n  1  bridge/app-server failure\n  2  usage error\n  3  missing Codex app-server binary\n  4  timeout\n  5  child process exited unexpectedly\n\nSafety:\n  list-apps and get-state are read-only Computer Use tools, though get-state can\n  reveal screen/app contents and may launch or foreground an app. Mutating tools\n  require --allow-mutating plus a concrete --safety-note.\n\nExamples:\n  node tools/codex-computer-use-appserver.mjs status --pretty\n  node tools/codex-computer-use-appserver.mjs status --full --pretty\n  node tools/codex-computer-use-appserver.mjs list-apps --running-only --filter "Activity Monitor" --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app "Activity Monitor" --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app "Activity Monitor" --include-image --save-image .scratch/activity-monitor.jpg\n  node tools/codex-computer-use-appserver.mjs call --tool list_apps --arguments-json '{}' --pretty\n  node tools/codex-computer-use-appserver.mjs sequence --allow-mutating --safety-note "Activity Monitor only; switch Memory then restore CPU without other changes." --steps-json '[{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Activity Monitor\"}},{\"tool\":\"perform_secondary_action\",\"arguments\":{\"app\":\"Activity Monitor\",\"elementDescription\":\"Memory\",\"action\":\"Press\"}},{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Activity Monitor\"}}]'\n`);
 }
 function normalizeArgTokens(argv) {
   const tokens = [];
@@ -280,6 +279,7 @@ function parseArgs(argv) {
     toolTimeoutMs: DEFAULT_TOOL_TIMEOUT_MS,
     shutdownTimeoutMs: DEFAULT_SHUTDOWN_TIMEOUT_MS,
     allowMutating: false,
+    allowPointer: false,
     allowRecording: false,
     allowPrivacyChange: false,
     safetyNote: '',
@@ -318,6 +318,7 @@ function parseArgs(argv) {
       case '--tool-timeout-ms': opts.toolTimeoutMs = parsePositiveInt('--tool-timeout-ms', next()); break;
       case '--shutdown-timeout-ms': opts.shutdownTimeoutMs = parsePositiveInt('--shutdown-timeout-ms', next()); break;
       case '--allow-mutating': opts.allowMutating = true; break;
+      case '--allow-pointer': opts.allowPointer = true; opts.preserveMouse = true; break;
       case '--allow-recording': opts.allowRecording = true; break;
       case '--allow-privacy-change': opts.allowPrivacyChange = true; break;
       case '--safety-note': opts.safetyNote = next(); break;
@@ -357,14 +358,18 @@ function parseArgs(argv) {
   if (opts.approval && !['inherit', 'accept-all', 'accept-once', 'deny'].includes(opts.approval)) {
     throw new UsageError('--approval must be inherit, accept-all, accept-once, or deny');
   }
-  if (opts.server === 'computer-use' && opts.tool && !READ_ONLY_TOOLS.has(opts.tool) && !opts.allowMutating) {
-    throw new UsageError(`tool ${opts.tool} is not read-only; pass --allow-mutating to acknowledge GUI mutation`);
+  if (opts.server === 'computer-use' && opts.tool && !READ_ONLY_TOOLS.has(opts.tool)) {
+    if (!opts.allowMutating) throw new UsageError(`tool ${opts.tool} is not read-only; pass --allow-mutating to acknowledge GUI mutation`);
+    if (opts.safetyNote.trim().length < 20) throw new UsageError(`tool ${opts.tool} requires --safety-note describing target, intended effect, and stop boundary`);
+    if ((opts.tool === 'click' || opts.tool === 'drag') && !opts.allowPointer) throw new UsageError(`tool ${opts.tool} requires --allow-pointer and restores the mouse afterward`);
   }
   for (const [index, step] of opts.steps.entries()) {
     validateAuxiliaryGuard(step.tool, step.arguments, opts);
     if (Object.hasOwn(step.arguments, 'approval')) throw new UsageError(`sequence step ${index} arguments cannot set approval; use --approval`);
-    if (!READ_ONLY_TOOLS.has(step.tool) && !opts.allowMutating) {
-      throw new UsageError(`sequence step ${index} tool ${step.tool} is not read-only; pass --allow-mutating to acknowledge GUI mutation`);
+    if (!READ_ONLY_TOOLS.has(step.tool)) {
+      if (!opts.allowMutating) throw new UsageError(`sequence step ${index} tool ${step.tool} is not read-only; pass --allow-mutating to acknowledge GUI mutation`);
+      if (opts.safetyNote.trim().length < 20) throw new UsageError(`sequence step ${index} tool ${step.tool} requires --safety-note describing target, intended effect, and stop boundary`);
+      if ((step.tool === 'click' || step.tool === 'drag') && !opts.allowPointer) throw new UsageError(`sequence step ${index} tool ${step.tool} requires --allow-pointer and restores the mouse afterward`);
     }
     validateUpstreamToolArgs(step.tool, step.arguments);
   }
@@ -655,11 +660,12 @@ async function runWithThread(opts, fn) {
       clientInfo: { name: 'macuse-codex-computer-use-bridge', version: VERSION },
       capabilities: { experimentalApi: true, requestAttestation: false },
     }, opts.startupTimeoutMs);
-    client.notify('notifications/initialized');
+    client.notify('initialized');
     const threadStart = await client.request('thread/start', threadStartParams(opts), opts.threadTimeoutMs);
     const threadId = threadStart?.thread?.id;
     if (!threadId) throw new CliError('thread/start response did not include thread.id', EXIT.FAILURE, threadStart);
-    const payload = await fn(client, { initialized, threadStart, threadId });
+    const mcpStatus = await waitForConfiguredMcpServers(client, threadId, opts.threadTimeoutMs);
+    const payload = await fn(client, { initialized, threadStart, threadId, mcpStatus });
     return {
       ok: true,
       mode: opts.mode,
@@ -690,13 +696,28 @@ async function listMcpServerStatus(client, threadId, timeoutMs) {
   return { data, nextCursor: cursor };
 }
 
+async function waitForConfiguredMcpServers(client, threadId, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let status = { data: [], nextCursor: null };
+  for (;;) {
+    status = await listMcpServerStatus(client, threadId, Math.min(30_000, Math.max(1_000, deadline - Date.now())));
+    const missing = Object.entries(MCP_SERVERS).filter(([name, expected]) => {
+      const server = status.data.find((candidate) => candidate.name === name);
+      const tools = server && server.tools ? Object.keys(server.tools) : [];
+      return !server || expected.tools.some((tool) => !tools.includes(tool));
+    });
+    if (missing.length === 0) return status;
+    if (Date.now() >= deadline) throw new CliError(`configured MCP servers did not become ready: ${missing.map(([name]) => name).join(', ')}`);
+    await new Promise((resolve) => setTimeout(resolve, Math.min(250, deadline - Date.now())));
+  }
+}
+
 async function runStatus(opts) {
-  return runWithThread(opts, async (client, { initialized, threadId }) => {
-    const status = await listMcpServerStatus(client, threadId, opts.toolTimeoutMs);
-    if (opts.statusFull) return { initialized, status: summarizeStatus(status) };
+  return runWithThread(opts, async (_client, { initialized, mcpStatus }) => {
+    if (opts.statusFull) return { initialized, status: summarizeStatus(mcpStatus) };
     return {
-      inventories: Object.fromEntries((status.data || []).filter((server) => MCP_SERVERS[server.name]).map((server) => [server.name, summarizeServer(server)])),
-      computerUse: summarizeComputerUseStatus(status),
+      inventories: Object.fromEntries((mcpStatus.data || []).filter((server) => MCP_SERVERS[server.name]).map((server) => [server.name, summarizeServer(server)])),
+      computerUse: summarizeComputerUseStatus(mcpStatus),
       plugin: computerUsePluginStatus(),
       appServer: { initialized: Boolean(initialized), threadStarted: true },
     };
@@ -711,6 +732,7 @@ async function refreshElementCache(client, threadId, args, cache, opts) {
     arguments: { app: args.app },
   }, opts.toolTimeoutMs);
   const filtered = filterToolResult(refresh, opts);
+  if (filtered.isError) throw new CliError(`fresh app-state preflight failed: ${contentText(filtered.content)}`);
   updateElementCache(cache, args.app, contentText(filtered.content));
 }
 
@@ -718,7 +740,7 @@ async function runTool(opts) {
   return runWithThread(opts, async (client, { initialized, threadStart, threadId }) => {
     const elementCache = new Map();
     let args = opts.arguments;
-    if (targetsElement(opts.tool, args)) await refreshElementCache(client, threadId, args, elementCache, opts);
+    if (opts.server === 'computer-use' && !READ_ONLY_TOOLS.has(opts.tool) && typeof args.app === 'string') await refreshElementCache(client, threadId, args, elementCache, opts);
     args = resolveElementTarget(args, elementCache);
     const callArgs = pickUpstreamToolArgs(opts.tool, args);
     const result = await client.request('mcpServer/tool/call', {
@@ -757,12 +779,13 @@ async function runSequence(opts) {
       const started = Date.now();
       let stepArgs = step.arguments;
       try {
-        if (targetsElement(step.tool, stepArgs)) await refreshElementCache(client, threadId, stepArgs, elementCache, opts);
+        const server = mcpServerForTool(step.tool);
+        if (server === 'computer-use' && !READ_ONLY_TOOLS.has(step.tool) && typeof stepArgs.app === 'string') await refreshElementCache(client, threadId, stepArgs, elementCache, opts);
         stepArgs = resolveElementTarget(stepArgs, elementCache);
         const callArgs = pickUpstreamToolArgs(step.tool, stepArgs);
         const result = await client.request('mcpServer/tool/call', {
           threadId,
-          server: 'computer-use',
+          server,
           tool: step.tool,
           arguments: callArgs,
         }, opts.toolTimeoutMs);
@@ -831,7 +854,7 @@ function writeJson(value, pretty = false) {
 
 function canAutoRecoverComputerUse(opts) {
   if (!opts.autoRestartComputerUse || opts.mode === 'status' || opts.mode === 'sequence') return false;
-  return opts.tool && AUTO_RECOVERY_TOOLS.has(opts.tool);
+  return opts.tool && READ_ONLY_TOOLS.has(opts.tool);
 }
 
 async function runSelectedMode(opts) {
