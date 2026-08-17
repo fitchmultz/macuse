@@ -15,7 +15,7 @@ function recordCheck(status, name, detail = '') {
 }
 
 function help() {
-  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs extension [options]\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n  node tools/validate-macuse.mjs focus [options]\n  node tools/validate-macuse.mjs mcp [options]\n\nModes:\n  extension\n      Run syntax, extension behavior, and guard smokes without Codex Computer Use.\n\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, verify the pi\n      extension reuses one persistent app-server thread, run direct raw-MCP\n      discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only probes: app-server list_apps and get_app_state.\n      The direct raw-MCP Finder deny probe is diagnostic-only and warns instead\n      of failing because SkyComputerUseClient mcp is unreliable outside Codex.\n\n  mutating\n      Run read-only plus an Activity Monitor real-app mutation smoke: filter\n      search, clear search after the field name changes, switch Memory, restore\n      CPU, and verify native frontmost focus is not stolen.\n\n  focus\n      Run mutating plus the extension sequence background-focus check.\n      Target-app focus theft fails; unrelated user-driven drift is reported.\n\n  mcp\n      Smoke-test the Cursor/standard-MCP wrapper: initialize, tools/list,\n      approval elicitation, get_app_state, and pointer guard behavior.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  --json                         Print a machine-readable validation summary.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating edits only Activity Monitor's\n  search field and tab selection, then restores CPU/search state.\n\nExamples:\n  node tools/validate-macuse.mjs extension\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs focus\n  node tools/validate-macuse.mjs mcp\n  node tools/validate-macuse.mjs read-only --app \"Activity Monitor\" --tool-timeout-ms 120000\n`);
+  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs extension [options]\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n  node tools/validate-macuse.mjs focus [options]\n  node tools/validate-macuse.mjs mcp [options]\n\nModes:\n  extension\n      Run syntax, extension behavior, and guard smokes without Codex Computer Use.\n\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, verify the pi\n      extension reuses one persistent app-server thread, run direct raw-MCP\n      discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only probes: app-server list_apps and get_app_state.\n      The direct raw-MCP Finder deny probe is diagnostic-only and warns instead\n      of failing because SkyComputerUseClient mcp is unreliable outside Codex.\n\n  mutating\n      Run read-only plus an Activity Monitor real-app mutation smoke: refresh\n      before an Escape key action, switch Memory, restore CPU, and verify the\n      target app is not brought frontmost.\n\n  focus\n      Run mutating plus the extension sequence background-focus check.\n      Target-app focus theft fails; unrelated user-driven drift is reported.\n\n  mcp\n      Smoke-test the Cursor/standard-MCP wrapper: initialize, tools/list,\n      approval elicitation, get_app_state, and pointer guard behavior.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  --json                         Print a machine-readable validation summary.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating changes only Activity Monitor's\n  CPU/Memory tab selection, then restores CPU state.\n\nExamples:\n  node tools/validate-macuse.mjs extension\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs focus\n  node tools/validate-macuse.mjs mcp\n  node tools/validate-macuse.mjs read-only --app \"Activity Monitor\" --tool-timeout-ms 120000\n`);
 }
 function parse(argv) {
   if (argv.includes('-h') || argv.includes('--help')) return { help: true };
@@ -82,7 +82,11 @@ function runCompatibilityContractSmoke() {
     const source = readFileSync(file, 'utf8');
     if (!source.includes(expected) || source.includes('notify("notifications/initialized') || source.includes("notify('notifications/initialized")) throw new Error(`${file} does not use the current app-server initialized notification`);
   }
-  return 'launchers, initialized handshake, and all 18 routes match current contracts';
+  const wrapper = readFileSync('tools/codex-computer-use-appserver-mcp.mjs', 'utf8');
+  for (const contract of ['if (this.initializing) return this.initializing;', 'if (this.proc === proc) await this.stop();', 'let toolCallQueue = Promise.resolve();']) {
+    if (!wrapper.includes(contract)) throw new Error(`standard MCP wrapper is missing startup/concurrency contract: ${contract}`);
+  }
+  return 'launchers, initialized handshake, routing, startup cleanup, and serialized MCP calls match current contracts';
 }
 
 function runRawToolContractSmoke() {
@@ -262,31 +266,33 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
     if (annotations?.readOnlyHint !== readOnly || annotations?.destructiveHint !== false || annotations?.idempotentHint !== idempotent || annotations?.openWorldHint !== false) throw new Error(name + ' annotations do not match upstream');
   }
   if (process.env.MACUSE_MCP_SCHEMA_ONLY === '1') { console.log(names.join(',')); return; }
+  const [activityState, eventStatus] = await Promise.all([
+    request('tools/call', { name: 'get_app_state', arguments: { app: 'Activity Monitor' } }, 120000),
+    request('tools/call', { name: 'event_stream_status', arguments: {} }, 120000),
+  ]);
+  if (!text(activityState).includes('Activity Monitor')) throw new Error('parallel MCP Activity Monitor get_app_state did not expose app content');
+  const eventStatusText = text(eventStatus);
+  const eventInactive = eventStatus.isError ? eventStatusText.includes('Record & Replay is not enabled') : JSON.parse(eventStatusText).isRecording === false;
+  if (!eventInactive) throw new Error('parallel MCP event_stream_status did not prove recording is inactive or unavailable');
   const finder = await request('tools/call', { name: 'get_app_state', arguments: { app: 'Finder', approval: 'ask' } }, 120000);
   if (sawElicitation && finder.isError !== true) throw new Error('MCP elicitation proxy observed a prompt but did not preserve the decline result');
   sawElicitation = false;
   const finderInherit = await request('tools/call', { name: 'get_app_state', arguments: { app: 'Finder' } }, 120000);
   if (finderInherit.isError === true) throw new Error('MCP default inherit did not auto-accept Finder app approval');
-  const activityState = await request('tools/call', { name: 'get_app_state', arguments: { app: 'Activity Monitor' } }, 120000);
-  if (!text(activityState).includes('Activity Monitor')) throw new Error('MCP Activity Monitor get_app_state did not expose app content');
-  for (const [name, arguments, expected] of [
+  for (const [name, toolArgs, expected] of [
     ['type_text', { app: 'Activity Monitor', text: 'must not dispatch' }, /allowMutating/],
     ['click', { app: 'Activity Monitor', elementDescription: 'CPU' }, /allowMutating/],
     ['click', { app: 'Activity Monitor', elementDescription: 'CPU', allowMutating: true, safetyNote: 'Activity Monitor only; do not dispatch without pointer authorization.' }, /allowPointer/],
   ]) {
     let guarded = false;
-    try { await request('tools/call', { name, arguments }, 5000); } catch (error) { guarded = expected.test(error.message || ''); }
+    try { await request('tools/call', { name, arguments: toolArgs }, 5000); } catch (error) { guarded = expected.test(error.message || ''); }
     if (!guarded) throw new Error(name + ' MCP mutation guard did not fail closed');
   }
-  const eventStatus = await request('tools/call', { name: 'event_stream_status', arguments: {} }, 120000);
-  const eventStatusText = text(eventStatus);
-  const eventInactive = eventStatus.isError ? eventStatusText.includes('Record & Replay is not enabled') : JSON.parse(eventStatusText).isRecording === false;
-  if (!eventInactive) throw new Error('MCP event_stream_status did not prove recording is inactive or unavailable');
   const invalidObservation = { observation: { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [] } };
   const invalidUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url' }] } };
   const schemeUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'https://example.com' }] } };
   const pathUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'example.com/path' }] } };
-  for (const [name, arguments, expected] of [
+  for (const [name, toolArgs, expected] of [
     ['click', { app: 'Activity Monitor', x: 1, y: 1, mouseButton: 'right', allowPointer: true, allowMutating: true, safetyNote: 'Activity Monitor only; reject invalid click arguments before any action.' }, /Unsupported arguments for click: mouseButton/],
     ['event_stream_start', {}, /allowRecording/],
     ['computer_history_resume', { allowRecording: true }, /safetyNote/],
@@ -298,7 +304,7 @@ proc.stderr.on('data', (chunk) => { if (process.env.MACUSE_VALIDATE_VERBOSE) pro
     ['computer_history_update_settings', { ...pathUrlObservation, allowPrivacyChange: true, safetyNote: 'test guard only' }, /scope-specific/],
   ]) {
     let guarded = false;
-    try { await request('tools/call', { name, arguments }, 5000); } catch (error) { guarded = expected.test(error.message || ''); }
+    try { await request('tools/call', { name, arguments: toolArgs }, 5000); } catch (error) { guarded = expected.test(error.message || ''); }
     if (!guarded) throw new Error(name + ' guard did not fail closed');
   }
   console.log(names.join(','));
@@ -545,6 +551,22 @@ const client = {
   if (result.details.computerUse.failed) throw new Error('fresh-state sequence failed');
   if (calls.map((call) => call.tool).join(',') !== 'get_app_state,press_key') throw new Error('non-element mutation did not refresh state immediately before dispatch');
   if (result.details.computerUse.implicitRefreshes !== 1) throw new Error('fresh-state preflight was not reported');
+  for (const [tool, toolArgs, options, expected] of [
+    ['event_stream_start', {}, {}, /allowRecording/],
+    ['computer_history_resume', {}, {}, /allowRecording/],
+    ['computer_history_update_settings', { observation: { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [], blocklist: [] } }, {}, /allowPrivacyChange/],
+    ['computer_history_update_settings', { observation: { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [] } }, { allowPrivacyChange: true }, /all Computer History settings fields/],
+  ]) {
+    calls.length = 0;
+    let message = '';
+    try {
+      await executeSequence({ steps: [{ tool, arguments: toolArgs }], allowMutating: true, safetyNote: 'Test auxiliary guard only; do not dispatch without the dedicated authorization.', ...options }, new AbortController().signal, undefined, () => client, new Map());
+    } catch (error) { message = error.message || String(error); }
+    if (!expected.test(message) || calls.length !== 0) throw new Error(tool + ' sequence guard did not fail closed before dispatch: ' + message);
+  }
+  calls.length = 0;
+  const authorizedRecording = await executeSequence({ steps: [{ tool: 'event_stream_start', arguments: {} }], allowMutating: true, allowRecording: true, safetyNote: 'Test fake Record and Replay start only; stop after the mocked dispatch.' }, new AbortController().signal, undefined, () => client, new Map());
+  if (authorizedRecording.details.computerUse.failed || calls.map((call) => call.tool).join(',') !== 'event_stream_start') throw new Error('authorized sequenced recording did not reach the routed fake client');
   const blockedCalls = [];
   const failingClient = {
     async callTool(tool) {

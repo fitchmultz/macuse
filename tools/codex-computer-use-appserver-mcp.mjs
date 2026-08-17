@@ -180,6 +180,7 @@ class AppServerClient {
     this.pending = new Map();
     this.buffer = '';
     this.threadId = null;
+    this.initializing = null;
     this.currentApproval = 'deny';
     this.acceptedElicitations = 0;
     this.elicitationHandler = elicitationHandler;
@@ -187,45 +188,78 @@ class AppServerClient {
 
   async ensureThread() {
     if (this.threadId) return this.threadId;
+    if (this.initializing) return this.initializing;
+    const initializing = this.startThread();
+    this.initializing = initializing;
+    try {
+      return await initializing;
+    } finally {
+      if (this.initializing === initializing) this.initializing = null;
+    }
+  }
+
+  async startThread() {
     accessSync(this.codexBin, constants.X_OK);
     const args = ['app-server'];
     for (const flag of FEATURE_FLAGS) args.push('--enable', flag);
     const proc = spawn(this.codexBin, args, { cwd: this.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
     this.proc = proc;
+    this.buffer = '';
     proc.stdout.setEncoding('utf8');
     proc.stderr.setEncoding('utf8');
     proc.stdout.on('data', (chunk) => this.onStdout(chunk));
     proc.stderr.on('data', (chunk) => log('appserver.stderr', chunk.toString().trim()));
     proc.on('exit', (code, signal) => {
-      for (const pending of this.pending.values()) pending.reject(new Error(`app-server exited code=${code} signal=${signal}`));
+      for (const pending of this.pending.values()) {
+        clearTimeout(pending.timer);
+        pending.reject(new Error(`app-server exited code=${code} signal=${signal}`));
+      }
       this.pending.clear();
-      if (this.proc === proc) this.threadId = null;
+      if (this.proc === proc) {
+        this.proc = null;
+        this.threadId = null;
+      }
     });
-    await this.request('initialize', { clientInfo: { name: 'macuse-appserver-mcp', version: VERSION }, capabilities: { experimentalApi: true, requestAttestation: false } }, 15_000);
-    this.notify('initialized', {});
-    const start = await this.request('thread/start', {
-      cwd: this.cwd,
-      ephemeral: true,
-      approvalPolicy: 'on-request',
-      sandbox: 'workspace-write',
-      config: {
-        features: { computer_use: true, plugins: true, tool_call_mcp_elicitation: true },
-        mcp_servers: mcpServerConfigs(),
-      },
-    }, 45_000);
-    const threadId = start?.thread?.id;
-    if (!threadId) throw new Error('thread/start response missing thread.id');
-    await this.waitForConfiguredServers(threadId, 45_000);
-    this.threadId = threadId;
-    return threadId;
+    try {
+      await this.request('initialize', { clientInfo: { name: 'macuse-appserver-mcp', version: VERSION }, capabilities: { experimentalApi: true, requestAttestation: false } }, 15_000);
+      this.notify('initialized', {});
+      const start = await this.request('thread/start', {
+        cwd: this.cwd,
+        ephemeral: true,
+        approvalPolicy: 'on-request',
+        sandbox: 'workspace-write',
+        config: {
+          features: { computer_use: true, plugins: true, tool_call_mcp_elicitation: true },
+          mcp_servers: mcpServerConfigs(),
+        },
+      }, 45_000);
+      const threadId = start?.thread?.id;
+      if (!threadId) throw new Error('thread/start response missing thread.id');
+      await this.waitForConfiguredServers(threadId, 45_000);
+      if (this.proc !== proc) throw new Error('app-server exited during initialization');
+      this.threadId = threadId;
+      return threadId;
+    } catch (error) {
+      if (this.proc === proc) await this.stop();
+      throw error;
+    }
   }
 
   async waitForConfiguredServers(threadId, timeoutMs) {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
-      const status = await this.request('mcpServerStatus/list', { threadId, detail: 'toolsAndAuthOnly', limit: 100 }, Math.min(30_000, Math.max(1_000, deadline - Date.now())));
+      const servers = [];
+      let cursor;
+      for (let page = 0; page < 10; page += 1) {
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) break;
+        const status = await this.request('mcpServerStatus/list', { threadId, detail: 'toolsAndAuthOnly', limit: 100, ...(cursor ? { cursor } : {}) }, Math.min(30_000, Math.max(1_000, remaining)));
+        servers.push(...(status?.data || []));
+        cursor = status?.nextCursor;
+        if (!cursor) break;
+      }
       const missing = Object.entries(MCP_SERVERS).filter(([name, expected]) => {
-        const server = (status?.data || []).find((candidate) => candidate.name === name);
+        const server = servers.find((candidate) => candidate.name === name);
         const tools = server?.tools ? Object.keys(server.tools) : [];
         return !server || expected.tools.some((tool) => !tools.includes(tool));
       });
@@ -400,6 +434,16 @@ function clientRequest(method, params, timeoutMs = REQUEST_TIMEOUT_MS) {
 const appServer = new AppServerClient({ codexBin: process.env.CODEX_BIN || DEFAULT_CODEX_BIN, cwd: process.env.CODEX_CU_MCP_CWD || DEFAULT_CWD, elicitationHandler: handleElicitation });
 const elementCache = new Map();
 let stdinBuffer = '';
+let toolCallQueue = Promise.resolve();
+
+function dispatchRequest(message) {
+  if (message.method !== 'tools/call') {
+    void handleRequest(message);
+    return;
+  }
+  const call = toolCallQueue.then(() => handleRequest(message));
+  toolCallQueue = call.catch(() => {});
+}
 
 async function handleRequest(message) {
   const { id, method, params = {} } = message;
@@ -463,7 +507,7 @@ process.stdin.on('data', (chunk) => {
       if (msg.error) pending.reject(new Error(msg.error.message || 'client JSON-RPC error'));
       else pending.resolve(msg.result);
     } else if (Object.prototype.hasOwnProperty.call(msg, 'id')) {
-      void handleRequest(msg);
+      dispatchRequest(msg);
     }
   }
 });

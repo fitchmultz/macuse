@@ -164,11 +164,6 @@ export function closestElementSuggestions(elements, value, field, limit = 3) {
   return candidates.map((candidate) => `${candidate.value} (${elementTargetHint(candidate.element)})`).join(', ');
 }
 
-export function targetsElement(tool, args) {
-  if (tool === 'get_app_state' || typeof args.app !== 'string') return false;
-  return args.element_index !== undefined || args.element !== undefined || typeof args.elementId === 'string' || typeof args.element_id === 'string' || typeof args.elementDescription === 'string' || typeof args.element_description === 'string';
-}
-
 export function resolveElementTarget(args, cache, opts = {}) {
   const normalized = normalizeToolArguments(args);
   const usageError = opts.usageError || ((message) => new Error(message));

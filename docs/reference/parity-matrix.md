@@ -33,7 +33,7 @@ The app-server-backed path provides:
 | Accessibility press/action | `perform_secondary_action` | direct guarded tool; sequence step | `perform_secondary_action` | direct Activity Monitor CPU/Memory tab actions |
 | Keyboard | `press_key` | direct guarded tool; sequence step | `press_key`; mutation guard + fresh state | TextEdit save/select-all |
 | Literal typing | `type_text` | direct guarded tool; sequence step | `type_text`; mutation guard + fresh state | TextEdit `/tmp/macuse-type-test.txt` |
-| Set accessibility value | `set_value` | direct guarded tool; sequence step | `set_value`; mutation guard + fresh state | direct Activity Monitor filter/clear plus TextEdit probe |
+| Set accessibility value | `set_value` | direct guarded tool; sequence step | `set_value`; mutation guard + fresh state | controlled TextEdit probe; prior Activity Monitor filter/clear probe |
 | Text selection | `select_text` | direct guarded tool; sequence step | `select_text` | TextEdit `/tmp/macuse-select-test.txt` |
 | Element scrolling | `scroll` | direct guarded tool; sequence step | `scroll` | TextEdit `/tmp/macuse-scroll-test.txt` |
 | Pointer click | `click` | direct `allowPointer`; sequence `allowPointerClick` | guarded `allowPointer` | Pointer guard validated; prefer `perform_secondary_action` |
@@ -56,7 +56,7 @@ The app-server-backed path provides:
 | Non-Codex MCP client support | Implemented | `tools/codex-computer-use-appserver-mcp.mjs` |
 | Durable refresh commands/docs | Implemented | `docs/reference/codex-computer-use-external-harness.md`, local install doc, and `docs/reference/demo-and-doctor.md` |
 | Optional local auto-heal | Implemented | `node tools/macuse-repair.mjs` dry-runs; `--apply` wakes/stops screensaver/reaps stale records; explicit flags cover macuse app-server restart, global Computer Use service restart, env-password unlock, and user-TCC AppleEvents repair |
-| One-command proof artifact | Implemented | `node tools/macuse-demo.mjs --out .scratch/macuse-demo` writes Markdown, HTML, screenshots, transcript, and MCP config |
+| One-command proof artifact | Implemented | `node tools/macuse-demo.mjs --out .scratch/macuse-demo` writes Markdown, HTML, transcript, and MCP config |
 | Sequence action readback | Implemented | Pi sequence steps read state after actions only when evidence is requested, warn with `actionDispatchedButNoStateChange` on no observable effect, and support per-step `requireStateChange` |
 | Scoped waits | Implemented | Wait helpers separate predicate timeout from transport timeout; `waitForText` supports `visibleOnly`, `title`, and `url` guards |
 | Final screenshot selection | Implemented | Sequence `saveImagePath` supports `screenshotStep:"final"` to capture the final visual state |

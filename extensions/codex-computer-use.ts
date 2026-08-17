@@ -14,6 +14,7 @@ import {
 	type SequenceParams,
 	type TargetScope,
 	type TextContentBlock,
+	validateAuxiliarySafety,
 } from "./codex-computer-use-modules/core";
 import { filterToolResult } from "./codex-computer-use-modules/content";
 import {
@@ -122,6 +123,8 @@ const sequenceParam = Type.Object({
 	steps: Type.Array(sequenceStepParam, { minItems: 1 }),
 	approval: approvalParam,
 	allowMutating: Type.Optional(Type.Boolean({ description: "Required when any step mutates app state." })),
+	allowRecording: Type.Optional(Type.Boolean({ description: "Required when a step starts Record & Replay or resumes Computer History." })),
+	allowPrivacyChange: Type.Optional(Type.Boolean({ description: "Required when a step updates Computer History settings." })),
 	allowPointerClick: Type.Optional(Type.Boolean({ description: "Required for pointer click steps." })),
 	allowPointerDrag: Type.Optional(Type.Boolean({ description: "Required for pointer drag steps." })),
 	safetyNote: Type.Optional(Type.String({ description: "Required for mutations; state target app, intended effect, and stop boundary." })),
@@ -281,21 +284,6 @@ function getClient(): AppServerClient {
 	return client;
 }
 
-function validateComputerHistoryObservation(input: Record<string, JsonValue>, tool: string): void {
-	const observation = input.observation;
-	const validEntries = (value: unknown): boolean => Array.isArray(value) && value.every((entry) => entry && typeof entry === "object" && !Array.isArray(entry)
-		&& (((entry as Record<string, unknown>).scope === "app" && typeof (entry as Record<string, unknown>).bundleID === "string" && String((entry as Record<string, unknown>).bundleID).trim())
-			|| ((entry as Record<string, unknown>).scope === "url" && typeof (entry as Record<string, unknown>).urlDomain === "string" && String((entry as Record<string, unknown>).urlDomain).trim() && !String((entry as Record<string, unknown>).urlDomain).includes("://") && !String((entry as Record<string, unknown>).urlDomain).includes("/"))));
-	if (!observation || typeof observation !== "object" || Array.isArray(observation)) throw new Error(`${tool} requires all Computer History settings fields and valid scope-specific allowlist/blocklist entries.`);
-	const settings = observation as Record<string, unknown>;
-	if ((settings.defaultApplicationBehavior !== "observe" && settings.defaultApplicationBehavior !== "do_not_observe")
-		|| (settings.defaultURLBehavior !== "observe" && settings.defaultURLBehavior !== "do_not_observe")
-		|| !validEntries(settings.allowlist)
-		|| !validEntries(settings.blocklist)) {
-		throw new Error(`${tool} requires all Computer History settings fields and valid scope-specific allowlist/blocklist entries.`);
-	}
-}
-
 async function executeListApps(input: ListAppsParams, signal: AbortSignal | undefined, onUpdate?: (update: { content: TextContentBlock[]; details: Record<string, unknown> }) => void) {
 	onUpdate?.({ content: [{ type: "text", text: "Calling Computer Use list_apps..." }], details: {} });
 	const toolTimeoutMs = asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
@@ -369,12 +357,7 @@ async function executeDirectMutation(tool: string, input: Record<string, JsonVal
 }
 
 async function executeAuxiliaryTool(tool: string, server: "event-stream" | "computer-history", input: Record<string, JsonValue>, signal: AbortSignal | undefined) {
-	const note = typeof input.safetyNote === "string" ? input.safetyNote.trim() : "";
-	if ((tool === "event_stream_start" || tool === "computer_history_resume") && (input.allowRecording !== true || !note)) throw new Error(`${tool} requires allowRecording:true and a non-empty safetyNote.`);
-	if (tool === "computer_history_update_settings") {
-		if (input.allowPrivacyChange !== true || !note) throw new Error(`${tool} requires allowPrivacyChange:true and a non-empty safetyNote.`);
-		validateComputerHistoryObservation(input, tool);
-	}
+	validateAuxiliarySafety(tool, input);
 	const call = await getClient().callTool(tool, input, { approval: "inherit", timeoutMs: asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS), signal, server });
 	const result = filterToolResult(call.result, { maxTextChars: DEFAULT_MAX_TEXT_CHARS });
 	return {
@@ -496,6 +479,7 @@ export default function (pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use macuse_sequence for multi-step native-app flows; start with get_app_state or call it first, keep mutations narrow, set allowMutating:true, and include a concrete safetyNote.",
 			"macuse_sequence can run step tools without activating them; when a step's argument shape is uncertain, use macuse_tools to load that direct tool first.",
+			"Sequence recording starts and Computer History resume require top-level allowRecording:true; settings updates require top-level allowPrivacyChange:true and a complete observation in the step arguments.",
 			"Prefer perform_secondary_action, press_key, set_value, select_text, or scroll over pointer click/drag in macuse_sequence; pointer steps require their explicit pointer flags.",
 		],
 		parameters: sequenceParam,

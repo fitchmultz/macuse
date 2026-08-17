@@ -42,7 +42,6 @@ const JSON_RPC_ERROR = Object.freeze({
 });
 
 const READ_ONLY_TOOLS = new Set(['list_apps', 'get_app_state', 'event_stream_status', 'computer_history_status', 'computer_history_get_settings']);
-const AUTO_RECOVERY_TOOLS = new Set(READ_ONLY_TOOLS);
 
 process.stdout.on('error', (error) => {
   if (error.code === 'EPIPE') process.exit(0);
@@ -855,7 +854,7 @@ function writeJson(value, pretty = false) {
 
 function canAutoRecoverComputerUse(opts) {
   if (!opts.autoRestartComputerUse || opts.mode === 'status' || opts.mode === 'sequence') return false;
-  return opts.tool && AUTO_RECOVERY_TOOLS.has(opts.tool);
+  return opts.tool && READ_ONLY_TOOLS.has(opts.tool);
 }
 
 async function runSelectedMode(opts) {

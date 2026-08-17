@@ -435,9 +435,8 @@ export class AppServerClient {
 
 	private async verifyComputerUseInventory(threadId: string, timeoutMs: number, signal?: AbortSignal): Promise<void> {
 		const deadline = Date.now() + timeoutMs;
-		let inventories = summarizeInventories(null);
 		for (;;) {
-			inventories = summarizeInventories(null);
+			const inventories = summarizeInventories(null);
 			let cursor: string | null = null;
 			for (let page = 0; page < 10; page += 1) {
 				signal?.throwIfAborted();
@@ -458,7 +457,7 @@ export class AppServerClient {
 			if (Date.now() >= deadline) break;
 			await new Promise((resolve) => setTimeout(resolve, Math.min(250, deadline - Date.now())));
 		}
-		for (const inventory of Object.values(inventories)) {
+		for (const inventory of Object.values(this.inventories)) {
 			if (!inventory.present) throw new ComputerUseError(`Codex app-server did not list the ${inventory.server} MCP server before startup timed out.`, inventory);
 			if (inventory.missingTools.length) throw new ComputerUseError(`${inventory.server} MCP server is missing required tools: ${inventory.missingTools.join(", ")}`, inventory);
 		}

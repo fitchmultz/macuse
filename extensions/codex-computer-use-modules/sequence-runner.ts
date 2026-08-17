@@ -10,6 +10,7 @@ import {
 	errorMessage,
 	mcpServerForTool,
 	truncateString,
+	validateAuxiliarySafety,
 	type AppMetadata,
 	type ApprovalMode,
 	type ChangeSummary,
@@ -147,6 +148,12 @@ export async function executeSequence(
 		}
 		for (const step of steps) {
 			if (Object.hasOwn(step.arguments, "approval")) throw new Error(`${toolName} step arguments cannot set approval; use the top-level approval option.`);
+			validateAuxiliarySafety(step.tool, {
+				...step.arguments,
+				allowRecording: input.allowRecording === true,
+				allowPrivacyChange: input.allowPrivacyChange === true,
+				safetyNote: input.safetyNote ?? "",
+			});
 			if (!WAIT_TOOLS.has(step.tool)) pickUpstreamToolArgs(step.tool, step.arguments);
 		}
 		const approval = input.approval || "inherit";

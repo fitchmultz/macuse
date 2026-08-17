@@ -1,5 +1,4 @@
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -7,14 +6,9 @@ export const VERSION = resolveMacuseVersion();
 export const DEFAULT_CHATGPT_RESOURCES = "/Applications/ChatGPT.app/Contents/Resources";
 export const DEFAULT_CODEX_BIN = path.join(DEFAULT_CHATGPT_RESOURCES, "codex");
 const DEFAULT_BUNDLED_PLUGIN_ROOT = path.join(DEFAULT_CHATGPT_RESOURCES, "plugins/openai-bundled/plugins");
-export const DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR = path.join(DEFAULT_BUNDLED_PLUGIN_ROOT, "computer-use");
-export const DEFAULT_BUNDLED_RECORD_AND_REPLAY_PLUGIN_DIR = path.join(DEFAULT_BUNDLED_PLUGIN_ROOT, "record-and-replay");
-export const DEFAULT_BUNDLED_COMPUTER_HISTORY_PLUGIN_DIR = path.join(DEFAULT_BUNDLED_PLUGIN_ROOT, "computer-history");
-// Plugin no longer embeds the app; use the installed client under $CODEX_HOME/computer-use.
-export const DEFAULT_CODEX_HOME = process.env.CODEX_HOME || path.join(homedir(), ".codex");
-export const DEFAULT_COMPUTER_USE_APP = path.join(DEFAULT_CODEX_HOME, "computer-use/Codex Computer Use.app");
-export const DEFAULT_BUNDLED_COMPUTER_USE_CLIENT = path.join(DEFAULT_COMPUTER_USE_APP, "Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient");
-export const DEFAULT_COMPUTER_USE_CLIENT_CWD = path.dirname(DEFAULT_BUNDLED_COMPUTER_USE_CLIENT);
+const DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR = path.join(DEFAULT_BUNDLED_PLUGIN_ROOT, "computer-use");
+const DEFAULT_BUNDLED_RECORD_AND_REPLAY_PLUGIN_DIR = path.join(DEFAULT_BUNDLED_PLUGIN_ROOT, "record-and-replay");
+const DEFAULT_BUNDLED_COMPUTER_HISTORY_PLUGIN_DIR = path.join(DEFAULT_BUNDLED_PLUGIN_ROOT, "computer-history");
 
 export const MCP_SERVERS = {
 	"computer-use": { pluginDir: DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR, args: ["mcp"], tools: ["click", "drag", "get_app_state", "list_apps", "perform_secondary_action", "press_key", "scroll", "select_text", "set_value", "type_text"] },
@@ -83,6 +77,25 @@ export const PROCESS_REGISTRY_DIR = "/tmp/macuse-appserver";
 export const PROCESS_REGISTRY_PREFIX = "macuse-appserver-";
 
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+
+export function validateAuxiliarySafety(tool: string, input: Record<string, JsonValue>): void {
+	const note = typeof input.safetyNote === "string" ? input.safetyNote.trim() : "";
+	if ((tool === "event_stream_start" || tool === "computer_history_resume") && (input.allowRecording !== true || !note)) throw new Error(`${tool} requires allowRecording:true and a non-empty safetyNote.`);
+	if (tool !== "computer_history_update_settings") return;
+	if (input.allowPrivacyChange !== true || !note) throw new Error(`${tool} requires allowPrivacyChange:true and a non-empty safetyNote.`);
+	const observation = input.observation;
+	const validEntries = (value: unknown): boolean => Array.isArray(value) && value.every((entry) => entry && typeof entry === "object" && !Array.isArray(entry)
+		&& (((entry as Record<string, unknown>).scope === "app" && typeof (entry as Record<string, unknown>).bundleID === "string" && String((entry as Record<string, unknown>).bundleID).trim())
+			|| ((entry as Record<string, unknown>).scope === "url" && typeof (entry as Record<string, unknown>).urlDomain === "string" && String((entry as Record<string, unknown>).urlDomain).trim() && !String((entry as Record<string, unknown>).urlDomain).includes("://") && !String((entry as Record<string, unknown>).urlDomain).includes("/"))));
+	if (!observation || typeof observation !== "object" || Array.isArray(observation)) throw new Error(`${tool} requires all Computer History settings fields and valid scope-specific allowlist/blocklist entries.`);
+	const settings = observation as Record<string, unknown>;
+	if ((settings.defaultApplicationBehavior !== "observe" && settings.defaultApplicationBehavior !== "do_not_observe")
+		|| (settings.defaultURLBehavior !== "observe" && settings.defaultURLBehavior !== "do_not_observe")
+		|| !validEntries(settings.allowlist)
+		|| !validEntries(settings.blocklist)) {
+		throw new Error(`${tool} requires all Computer History settings fields and valid scope-specific allowlist/blocklist entries.`);
+	}
+}
 
 export type TextContentBlock = { type: "text"; text: string; [key: string]: JsonValue };
 export type ImageContentBlock = { type: "image"; data: string; mimeType: string; [key: string]: JsonValue };
@@ -162,6 +175,8 @@ export type SequenceParams = {
 	steps: unknown;
 	approval?: ApprovalMode;
 	allowMutating?: boolean;
+	allowRecording?: boolean;
+	allowPrivacyChange?: boolean;
 	allowPointerClick?: boolean;
 	allowPointerDrag?: boolean;
 	safetyNote?: string;

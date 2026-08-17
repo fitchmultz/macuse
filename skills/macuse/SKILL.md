@@ -48,6 +48,8 @@ Use macuse's Codex Computer Use tools to inspect and safely operate local macOS 
 6. Use the direct `event_stream_*` and `computer_history_*` tools only when requested. Record & Replay captures clicks, typed text, and interacted-window content for up to 30 minutes; an already-active start returns that session. Record & Replay start and Computer History resume require `allowRecording:true` plus `safetyNote`; `computer_history_update_settings` requires `allowPrivacyChange:true`, a safety note, the complete `observation`, and the current `showMenuBarIcon` value when present; call `computer_history_get_settings` immediately first and preserve every unchanged field. Stop/pause need no allow flag. Status/settings calls are read-only but expose activity/privacy metadata.
 7. Use `macuse_sequence` when the flow needs ordered actions, waits, assertions, or shared cleanup. Pass:
    - `allowMutating: true` and a narrow `safetyNote` for mutating steps
+   - top-level `allowRecording:true` for recording starts or Computer History resume
+   - top-level `allowPrivacyChange:true` plus complete `observation` step arguments for Computer History settings updates
    - before/after `get_app_state`
    - assertions such as `expectText`, `expectAbsentText`, or `expectVisibleText`
    - `requireStateChange: true` where a no-op should fail closed
