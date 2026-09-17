@@ -6,26 +6,26 @@ import { DEFAULT_CODEX_BIN, MCP_SERVERS, VERSION, mcpServerConfigs, mcpServerFor
 import { pickUpstreamToolArgs } from '../extensions/codex-computer-use-modules/upstream-tool-args.mjs';
 import {
   appServerSessionRecoverySummary,
-  getMousePosition,
-  normalizeToolArguments,
-  resolveElementTarget,
-  restoreMousePosition,
+  BridgeComputerUseSession,
+  isolatedThreadConfig,
+  validateBridgeArguments,
   sanitizeComputerUseText,
-  toolResultText,
-  updateElementCache,
   withReadOnlyComputerUseRecovery,
 } from './cu-helpers.mjs';
 
 const DEFAULT_CWD = process.cwd();
 const FEATURE_FLAGS = ['computer_use', 'plugins', 'tool_call_mcp_elicitation'];
-const REQUEST_TIMEOUT_MS = Number(process.env.CODEX_CU_MCP_TIMEOUT_MS || 90_000);
+const REQUEST_TIMEOUT_MS = positiveEnvDuration('CODEX_CU_MCP_TIMEOUT_MS', 90_000);
 const STOP_FORCE_MS = positiveEnvDuration('MACUSE_MCP_TEST_STOP_FORCE_MS', 3_000);
-const STOP_GIVE_UP_MS = positiveEnvDuration('MACUSE_MCP_TEST_STOP_GIVE_UP_MS', 6_000);
 const POINTER_TOOLS = new Set(['click', 'drag']);
 const MUTATING_COMPUTER_USE_TOOLS = new Set(MCP_SERVERS['computer-use'].tools.filter((tool) => tool !== 'list_apps' && tool !== 'get_app_state'));
 const MUTATION_GUARD_PROPERTIES = {
   allowMutating: { type: 'boolean', description: 'Must be true. Explicitly authorizes this guarded app mutation.' },
   safetyNote: { type: 'string', minLength: 20, description: 'Target app, intended effect, and stop boundary.' },
+  expectedTitle: { type: 'string', description: 'Require this exact window title before mutation.' },
+  expectedUrl: { type: 'string', description: 'Require this exact document URL before mutation.' },
+  expectedRole: { type: 'string' }, expectedName: { type: 'string' }, expectedDescription: { type: 'string' }, expectedId: { type: 'string' }, expectedValue: { type: 'string' },
+  requireStateChange: { type: 'boolean', description: 'Require relevant target/document change, not unrelated visible text.' },
 };
 const MUTATION_GUARD_REQUIRED = ['allowMutating', 'safetyNote'];
 const ELEMENT_INDEX_SCHEMA = { type: ['string', 'number'], description: 'Computer Use element index. The wrapper coerces numbers to strings before calling upstream.' };
@@ -74,7 +74,7 @@ const TOOL_SCHEMAS = {
   },
   get_app_state: {
     name: 'get_app_state',
-    description: 'Start/refresh a Computer Use session for an app and return accessibility tree plus screenshot. Read-only but may reveal visible app contents. Default approval:"inherit" auto-accepts under the standing macuse app-access policy.',
+    description: 'Start/refresh a Computer Use session for an app and return accessibility tree plus screenshot. Read-only but may reveal visible app contents or launch/foreground an app; focus observation is not an isolation guarantee. Default approval:"inherit" auto-accepts under the standing macuse app-access policy.',
     inputSchema: {
       type: 'object', additionalProperties: false,
       properties: {
@@ -87,7 +87,7 @@ const TOOL_SCHEMAS = {
   },
   perform_secondary_action: {
     name: 'perform_secondary_action',
-    description: 'Invoke an accessibility secondary action on an element. Prefer action:"Press" over pointer click when available to preserve mouse focus. Stable IDs/descriptions are resolved against a fresh get_app_state.',
+    description: 'Invoke an accessibility secondary action on an element. Prefer action:"Press" over pointer click when available to avoid pointer input; focus isolation is not guaranteed. Stable IDs/descriptions are resolved against a fresh get_app_state.',
     inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, elementId: ELEMENT_ID_SCHEMA, element_id: ELEMENT_ID_SCHEMA, elementDescription: ELEMENT_DESCRIPTION_SCHEMA, element_description: ELEMENT_DESCRIPTION_SCHEMA, action: { type: 'string' }, ...MUTATION_GUARD_PROPERTIES }, required: ['app', 'action', ...MUTATION_GUARD_REQUIRED] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
@@ -99,7 +99,7 @@ const TOOL_SCHEMAS = {
   },
   type_text: {
     name: 'type_text',
-    description: 'Type literal text in the target app. Requires prior get_app_state for the same app.',
+    description: 'Insert literal text through native Accessibility selection replacement when supported, with exact readback. Unsupported Unicode fails before typing; ASCII may use upstream keyboard input. No replay after an attempted native edit.',
     inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, text: { type: 'string' }, ...MUTATION_GUARD_PROPERTIES }, required: ['app', 'text', ...MUTATION_GUARD_REQUIRED] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
@@ -130,7 +130,7 @@ const TOOL_SCHEMAS = {
   },
   click: {
     name: 'click',
-    description: 'Pointer click by element index, stable target, or screenshot coordinates. Prefer perform_secondary_action when possible. Requires allowPointer:true. Mouse position is restored after the call.',
+    description: 'Pointer click by element index, stable target, or screenshot coordinates. Prefer perform_secondary_action when possible. Requires allowPointer:true. No cursor/focus restoration; may interfere with user input.',
     inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, element_index: ELEMENT_INDEX_SCHEMA, element: ELEMENT_ALIAS_SCHEMA, elementId: ELEMENT_ID_SCHEMA, element_id: ELEMENT_ID_SCHEMA, elementDescription: ELEMENT_DESCRIPTION_SCHEMA, element_description: ELEMENT_DESCRIPTION_SCHEMA, x: { type: 'number' }, y: { type: 'number' }, mouse_button: { type: 'string', enum: ['left', 'right', 'middle'] }, click_count: { type: 'integer' }, allowPointer: { type: 'boolean' }, ...MUTATION_GUARD_PROPERTIES }, required: ['app', 'allowPointer', ...MUTATION_GUARD_REQUIRED] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
@@ -140,11 +140,11 @@ const TOOL_SCHEMAS = {
   computer_history_pause: auxiliarySchema('computer_history_pause', 'Pause Computer History. Does not require allowRecording.', false, {}, [], true),
   computer_history_resume: auxiliarySchema('computer_history_resume', 'Resume Computer History recording. Requires allowRecording:true and a non-empty safetyNote.', false, { allowRecording: { type: 'boolean' }, safetyNote: { type: 'string' } }, ['allowRecording', 'safetyNote'], true),
   computer_history_status: auxiliarySchema('computer_history_status', 'Read Computer History status and recent local activity paths. Read-only, but exposes activity metadata.', true),
-  computer_history_get_settings: auxiliarySchema('computer_history_get_settings', 'Read Computer History observation and menu-bar settings. Read-only, but exposes privacy metadata.', true),
-  computer_history_update_settings: auxiliarySchema('computer_history_update_settings', 'Replace all Computer History settings. Call computer_history_get_settings immediately first and preserve unchanged fields, including showMenuBarIcon. Requires allowPrivacyChange:true and a non-empty safetyNote.', false, { observation: OBSERVATION_SCHEMA, showMenuBarIcon: { type: 'boolean' }, allowPrivacyChange: { type: 'boolean' }, safetyNote: { type: 'string' } }, ['observation', 'allowPrivacyChange', 'safetyNote'], true),
+  computer_history_get_settings: auxiliarySchema('computer_history_get_settings', 'Read Computer History observation settings. Read-only, but exposes privacy metadata.', true),
+  computer_history_update_settings: auxiliarySchema('computer_history_update_settings', 'Replace all Computer History settings. Call computer_history_get_settings immediately first and preserve unchanged observation fields. Requires allowPrivacyChange:true and a non-empty safetyNote.', false, { observation: OBSERVATION_SCHEMA, allowPrivacyChange: { type: 'boolean' }, safetyNote: { type: 'string' } }, ['observation', 'allowPrivacyChange', 'safetyNote'], true),
   drag: {
     name: 'drag',
-    description: 'Pointer drag using screenshot coordinates. Requires allowPointer:true and prior get_app_state for the same app. Mouse position is restored after the call.',
+    description: 'Pointer drag using screenshot coordinates. Requires allowPointer:true and prior get_app_state for the same app. No cursor/focus restoration; may interfere with user input.',
     inputSchema: { type: 'object', additionalProperties: false, properties: { app: { type: 'string' }, from_x: { type: 'number' }, from_y: { type: 'number' }, to_x: { type: 'number' }, to_y: { type: 'number' }, allowPointer: { type: 'boolean' }, ...MUTATION_GUARD_PROPERTIES }, required: ['app', 'from_x', 'from_y', 'to_x', 'to_y', 'allowPointer', ...MUTATION_GUARD_REQUIRED] },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
@@ -175,7 +175,7 @@ function sanitizeComputerUseResult(result) {
     forcedError = forcedError || sanitized.forcedError;
     return { ...block, text: sanitized.text };
   });
-  return { ...result, content, ...(forcedError ? { isError: true } : {}) };
+  return { ...result, content, isError: forcedError || Boolean(result?.isError || result?.is_error) };
 }
 
 class AppServerClient {
@@ -193,10 +193,13 @@ class AppServerClient {
     this.currentApproval = 'deny';
     this.acceptedElicitations = 0;
     this.elicitationHandler = elicitationHandler;
+    this.approvalEpoch = 0;
+    this.abandoned = false;
   }
 
   async ensureThread() {
     if (this.closed) throw new Error('app-server client is shutting down');
+    if (this.stopping) await this.stopping;
     if (this.threadId) return this.threadId;
     if (this.initializing) return this.initializing;
     const initializing = this.startThread();
@@ -210,7 +213,7 @@ class AppServerClient {
 
   async startThread() {
     accessSync(this.codexBin, constants.X_OK);
-    const args = ['app-server'];
+    const args = ['app-server', '--disable', 'apps'];
     for (const flag of FEATURE_FLAGS) args.push('--enable', flag);
     const proc = spawn(this.codexBin, args, { cwd: this.cwd, stdio: ['pipe', 'pipe', 'pipe'] });
     this.proc = proc;
@@ -219,20 +222,23 @@ class AppServerClient {
     proc.stderr.setEncoding('utf8');
     proc.stdout.on('data', (chunk) => { if (this.proc === proc) this.onStdout(chunk); });
     proc.stderr.on('data', (chunk) => log('appserver.stderr', chunk.toString().trim()));
-    proc.on('error', (error) => this.failProcess(proc, error));
+    proc.on('error', (error) => {
+      // A failed spawn has no live transport; a kill error is NOT proof of exit.
+      if (!proc.pid) this.failProcess(proc, error);
+      else log('appserver.process_error', error.message);
+    });
+    proc.stdin.on('error', () => { void this.stop(); });
     proc.on('exit', (code, signal) => this.failProcess(proc, new Error(`app-server exited code=${code} signal=${signal}`)));
     try {
       await this.request('initialize', { clientInfo: { name: 'macuse-appserver-mcp', version: VERSION }, capabilities: { experimentalApi: true, requestAttestation: false } }, 15_000);
       this.notify('initialized', {});
+      const configRead = await this.request('config/read', { cwd: this.cwd, includeLayers: false }, 15_000);
       const start = await this.request('thread/start', {
         cwd: this.cwd,
         ephemeral: true,
         approvalPolicy: 'on-request',
         sandbox: 'workspace-write',
-        config: {
-          features: { computer_use: true, plugins: true, tool_call_mcp_elicitation: true },
-          mcp_servers: mcpServerConfigs(),
-        },
+        config: isolatedThreadConfig(configRead, mcpServerConfigs()),
       }, 45_000);
       const threadId = start?.thread?.id;
       if (!threadId) throw new Error('thread/start response missing thread.id');
@@ -275,7 +281,7 @@ class AppServerClient {
       if (pending.proc !== proc) continue;
       clearTimeout(pending.timer);
       this.pending.delete(id);
-      pending.reject(error);
+      pending.reject(pending.timeoutError || Object.assign(error, { details: { dispatched: pending.method === 'mcpServer/tool/call', outcomeUnknown: pending.method === 'mcpServer/tool/call' } }));
     }
     if (this.proc === proc) {
       this.proc = null;
@@ -293,6 +299,7 @@ class AppServerClient {
       if (!line) continue;
       let msg;
       try { msg = JSON.parse(line); } catch { log('appserver.invalid_json', line); continue; }
+      if (!msg || typeof msg !== 'object' || Array.isArray(msg)) { log('appserver.invalid_message'); continue; }
       if (Object.prototype.hasOwnProperty.call(msg, 'id') && (Object.prototype.hasOwnProperty.call(msg, 'result') || Object.prototype.hasOwnProperty.call(msg, 'error')) && this.pending.has(msg.id)) {
         const pending = this.pending.get(msg.id);
         clearTimeout(pending.timer);
@@ -308,12 +315,17 @@ class AppServerClient {
   }
 
   async onServerRequest(request) {
-    if (request.method === 'mcpServer/elicitation/request') {
-      const result = await this.elicitationHandler(request.params, this.currentApproval, this);
-      this.write({ jsonrpc: '2.0', id: request.id, result });
-      return;
-    }
-    this.write({ jsonrpc: '2.0', id: request.id, error: { code: -32601, message: `not implemented: ${request.method}` } });
+    const proc = this.proc;
+    const epoch = this.approvalEpoch;
+    try {
+      if (request.method === 'mcpServer/elicitation/request') {
+        let result = await this.elicitationHandler(request.params, this.abandoned ? 'deny' : this.currentApproval, this);
+        if (this.abandoned || epoch !== this.approvalEpoch || proc !== this.proc) result = { action: 'decline', content: null, _meta: null };
+        this.write({ jsonrpc: '2.0', id: request.id, result }, proc);
+        return;
+      }
+      this.write({ jsonrpc: '2.0', id: request.id, error: { code: -32601, message: `not implemented: ${request.method}` } }, proc);
+    } catch { /* The owned transport may have stopped while the client considered approval. */ }
   }
 
   write(message, proc = this.proc) {
@@ -330,10 +342,17 @@ class AppServerClient {
     const proc = this.proc;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`${method} timed out after ${timeoutMs}ms`));
+        this.abandoned = true;
+        this.currentApproval = 'deny';
+        this.approvalEpoch++;
+        const pending = this.pending.get(id);
+        if (!pending) return;
+        pending.timeoutError = Object.assign(new Error(`${method} timed out after ${timeoutMs}ms; owned transport stopped, action outcome unknown`), { details: { dispatched: method === 'mcpServer/tool/call', outcomeUnknown: method === 'mcpServer/tool/call' } });
+        // Keep the promise (and tools/call queue) owned until the child really exits.
+        // No unsupported MCP cancellation RPC; late approvals are declined.
+        void this.stop();
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer, proc });
+      this.pending.set(id, { resolve, reject, timer, proc, method });
       try {
         this.write({ jsonrpc: '2.0', id, method, params }, proc);
       } catch (error) {
@@ -359,12 +378,15 @@ class AppServerClient {
       run: async () => {
         const threadId = await this.ensureThread();
         this.currentApproval = args.approval || 'inherit';
+        this.abandoned = false;
+        this.approvalEpoch++;
         this.acceptedElicitations = 0;
         try {
           const server = mcpServerForTool(tool);
           return sanitizeComputerUseResult(await this.request('mcpServer/tool/call', { threadId, server, tool, arguments: pickUpstreamToolArgs(tool, args) }, REQUEST_TIMEOUT_MS));
         } finally {
           this.currentApproval = 'deny';
+          this.approvalEpoch++;
         }
       },
     });
@@ -392,18 +414,13 @@ class AppServerClient {
     this.threadId = null;
     if (!proc || proc.exitCode !== null || proc.signalCode !== null) return;
     await new Promise((resolve) => {
-      let settled = false;
       const finish = () => {
-        if (settled) return;
-        settled = true;
         clearTimeout(forceTimer);
-        clearTimeout(giveUpTimer);
         resolve();
       };
       const forceTimer = setTimeout(() => {
         if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL');
       }, STOP_FORCE_MS);
-      const giveUpTimer = setTimeout(finish, STOP_GIVE_UP_MS);
       proc.once('exit', finish);
       proc.kill('SIGTERM');
     });
@@ -478,20 +495,28 @@ function clientRequest(method, params, timeoutMs = REQUEST_TIMEOUT_MS) {
 }
 
 const appServer = new AppServerClient({ codexBin: process.env.CODEX_BIN || DEFAULT_CODEX_BIN, cwd: process.env.CODEX_CU_MCP_CWD || DEFAULT_CWD, elicitationHandler: handleElicitation });
-const elementCache = new Map();
+const session = new BridgeComputerUseSession((tool, args) => appServer.callTool(tool, args));
 let stdinBuffer = '';
 let toolCallQueue = Promise.resolve();
+const toolRequests = new Map();
+let activeToolRequest = null;
 
 function dispatchRequest(message) {
   if (message.method !== 'tools/call') {
     void handleRequest(message);
     return;
   }
-  const call = toolCallQueue.then(() => handleRequest(message));
+  const controller = new AbortController();
+  toolRequests.set(message.id, controller);
+  const call = toolCallQueue.then(async () => {
+    activeToolRequest = message.id;
+    try { await handleRequest(message, controller.signal); }
+    finally { activeToolRequest = null; toolRequests.delete(message.id); }
+  });
   toolCallQueue = call.catch(() => {});
 }
 
-async function handleRequest(message) {
+async function handleRequest(message, signal) {
   const { id, method, params = {} } = message;
   try {
     if (method === 'initialize') {
@@ -504,34 +529,25 @@ async function handleRequest(message) {
       return;
     }
     if (method === 'tools/call') {
+      signal?.throwIfAborted();
       const name = params.name;
-      let args = normalizeToolArguments(params.arguments || {});
+      const args = params.arguments === undefined ? {} : params.arguments;
       if (!TOOL_SCHEMAS[name]) throw new Error(`unknown tool: ${name}`);
+      validateBridgeArguments(name, args);
       validateMutationGuard(name, args);
       validateAuxiliaryGuard(name, args);
-      pickUpstreamToolArgs(name, args);
       if (POINTER_TOOLS.has(name) && args.allowPointer !== true) throw new Error(`${name} requires allowPointer:true; prefer non-pointer actions when possible`);
-      if (MUTATING_COMPUTER_USE_TOOLS.has(name) && typeof args.app === 'string') {
-        const refresh = await appServer.callTool('get_app_state', { app: args.app, approval: args.approval || 'inherit' });
-        if (refresh.isError) throw new Error(`fresh app-state preflight failed before ${name}: ${toolResultText(refresh)}`);
-        updateElementCache(elementCache, args.app, toolResultText(refresh));
-      }
-      args = resolveElementTarget(args, elementCache);
-      const mouseBefore = POINTER_TOOLS.has(name) ? getMousePosition() : null;
-      let result;
-      try {
-        result = await appServer.callTool(name, args);
-        updateElementCache(elementCache, args.app, toolResultText(result));
-      } finally {
-        if (mouseBefore) restoreMousePosition(mouseBefore);
-      }
+      const execution = await session.run(name, args, { signal });
+      const result = { ...execution.result, _meta: { ...execution.result?._meta, macuse: { dispatched: execution.dispatched, outcome: execution.outcome, focus: execution.focus } } };
       send({ jsonrpc: '2.0', id, result });
       return;
     }
     if (method?.startsWith('notifications/')) return;
     rpcError(id, -32601, `method not found: ${method}`);
   } catch (error) {
-    rpcError(id, -32000, sanitizeComputerUseText(error.message || String(error)).text);
+    const sanitized = sanitizeComputerUseText(error.message || String(error));
+    if (method === 'tools/call') send({ jsonrpc: '2.0', id, result: { isError: true, content: [{ type: 'text', text: sanitized.text }], _meta: { macuse: sanitized.forcedError ? undefined : error.details ?? { dispatched: false, outcome: 'not-dispatched' } } } });
+    else rpcError(id, -32000, sanitized.text);
   }
 }
 
@@ -546,6 +562,7 @@ process.stdin.on('data', (chunk) => {
     if (!line) continue;
     let msg;
     try { msg = JSON.parse(line); } catch (error) { rpcError(null, -32700, `parse error: ${error.message}`); continue; }
+    if (!msg || typeof msg !== 'object' || Array.isArray(msg)) { rpcError(null, -32600, 'request must be an object'); continue; }
     if (Object.prototype.hasOwnProperty.call(msg, 'id') && (Object.prototype.hasOwnProperty.call(msg, 'result') || Object.prototype.hasOwnProperty.call(msg, 'error')) && clientPending.has(msg.id)) {
       const pending = clientPending.get(msg.id);
       clearTimeout(pending.timer);
@@ -554,13 +571,27 @@ process.stdin.on('data', (chunk) => {
       else pending.resolve(msg.result);
     } else if (Object.prototype.hasOwnProperty.call(msg, 'id')) {
       dispatchRequest(msg);
+    } else if (msg.method === 'notifications/cancelled') {
+      const requestId = msg.params?.requestId;
+      const controller = toolRequests.get(requestId);
+      if (controller) {
+        controller.abort(new Error('MCP tool call cancelled. A dispatched action may already have taken effect; inspect state before retrying.'));
+        if (activeToolRequest === requestId) {
+          appServer.abandoned = true;
+          appServer.currentApproval = 'deny';
+          appServer.approvalEpoch++;
+          // Native edits retain ownership until their promise settles. Upstream RPCs
+          // retain it until owned transport termination; do not send a cancel RPC.
+          void appServer.stop();
+        }
+      }
     }
   }
 });
 
 let shuttingDown = null;
 function shutdown(code) {
-  if (!shuttingDown) shuttingDown = appServer.close().finally(() => process.exit(code));
+  if (!shuttingDown) shuttingDown = Promise.all([appServer.close(), session.stop()]).finally(() => process.exit(code));
   return shuttingDown;
 }
 

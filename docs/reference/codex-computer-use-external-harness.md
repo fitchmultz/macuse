@@ -29,7 +29,7 @@ What is proven:
   Apple Events acceptance that still did not make direct raw-MCP `list_apps`
   return.
 - Starting `/Applications/ChatGPT.app/Contents/Resources/codex app-server` with
-  `--enable computer_use --enable plugins --enable tool_call_mcp_elicitation`,
+  `--enable computer_use --enable plugins --enable tool_call_mcp_elicitation --disable apps`,
   then sending `initialized` and creating an ephemeral `thread/start` whose config mirrors the three current plugin launchers, makes the
   app-server-mediated `mcpServer/tool/call` path work even when global config
   contains a stale or disabled server with the same name.
@@ -37,7 +37,7 @@ What is proven:
 - Through app-server, read-only `computer-use/get_app_state` for Activity Monitor
   completed successfully and returned both accessibility-tree text and a JPEG
   screenshot block.
-- A guarded app-server sequence successfully filters and clears Activity Monitor search, restores CPU/search state, and verifies native frontmost focus did not change.
+- Historical Activity Monitor probes filtered/cleared search and switched CPU/Memory tabs with unchanged focus endpoints. Current validation captures the original selected tab and restores it in `finally`; endpoint equality alone does not prove non-interruption.
 - A controlled TextEdit scroll probe against `/tmp/macuse-scroll-test.txt` returned successful `scroll down` and `scroll up` steps for scroll area element `1`; screenshot hashes changed across the sequence.
 - Controlled TextEdit probes against disposable `/tmp/macuse-type-test.txt` and `/tmp/macuse-set-value-test.txt` succeeded for `type_text` and `set_value`, with saved file contents matching the expected probe strings.
 - A controlled TextEdit selection probe against `/tmp/macuse-select-test.txt` succeeded for `select_text` with prefix/suffix disambiguation; file contents were unchanged.
@@ -80,7 +80,7 @@ The current ChatGPT host app contains three separate bundled plugin roots:
 | `event-stream` | `/Applications/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins/record-and-replay` | `event-stream mcp` |
 | `computer-history` | `/Applications/ChatGPT.app/Contents/Resources/plugins/openai-bundled/plugins/computer-history` | `computer-history mcp` |
 
-Each `.mcp.json` uses `./bin/computer-use-client-launcher`, `cwd: "."`, and `env_vars: ["CODEX_HOME"]`. Macuse mirrors these manifests instead of hard-coding the installed client for app-server transport. The launcher resolves the primary installed client shown above. A matching versioned plugin cache can exist under `$CODEX_HOME/plugins/cache/openai-bundled`, but it is not the canonical app-server config.
+Each `.mcp.json` uses `./bin/computer-use-client-launcher`, `cwd: "."`, and `env_vars: ["CODEX_HOME"]`. Macuse mirrors these manifests instead of hard-coding the installed client for app-server transport. The launcher resolves the primary installed client shown above. A matching versioned plugin cache can exist under `$CODEX_HOME/plugins/cache/openai-bundled`, but it is not the canonical app-server config. Startup reads effective config and explicitly disables inherited MCP servers/plugins for the thread; an empty table does not clear inherited servers. The `apps` feature is disabled without discarding plugin `CODEX_HOME`, keeping startup isolated to the three families.
 
 ## MCP config exposed by the plugins
 
@@ -262,14 +262,15 @@ Computer Use MCP:
 /Applications/ChatGPT.app/Contents/Resources/codex app-server \
   --enable computer_use \
   --enable plugins \
-  --enable tool_call_mcp_elicitation
+  --enable tool_call_mcp_elicitation \
+  --disable apps
 ```
 
 The host client must then:
 
 1. Send app-server `initialize` with current camelCase capability fields, for example `capabilities: { experimentalApi: true, requestAttestation: false }`.
 2. Send app-server `initialized` (not MCP's `notifications/initialized`).
-3. Send `thread/start` to create an ephemeral thread with `approvalPolicy: "on-request"` and explicit `config.mcp_servers` entries that mirror each bundled plugin's `computer-use-client-launcher`, working directory, family-specific arguments, and `CODEX_HOME` forwarding.
+3. Read effective config with `config/read`, then send `thread/start` with inherited MCP servers/plugins disabled and `approvalPolicy: "on-request"`. Supply explicit `config.mcp_servers` entries that mirror each bundled plugin's `computer-use-client-launcher`, working directory, family-specific arguments, and `CODEX_HOME` forwarding.
 4. Poll thread-scoped `mcpServerStatus/list`, following `nextCursor` pages with `detail: "toolsAndAuthOnly"`, until asynchronous startup exposes all 18 expected tools or the thread timeout expires.
 5. Send `mcpServer/tool/call` with `threadId`, the matching `server`, tool name,
    and tool arguments. All mutations, pointer calls, recording starts/resume, and settings changes require the local guards documented in the safety policy.
@@ -288,7 +289,7 @@ node tools/validate-macuse.mjs mutating
 node tools/validate-macuse.mjs focus
 ```
 
-Observed results:
+Historical May–August 2026 results below retain the original probe descriptions. CPU-specific cleanup is superseded: current validation restores the captured original tab in `finally`. Focus endpoints describe only those observations, not input attribution or universal isolation.
 
 - `status` printed compact inventories for `computer-use`, `event-stream`, and
   `computer-history`, finding all 18 expected tools. Use `status --full` when every
@@ -421,7 +422,7 @@ as the discovery, elicitation, denial-path, and raw-MCP regression harness.
 
 ## Upstream native capability map
 
-The installed `SkyComputerUseClient` exposes one public `computer-use` MCP server with 10 tools: `list_apps`, `get_app_state`, `click`, `perform_secondary_action`, `set_value`, `select_text`, `scroll`, `drag`, `press_key`, and `type_text`. Reuse these primitives; do not rebuild screenshot capture, AX capture, app sessions, pointer dispatch, keyboard dispatch, text selection, or app approval.
+The installed `SkyComputerUseClient` exposes one public `computer-use` MCP server with 10 tools: `list_apps`, `get_app_state`, `click`, `perform_secondary_action`, `set_value`, `select_text`, `scroll`, `drag`, `press_key`, and `type_text`. Reuse these primitives; do not rebuild screenshot capture, app sessions, pointer/keyboard dispatch, text selection, or app approval. The shared native helper has a narrow public-AX role: window/focus observations and guarded selected-text replacement with exact readback, not another input system.
 
 The same binary also exposes separate subcommands:
 
@@ -436,7 +437,7 @@ SkyComputerUseClient turn-ended <payload>
 
 Binary-string evidence shows private upstream internals such as `virtualCursor`, `focusEnforcer`, `focusRestoreTarget`, `ComputerUseIPCFrontmostWindow`, `ComputerUseIPCScreenshot`, `ComputerUseIPCSkyshot`, `ActivateCodingKeys`, and `DeactivateCodingKeys`. Treat those as upstream-owned implementation details unless OpenAI exposes stable MCP/app-server schemas.
 
-Wrapper-owned value should stay narrow: Codex app-server lifecycle, app approval bridging, safety gates, stable target ergonomics over raw indexes, sequencing, optional evidence readbacks, waits, output shaping, screenshot artifact saving, and focus/mouse evidence. Prefer deleting wrapper behavior when upstream exposes the same stable capability.
+Wrapper-owned value should stay narrow: Codex app-server lifecycle, app approval bridging, safety gates, stable target ergonomics over raw indexes, sequencing, optional evidence readbacks, waits, output shaping, screenshot artifact saving, and native focus observations with explicit coverage limits. Prefer deleting wrapper behavior when upstream exposes the same stable capability.
 
 This repository also includes an app-server-backed standard MCP wrapper for
 Cursor or other MCP-capable clients:
@@ -463,8 +464,7 @@ Example MCP config:
 
 The wrapper exposes all three configured families over MCP while routing execution through Codex app-server. It proxies MCP `elicitation/create` app-approval
 prompts when the client advertises elicitation support; otherwise approval mode
-`ask` falls back to decline. Every Computer Use mutation requires `allowMutating:true`, a safety note naming target/effect/stop boundary, and an immediate wrapper-managed `get_app_state`. Pointer `click` / `drag` additionally require `allowPointer:true`
-and restore mouse position after the call. Non-pointer AX actions do not need cursor restoration.
+`ask` falls back to decline. Every Computer Use mutation requires `allowMutating:true`, a safety note naming target/effect/stop boundary, and an immediate wrapper-managed `get_app_state`. Pointer `click` / `drag` additionally require `allowPointer:true`. macuse never warps the cursor; upstream pointer input may still interrupt the user.
 
 This repository also includes a validation wrapper for repeated checks:
 
@@ -488,7 +488,7 @@ The working app-server bridge is:
 tools/codex-computer-use-appserver.mjs
 ```
 
-It launches Codex app-server with the required feature flags, sends the current app-server `initialized` notification, starts an ephemeral thread with the three current per-plugin launchers, waits for asynchronous MCP startup, and calls the selected family through `mcpServer/tool/call`. Computer Use mutations require `--allow-mutating` and `--safety-note`; pointer calls also require `--allow-pointer` and restore the mouse.
+It launches Codex app-server with the required feature flags, sends the current app-server `initialized` notification, starts an ephemeral thread with the three current per-plugin launchers, waits for asynchronous MCP startup, and calls the selected family through `mcpServer/tool/call`. Computer Use mutations require `--allow-mutating` and `--safety-note`; pointer calls also require `--allow-pointer`. CLI/MCP share startup isolation, native text safety, and document guards, but not the full Pi executor, waits, or structured evidence interface.
 
 Useful commands:
 
@@ -505,9 +505,9 @@ The installable pi extension source is:
 extensions/codex-computer-use.ts
 ```
 
-It is declared through `package.json#pi.extensions` and registers all 18 tools in macuse's configured scope under their native names: 10 `computer-use`, 3 `event-stream`, and 5 `computer-history` tools. It also registers `macuse_sequence`, `macuse_tools`, and `macuse_restart`; only the read tools, sequence helper, and additive loader start active, and the obsolete composite `macuse` action router remains removed.
+It is declared through `package.json#pi.extensions` and registers all 18 tools in macuse's configured scope under their native names: 10 `computer-use`, 3 `event-stream`, and 5 `computer-history` tools. It also registers `macuse_sequence`, `macuse_tools`, and `macuse_restart`; only the read tools, sequence helper, and additive loader start active.
 
-The pi extension keeps one persistent Codex app-server process/thread instead of shelling out to the CLI bridge for every tool call. Normal `session_shutdown` stops it; `/macuse-stop` stops only app-server while leaving lazy restart available. Read-only app state and auxiliary status/settings calls recover stopped-session or transport-closed failures once by restarting only the extension-owned app-server session. `/macuse-restart` / `macuse_restart` explicitly restart Computer Use helpers plus app-server. PID records/watchdog state remain under `/tmp/macuse-appserver`.
+The pi extension keeps one persistent Codex app-server process/thread instead of shelling out to the CLI bridge for every tool call. Normal `session_shutdown` stops it; `/macuse-stop` stops the owned app-server and native helper, not the global Computer Use service, while leaving lazy restart available. Read-only app state and auxiliary status/settings calls recover stopped-session or transport-closed failures once by restarting only the extension-owned app-server session. `/macuse-restart` / `macuse_restart` explicitly restart Computer Use helpers plus app-server. PID records/watchdog state remain under `/tmp/macuse-appserver`.
 
 `get_app_state`, direct mutations, and `macuse_sequence` default to `approval:"inherit"` under macuse's standing app-access policy. Direct `perform_secondary_action`, `press_key`, `type_text`, `set_value`, `select_text`, `scroll`, `click`, and `drag` require `allowMutating:true`, a concrete `safetyNote`, and an immediate pre-dispatch app-state read; direct pointer tools additionally require `allowPointer:true`. `macuse_sequence` uses the same executor with ordered assertions/waits, `allowPointerClick` / `allowPointerDrag`, dedicated top-level `allowRecording` / `allowPrivacyChange` gates for auxiliary mutations, and a sequence-level `app` default. Sequence steps can include `expectText`, `expectAbsentText`, `expectVisibleText`, `allowError`, and `requireStateChange`; output defaults to `detail:"compact"` and keeps resumable failure details. Element-targeted tools accept
 `element_index` as a string or number, `element` as an alias, `elementId` /
@@ -523,11 +523,10 @@ targeting remains safer. Raw `element_index` targets can include
 `expectedValue`; mismatches fail before mutation with a stale-target diagnostic.
 Failed target lookups return available `element_index` lines so the agent can
 fall back without a separate state call. If a sequence fails after it starts, the
-result includes all completed steps plus a failed-step diagnostic and resume hint
-instead of discarding partial evidence. Per-step `allowError: true` also covers
+result sets Pi's error flag while preserving completed steps and the failed-step diagnostic. Inspect `dispatched` and `outcome`; `resumeFromStepIndex` is supplied only when the failed action was not dispatched. Do not replay dispatched or unknown-outcome mutations. Per-step `allowError: true` also covers
 element resolution errors, so optional/fallback steps can fail and the sequence
 can continue.
-Direct pointer `click`/`drag` calls require `allowPointer:true`; pointer steps inside `macuse_sequence` require `allowPointerClick:true` / `allowPointerDrag:true`. Both paths restore mouse position.
+Direct pointer `click`/`drag` calls require `allowPointer:true`; pointer steps inside `macuse_sequence` require `allowPointerClick:true` / `allowPointerDrag:true`. Neither path warps the cursor.
 Prefer `perform_secondary_action` with `action: "Press"`, `press_key`,
 `set_value`, or element-targeted `scroll` when possible to preserve the user's
 mouse/system focus. `press_key` uses xdotool-style key names, such as `5`,
@@ -540,16 +539,14 @@ step `value` into `arguments.value`. Search fields normalize
 `role:"search text field"` to the parsed `role:"search"`; settable/search
 fields expose semantic `tags` and stable names even when the accessible value is
 folded into the raw line. Empty `set_value` uses a conservative clear-control
-fallback when exactly one non-risky clear/cancel button is available. Non-empty
-`set_value` is verified with a post-action state read only when evidence is requested
-(`requireStateChange`, assertions, or image artifacts), so simple upstream successes stay fast. Per-step `expectText` /
+fallback when exactly one non-risky clear/cancel button is available. Every `set_value` verifies the requested value against the resolved target after dispatch; matching text in another field is not proof. Per-step `expectText` /
 `expectAbsentText` assertions strip invisible bidi marks before substring
 matching, which makes accessibility text assertions such as `text 1` reliable;
 `expectVisibleText` checks parsed visible text values directly, such as `0` or
 `1`, so agents do not need to copy accessibility line formats for display
-assertions. `get_app_state` supports `detail: "minimal"` for app/window,
-visible text, and concise target hints, `detail: "compact"` for grouped
-interactive elements, and `detail: "full"` for raw trees. `targetScope: "main"`
+assertions. The entire sequence's arguments and safety gates are validated before dispatch. Mutation preflight rejects document drift since the last observed state; optional `expectedTitle`/`expectedUrl` pin the intended document (in step `arguments` for sequences). `get_app_state` defaults to `detail: "minimal"` for app/window,
+visible text, and concise target hints. Use `detail: "compact"` for grouped
+interactive elements or `detail: "full"` for raw trees. `targetScope: "main"`
 suppresses likely browser/app chrome and OS window controls in transformed
 output where possible. Sequence `detail: "minimal"` suppresses successful action
 and state bodies for lower-token action logs while still showing assertion pass
@@ -561,19 +558,20 @@ text-entry values, `waitForElement`, `waitUntilElementEnabled`,
 `get_app_state` and reduce manual sleep / resnapshot loops. They separate
 predicate `timeoutMs` from per-poll `toolTimeoutMs`, avoid issuing final
 sub-1000ms transport calls, and `waitForText` can be scoped with `visibleOnly`,
-`title`, and `url`. `get_app_state` and
-sequence output include focus summaries (`before`, `after`, `frontmostChanged`,
-and target-app frontmost checks) so background-control runs can prove whether the
-target app stole focus. `get_app_state` and sequence `get_app_state` step details
+`title`, and `url`. `get_app_state` defaults to `trackFocus:true`; reads and sequences observe native application activation and available focused-window events as well as endpoints. Coverage gaps, AX errors, truncation, and unknown input attribution must be reported honestly. Equal endpoints do not exclude transient activation, and observations do not prove who caused a change or guarantee non-interruption. `get_app_state` and sequence `get_app_state` step details
 include machine-readable parsed element metadata with target hints, `visibleText`,
 `targets`, semantic `tags`, `changed`, `warnings`, and `nextActions` where
 available. Mutating sequence steps perform a post-action state readback when
 evidence is requested and report `actionDispatchedButNoStateChange` when an AX action reports success but
-no observable title, URL, visible-text, or target change appears; per-step
+no relevant target/document change appears (unrelated clock updates do not verify an element action); per-step
 `requireStateChange: true` makes that condition fail closed and captures a
 pre-action baseline for non-element actions such as `press_key`; if the first
 readback shows no change, a short delayed readback is attempted before failing
 to better catch transient popovers/editors.
+Internal parsing, caches, target resolution, and assertions retain the full upstream state regardless of presentation caps.
+
+The shared async native helper lazily compiles with installed `xcrun swiftc`, caches by source hash, and requires Accessibility access for AX operations. `type_text` prefers guarded `AXSelectedText` replacement in the already-focused control with exact readback, without keyboard events or clipboard writes. Unsupported Unicode fails before mutation; unsupported ASCII may use upstream typing. Attempted unverified edits never fall back/replay. AX checks cannot eliminate concurrent user edits. Restart the owning Pi/CLI/MCP process after code or native source changes; `/reload` resets resources and activation, not extension code.
+
 `includeImage` is model/host dependent; use `saveImagePath` when screenshot
 artifacts must be reliable. In sequences, `saveImagePath` defaults to the first
 step for compatibility; use `screenshotStep: "final"` to save the final visual
@@ -586,9 +584,7 @@ restart. When upstream Computer Use returns timeout errors such as `-10005
 timeoutReached`, macuse annotates the result with a clear blocker: filtering
 modes only reduce output after upstream responds and cannot make a hung browser
 accessibility snapshot safe. For Chrome/web tasks, use
-`agent_browser` when browser automation is acceptable, or retry Computer Use
-after `/macuse-restart`, increasing `toolTimeoutMs`, or reducing heavy browser
-windows/tabs.
+`agent_browser` when browser automation is acceptable. A timeout/abort does not cancel upstream work; the persistent transport retains queue ownership until settlement or owned-process shutdown. Never automatically replay a dispatched mutation. Reinspect after settlement before deciding a new action; a helper restart does not prove cancellation.
 
 ### Rerun after Codex or Computer Use updates
 
@@ -648,7 +644,7 @@ CODEX_CU_CWD='/path/to/openai-bundled/computer-use/<version>' \
 node tools/probe-codex-computer-use-mcp.mjs discover
 ```
 
-On a timeout, immediately collect recent logs and rerun with a larger timeout:
+For these read-only raw-MCP diagnostics, collect recent logs before considering a longer probe. A timeout does not prove upstream cancellation; never apply this retry guidance to mutations:
 
 ```bash
 node tools/probe-codex-computer-use-mcp.mjs logs --since 5m
@@ -725,17 +721,17 @@ The important regression signals are:
 5. App-server `get-state --app Calculator` still returns
    a normal read-only accessibility tree and, when requested, an image block.
 6. `node tools/validate-macuse.mjs mutating` still completes the guarded
-   Activity Monitor search/filter/clear and CPU/Memory restore smoke test.
+   Activity Monitor tab smoke test, restoring the captured original tab in `finally`.
 7. `node tools/validate-macuse.mjs focus` still fails if the Activity Monitor
    mutating probe changes native frontmost focus.
 8. Any direct raw-MCP accepted `state` probe either completes or produces enough
    JSON-RPC and macOS-log evidence to decide whether raw-MCP parity improved or
    still needs the app-server thread/session wrapper.
 
-## Dogfood findings status
+## Historical multi-app dogfood observations
 
-Recent multi-app trip-planning QA runs covered Calculator, TextEdit, Calendar,
-Finder, and Brave using only macuse/Codex Computer Use. Current status:
+May–August 2026 trip-planning QA covered Calculator, TextEdit, Calendar,
+Finder, and Brave. These app-specific observations are not current isolation guarantees; use the current guard/text/failure behavior above and the safety policy when operating them:
 
 - Calculator arithmetic, stable target fallback, `requireStateChange`, and final
   screenshot capture work well.
@@ -793,7 +789,7 @@ Reusable now for broad pi operation:
   MCP was missing in these probes.
 - The Codex skill and app-specific instruction files are available locally.
 - pi can load `extensions/codex-computer-use.ts` through the package manifest, initially expose only `list_apps`, `get_app_state`, `macuse_sequence`, and `macuse_tools`, then add exact registered tools on demand while retaining one live Codex app-server thread.
-- A harmless Activity Monitor search/filter/clear and CPU/Memory restore smoke test has passed through direct `set_value` / `perform_secondary_action` calls, followed by a `macuse_sequence` state assertion.
+- Historical Activity Monitor search/tab probes passed through direct guarded calls and sequence assertions. Current validation restores the originally observed tab in `finally`, not an assumed CPU state.
 
 Still needed before broad mutating GUI operation:
 
@@ -933,7 +929,7 @@ find '/Users/yourname/.codex/computer-use/Codex Computer Use.app/Contents/Resour
 
 Computer Use binaries contain `CodexAppServerJSONRPCConnection` and
 `X-OpenAI-Authorization` strings; the current Codex binary is bundled at
-`/Applications/ChatGPT.app/Contents/Resources/codex`. The direct app-server can be probed safely over stdio. Use camelCase
+`/Applications/ChatGPT.app/Contents/Resources/codex`. The following historical auth probe is not the isolated production startup recipe; use the committed bridge for current operation. Use camelCase
 parameter names; snake_case fields are silently ignored by this protocol layer.
 
 ```bash
@@ -1000,9 +996,9 @@ Python snippets:
 node tools/probe-codex-computer-use-mcp.mjs discover
 ```
 
-### Probe app approval elicitation safely
+### Probe app approval denial
 
-This declines the app-use prompt, so it should not grant new app access:
+This declines an app-use prompt when emitted; an already-approved app may not prompt. Raw-MCP reads can still disturb focus, so exclude them from non-interruption validation:
 
 ```bash
 node tools/probe-codex-computer-use-mcp.mjs deny --app Finder

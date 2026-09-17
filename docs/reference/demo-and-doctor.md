@@ -1,8 +1,7 @@
 # macuse doctor, demo, and config tools
 
 Created: May 22, 2026
-Updated: August 17, 2026
-Status: Current operator entrypoints for proving the integration works
+Status: Current operator entrypoints; inspect each run's receipts rather than assuming success
 
 ## Tools
 
@@ -109,15 +108,17 @@ Outputs:
 - `cursor-mcp.json` — ready-to-copy MCP config for the current checkout
 - `doctor/doctor.md` and `doctor/doctor.json` unless `--skip-doctor` is passed
 
-The demo proves:
+The demo checks:
 
 1. Codex app-server exposes all expected Computer Use tools.
 2. External Computer Use can capture app screenshots/state.
 3. A non-element Escape action refreshes Activity Monitor state before dispatch.
 4. CPU/Memory tab actions work through accessibility actions without pointer clicks.
-5. The sequence restores CPU state.
-6. Native frontmost focus is unchanged.
+5. Validation captures Activity Monitor's original selected tab and restores it in `finally`, not to a hard-coded CPU tab.
+6. Native activation/window observations and endpoint snapshots report focus changes and capture gaps. These are observations, not input attribution or a universal non-interruption guarantee.
 7. The standard MCP wrapper validates mutation/safety-note/pointer guards and app-approval elicitation behavior when upstream emits a prompt.
+
+Native observation/text features lazily compile an async helper using installed `xcrun swiftc`; AX access needs Accessibility permission. Doctor checks both requirements under its current launcher. Missing capture remains unknown, with the actual compiler, permission, or runtime error reported. Do not install tools or alter permissions implicitly. A timed-out action may still complete upstream; never replay it automatically. Keep screenshots/transcripts local when they contain private window content.
 
 ## Config generator
 

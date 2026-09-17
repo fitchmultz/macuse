@@ -193,6 +193,7 @@ export type DetailMode = "compact" | "full" | "minimal";
 
 export type ElementInfo = {
 	index: string;
+	url?: string;
 	id?: string;
 	description?: string;
 	role: string;
@@ -242,6 +243,8 @@ export type FocusSnapshot = {
 	frontmost: AppMetadata[];
 	frontmostNames: string[];
 	changed: boolean | null;
+	observationAvailable?: boolean;
+	observedChanges?: number;
 	before: AppMetadata[] | null;
 	after: AppMetadata[] | null;
 };
@@ -252,6 +255,7 @@ export type SequenceFailure = {
 	tool: string;
 	label?: string;
 	message: string;
+	dispatched?: boolean;
 };
 
 export type SequencedResult = {
@@ -260,6 +264,8 @@ export type SequencedResult = {
 	tool: string;
 	arguments: Record<string, JsonValue>;
 	durationMs: number;
+	dispatched?: boolean;
+	outcome?: "verified" | "reported" | "unknown";
 	result: FilteredToolResult;
 	expectText: string[];
 	expectAbsentText: string[];
@@ -274,8 +280,6 @@ export type SequencedResult = {
 	acceptedElicitations: number;
 	elicitationCount: number;
 };
-
-export type MousePosition = { x: number; y: number };
 
 export class ComputerUseError extends Error {
 	details?: unknown;

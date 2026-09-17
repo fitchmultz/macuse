@@ -14,7 +14,6 @@ import {
 	type FocusSnapshot,
 	type JsonValue,
 	type MachineElement,
-	type MousePosition,
 	type SequenceFailure,
 	type SequenceStep,
 	type SequencedResult,
@@ -23,6 +22,7 @@ import {
 } from "./core";
 import { summarizeContent, toolResultText } from "./content";
 import { focusSummaryText } from "./apps";
+import { validateToolArguments } from "./upstream-tool-args.mjs";
 import {
 	assertionContentText,
 	elementLineWithTargetHint,
@@ -43,7 +43,15 @@ export function isWaitTool(tool: string): boolean {
 }
 
 export function validateWaitArguments(tool: string, args: Record<string, JsonValue>): void {
-	if (typeof args.app !== "string") throw new Error(`${tool} requires an app argument or sequence-level app default.`);
+	validateToolArguments("get_app_state", args);
+	if (typeof args.app !== "string" || !args.app.trim()) throw new Error(`${tool} requires an app argument or sequence-level app default.`);
+	for (const key of ["timeoutMs", "toolTimeoutMs", "intervalMs"]) {
+		if (args[key] !== undefined && (typeof args[key] !== "number" || !Number.isFinite(args[key]) || args[key] <= 0)) throw new Error(`${tool} arguments.${key} must be a positive number.`);
+	}
+	for (const key of ["text", "title", "url"]) {
+		if (args[key] !== undefined && typeof args[key] !== "string") throw new Error(`${tool} arguments.${key} must be a string.`);
+	}
+	if (args.visibleOnly !== undefined && typeof args.visibleOnly !== "boolean") throw new Error(`${tool} arguments.visibleOnly must be a boolean.`);
 	if (tool === "waitForText" && typeof args.text !== "string") throw new Error("waitForText requires arguments.text.");
 	if (tool === "waitForURL" && typeof args.url !== "string") throw new Error("waitForURL requires arguments.url.");
 	if (tool === "waitForTitle" && typeof args.title !== "string") throw new Error("waitForTitle requires arguments.title.");
@@ -116,7 +124,7 @@ export function validateStepResult(step: SequencedResult): void {
 		const resultText = toolResultText(step.result);
 		const reason = resultText.includes("actionDispatchedButNoStateChange")
 			? "did not produce an observable state change required by requireStateChange"
-			: "returned tool error";
+			: `returned tool error: ${truncateString(resultText, 500)}`;
 		throw new ComputerUseError(`sequence step ${stepNumber} (index ${step.index}) ${step.tool} ${reason}`, step.result);
 	}
 	const text = normalizeAssertionText(assertionContentText(step.result.content));
@@ -172,7 +180,7 @@ export function sequenceTargetMethod(step: SequencedResult): string {
 	return "none";
 }
 
-export function sequenceRunSummary(steps: SequencedResult[], failed: SequenceFailure | null, focus?: FocusSnapshot, mousePreservation?: { before: MousePosition; after: MousePosition | null; restored: boolean }): string {
+export function sequenceRunSummary(steps: SequencedResult[], failed: SequenceFailure | null, focus?: FocusSnapshot): string {
 	const apps = [...new Set(steps.map((step) => typeof step.arguments.app === "string" ? step.arguments.app : null).filter((app): app is string => Boolean(app)))];
 	const actionSteps = steps.filter((step) => !READ_ONLY_TOOLS.has(step.tool));
 	const finalStep = [...steps].reverse().find((step) => step.visibleText.length > 0) ?? steps.at(-1);
@@ -188,27 +196,28 @@ export function sequenceRunSummary(steps: SequencedResult[], failed: SequenceFai
 		`- apps: ${apps.length ? apps.join(", ") : "<none>"}`,
 		`- actions: ${actionSteps.length ? actionSteps.map((step) => `${step.index + 1}:${step.tool}/${sequenceTargetMethod(step)}`).join(", ") : "none (read-only)"}`,
 		`- safety tags on resolved targets: ${tags.length ? tags.join(", ") : "none reported"}`,
-		`- final visible text: ${finalVisible.length ? JSON.stringify(finalVisible.join(" | ")) : "<none parsed>"}`,
+		`- final visible text: ${finalVisible.length ? JSON.stringify(truncateString(finalVisible.join(" | "), 600)) : "<none parsed>"}`,
 		...(focus ? [`- focus: before=${focus.before?.map((app) => app.name).join(", ") || "<unknown>"}; after=${focus.after?.map((app) => app.name).join(", ") || "<unknown>"}; changed=${focus.changed ?? "unknown"}`] : []),
-		...(mousePreservation ? [`- pointer mouse: restored=${mousePreservation.restored}`] : []),
 		...(failed ? [`- failure: step ${failed.stepNumber} ${failed.tool}: ${failed.message}`] : []),
 		...(readbackDrift.length ? [`- anomaly hints: ${readbackDrift.join("; ")}`] : []),
 	];
 	return lines.join("\n");
 }
 
-export function sequenceContent(steps: SequencedResult[], includeImages = false, failed: SequenceFailure | null = null, totalSteps = steps.length, detail: DetailMode = "compact", maxTextChars = DEFAULT_MAX_TEXT_CHARS, focus?: FocusSnapshot, targetApp?: string, mousePreservation?: { before: MousePosition; after: MousePosition | null; restored: boolean }): ContentBlock[] {
+export function sequenceContent(steps: SequencedResult[], includeImages = false, failed: SequenceFailure | null = null, totalSteps = steps.length, detail: DetailMode = "compact", maxTextChars = DEFAULT_MAX_TEXT_CHARS, focus?: FocusSnapshot, targetApp?: string): ContentBlock[] {
 	if (steps.length === 0) return [{ type: "text", text: "Computer Use sequence returned no steps." }];
 	const completedStepCount = failed ? failed.index : steps.length;
+	const retry = failed?.dispatched
+		? "The failed step was dispatched and may already have taken effect. Inspect current state; do not replay it automatically."
+		: failed ? `No action was dispatched by the failed step. After checking current state, it is safe to retry from step index ${failed.index}.` : "";
 	const summary = failed
-		? `Sequence failed at step ${failed.stepNumber} of ${totalSteps} (index ${failed.index}, ${failed.tool}). Completed ${completedStepCount} step${completedStepCount === 1 ? "" : "s"}. To resume, start a new sequence from step index ${failed.index} against current app state.`
+		? `Sequence failed at step ${failed.stepNumber} of ${totalSteps} (index ${failed.index}, ${failed.tool}). Completed ${completedStepCount} step${completedStepCount === 1 ? "" : "s"}. ${retry}`
 		: `Sequence completed ${steps.length} of ${totalSteps} step${totalSteps === 1 ? "" : "s"}.`;
 	const focusLine = focus ? `\n${focusSummaryText(focus, targetApp)}` : "";
-	const mouseLine = mousePreservation ? `\nPointer mouse preservation: before=(${mousePreservation.before.x},${mousePreservation.before.y}); after=(${mousePreservation.after?.x ?? "unknown"},${mousePreservation.after?.y ?? "unknown"}); restored=${mousePreservation.restored}` : "";
-	const runSummary = sequenceRunSummary(steps, failed, focus, mousePreservation);
+	const runSummary = sequenceRunSummary(steps, failed, focus);
 	const orderedSteps = failed ? [steps[failed.index], ...steps.filter((step) => step.index !== failed.index)].filter((step): step is SequencedResult => Boolean(step)) : steps;
 	const stepText = orderedSteps.map((step) => {
-		const header = `Step ${step.index + 1} (index ${step.index}): ${step.tool} (${step.durationMs}ms, isError=${step.result.isError}, elicitations=${step.elicitationCount}, accepted=${step.acceptedElicitations})`;
+		const header = `Step ${step.index + 1} (index ${step.index}): ${step.tool} (${step.durationMs}ms including preflight/readback, isError=${step.result.isError}, dispatched=${step.dispatched ?? false}, outcome=${step.outcome ?? "reported"}, elicitations=${step.elicitationCount}, accepted=${step.acceptedElicitations})`;
 		const diagnostics = [
 			step.targetResolution,
 			...step.targetWarnings.map((warning) => `warning: ${warning}`),
@@ -223,7 +232,7 @@ export function sequenceContent(steps: SequencedResult[], includeImages = false,
 		const shouldShowBody = detail !== "minimal" || step.result.isError;
 		return shouldShowBody ? `${header}\n${[...diagnostics, summarizeContent(step.result.content)].filter(Boolean).join("\n")}` : `${header}${diagnostics.length ? `\n${diagnostics.join("\n")}` : ""}`;
 	}).join("\n\n---\n\n");
-	const text = failed ? `${summary}${focusLine}${mouseLine}\n\n${stepText}\n\n${runSummary}` : `${summary}${focusLine}${mouseLine}\n\n${runSummary}\n\n${stepText}`;
+	const text = failed ? `${summary}${focusLine}\n\n${stepText}\n\n${runSummary}` : `${summary}${focusLine}\n\n${runSummary}\n\n${stepText}`;
 	const content: ContentBlock[] = [{ type: "text", text: truncateString(text, maxTextChars) }];
 	if (includeImages) {
 		for (const step of steps) {

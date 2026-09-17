@@ -281,6 +281,9 @@ type PendingRequest = {
 	timer: NodeJS.Timeout;
 	method: string;
 	onAbort?: () => void;
+	settled: Promise<void>;
+	settle: () => void;
+	abandoned: boolean;
 };
 
 type AppServerThread = { id: string } & Record<string, unknown>;
@@ -327,6 +330,7 @@ export class AppServerClient {
 	private buffer = "";
 	private queue: Promise<unknown> = Promise.resolve();
 	private initializing: Promise<void> | null = null;
+	private stopping: Promise<void> | null = null;
 	private initialized: unknown = null;
 	private thread: AppServerThread | null = null;
 	private currentApproval: ApprovalMode = "inherit";
@@ -364,20 +368,57 @@ export class AppServerClient {
 			elicitationCount: this.elicitationCount,
 			notifications: this.notifications.slice(-10),
 			stderrTail: this.stderr.slice(-4000),
+			pendingRequests: [...this.pending.entries()].map(([id, pending]) => ({ id, method: pending.method, outcomeUnknown: pending.abandoned && pending.method === "mcpServer/tool/call" })),
 		};
 	}
 
-	async runExclusive<T>(fn: () => Promise<T>): Promise<T> {
-		const run = this.queue.then(fn, fn);
-		this.queue = run.catch(() => undefined);
-		return run;
+	async runExclusive<T>(fn: () => Promise<T>, signal?: AbortSignal, timeoutMs?: number): Promise<T> {
+		let waiting = true;
+		let skipped = false;
+		let timer: NodeJS.Timeout | undefined;
+		let onAbort: (() => void) | undefined;
+		const cleanup = () => {
+			clearTimeout(timer);
+			if (onAbort) signal?.removeEventListener("abort", onAbort);
+		};
+		const result = new Promise<T>((resolve, reject) => {
+			const cancelWaiting = (reason: "aborted" | "timeout") => {
+				if (!waiting) return;
+				skipped = true;
+				cleanup();
+				reject(new ComputerUseError(`Computer Use call ${reason === "aborted" ? "was aborted" : "timed out"} while waiting for the previous request; no new action was sent.`, { reason, dispatched: false, outcomeUnknown: false }));
+			};
+			onAbort = () => cancelWaiting("aborted");
+			if (signal?.aborted) onAbort();
+			else {
+				signal?.addEventListener("abort", onAbort, { once: true });
+				if (timeoutMs !== undefined) timer = setTimeout(() => cancelWaiting("timeout"), timeoutMs);
+			}
+			this.queue = this.queue.then(async () => {
+				waiting = false;
+				cleanup();
+				if (skipped) return;
+				try {
+					resolve(await fn());
+				} catch (error) {
+					reject(error);
+				} finally {
+					// Local abort/timeout is not upstream cancellation. Keep ownership until
+					// the RPC replies or its owned transport exits, even after returning an error.
+					await Promise.all([...this.pending.values()].map((pending) => pending.settled));
+				}
+			});
+		});
+		return result;
 	}
 
 	async ensureReady(timeoutMs: number, signal?: AbortSignal): Promise<void> {
+		if (this.stopping) await this.stopping;
+		if (signal?.aborted) throw new ComputerUseError("Computer Use call was aborted before startup; no action was sent.", { reason: "aborted", dispatched: false, outcomeUnknown: false });
 		if (this.proc && this.proc.exitCode === null && this.proc.signalCode === null && this.thread?.id) return;
 		if (this.initializing) return this.initializing;
-		this.initializing = this.start(timeoutMs, signal).catch(async (error) => {
-			await this.stop();
+		this.initializing = this.start(timeoutMs, signal).catch((error) => {
+			void this.stop();
 			throw error;
 		}).finally(() => {
 			this.initializing = null;
@@ -387,22 +428,27 @@ export class AppServerClient {
 
 	private async start(timeoutMs: number, signal?: AbortSignal): Promise<void> {
 		if (!existsSync(this.codexBin)) throw new ComputerUseError(`Codex app-server binary not found: ${this.codexBin}`);
-		const args = ["app-server"];
+		// ChatGPT Apps injects codex_apps independently of mcp_servers.
+		const args = ["app-server", "--disable", "apps"];
 		for (const flag of FEATURE_FLAGS) args.push("--enable", flag);
-		this.proc = spawn(this.codexBin, args, {
+		this.buffer = "";
+		this.stderr = "";
+		const proc = this.proc = spawn(this.codexBin, args, {
 			cwd: this.cwd,
 			env: process.env,
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 		this.proc.stdout.setEncoding("utf8");
 		this.proc.stderr.setEncoding("utf8");
-		this.proc.stdout.on("data", (chunk) => this.onStdout(String(chunk)));
+		this.proc.stdout.on("data", (chunk) => { if (this.proc === proc) this.onStdout(String(chunk)); });
 		this.proc.stderr.on("data", (chunk) => {
+			if (this.proc !== proc) return;
 			this.stderr += String(chunk);
 			if (this.stderr.length > 20_000) this.stderr = this.stderr.slice(-20_000);
 		});
-		this.proc.on("exit", (code, exitSignal) => this.onExit(code, exitSignal));
-		this.proc.on("error", (error) => this.onExit(null, null, error));
+		this.proc.on("exit", (code, exitSignal) => { if (this.proc === proc) this.onExit(code, exitSignal); });
+		this.proc.on("error", (error) => { if (this.proc === proc) this.onExit(null, null, error); });
+		this.proc.stdin.on("error", () => { if (this.proc === proc) void this.stop(); });
 		if (this.proc.pid) {
 			this.processRecord = writeProcessRecord(this.cwd, this.codexBin, this.proc.pid);
 			this.watchdog = startWatchdog(this.processRecord);
@@ -413,6 +459,13 @@ export class AppServerClient {
 			capabilities: { experimentalApi: true, requestAttestation: false },
 		}, Math.min(timeoutMs, 15_000), signal);
 		this.notify("initialized");
+		// Codex merges MCP tables; mcp_servers={} does not clear inherited entries.
+		// config/read does not connect servers. Disable inherited integrations using
+		// native per-thread overrides before creating the only thread we use.
+		const configRead = await this.request("config/read", { cwd: this.cwd, includeLayers: false }, Math.min(timeoutMs, 15_000), signal);
+		const config = isRecord(configRead) && isRecord(configRead.config) ? configRead.config : null;
+		if (!config) throw new ComputerUseError("config/read response did not include config");
+		const disabledEntries = (value: unknown) => Object.fromEntries(Object.keys(isRecord(value) ? value : {}).map((name) => [name, { enabled: false }]));
 		const threadStart = await this.request("thread/start", {
 			cwd: this.cwd,
 			ephemeral: true,
@@ -420,11 +473,13 @@ export class AppServerClient {
 			sandbox: "workspace-write",
 			config: {
 				features: {
+					apps: false,
 					computer_use: true,
 					plugins: true,
 					tool_call_mcp_elicitation: true,
 				},
-				mcp_servers: mcpServerConfigs(),
+				mcp_servers: { ...disabledEntries(config.mcp_servers), ...mcpServerConfigs() },
+				plugins: disabledEntries(config.plugins),
 			},
 		}, Math.min(Math.max(timeoutMs, 45_000), 120_000), signal);
 		const thread = isRecord(threadStart) && isRecord(threadStart.thread) ? threadStart.thread : null;
@@ -487,6 +542,7 @@ export class AppServerClient {
 			clearTimeout(pending.timer);
 			if (pending.onAbort) pending.onAbort();
 			this.pending.delete(pendingId);
+			pending.settle();
 			const errorText = message.error ? String(message.error.message || "JSON-RPC error") : "";
 			if (message.error) pending.reject(new ComputerUseError(`${pending.method} failed: ${errorText}`, message.error));
 			else pending.resolve(message.result);
@@ -513,6 +569,8 @@ export class AppServerClient {
 	}
 
 	private decideElicitation() {
+		// A late permission prompt must not authorize more work after cancellation.
+		if ([...this.pending.values()].some((pending) => pending.abandoned)) return { action: "decline", content: null, _meta: null };
 		if (this.currentApproval === "inherit" || this.currentApproval === "accept-all") {
 			this.acceptedElicitations += 1;
 			return { action: "accept", content: {}, _meta: null };
@@ -530,7 +588,8 @@ export class AppServerClient {
 		for (const pending of this.pending.values()) {
 			clearTimeout(pending.timer);
 			if (pending.onAbort) pending.onAbort();
-			pending.reject(new ComputerUseError(message));
+			pending.reject(new ComputerUseError(message, { method: pending.method, dispatched: pending.method === "mcpServer/tool/call", outcomeUnknown: pending.method === "mcpServer/tool/call" }));
+			pending.settle();
 		}
 		this.pending.clear();
 		this.proc = null;
@@ -554,34 +613,36 @@ export class AppServerClient {
 	private request(method: string, params: Record<string, unknown>, timeoutMs: number, signal?: AbortSignal): Promise<unknown> {
 		const id = this.nextId++;
 		return new Promise<unknown>((resolve, reject) => {
-			let onAbort: (() => void) | undefined;
-			const cleanup = () => {
-				clearTimeout(timer);
-				if (onAbort) signal?.removeEventListener("abort", onAbort);
-			};
-			const timer = setTimeout(() => {
-				this.pending.delete(id);
-				if (onAbort) signal?.removeEventListener("abort", onAbort);
-				reject(new ComputerUseError(`${method} timed out after ${timeoutMs}ms`, { method, id }));
-			}, timeoutMs);
-			onAbort = () => {
-				this.pending.delete(id);
-				cleanup();
-				reject(new ComputerUseError(`${method} was aborted`, { method, id }));
-			};
 			if (signal?.aborted) {
-				cleanup();
-				reject(new ComputerUseError(`${method} was aborted`, { method, id }));
+				reject(new ComputerUseError(`${method} was aborted before dispatch`, { method, id, reason: "aborted", dispatched: false, outcomeUnknown: false }));
 				return;
 			}
+			let settle!: () => void;
+			const settled = new Promise<void>((done) => { settle = done; });
+			const cleanup = () => {
+				clearTimeout(timer);
+				signal?.removeEventListener("abort", onAbort);
+			};
+			const abandon = (reason: "aborted" | "timeout") => {
+				const pending = this.pending.get(id);
+				if (!pending || pending.abandoned) return;
+				pending.abandoned = true;
+				cleanup();
+				const dispatched = method === "mcpServer/tool/call";
+				const outcome = dispatched ? "Upstream cancellation is unavailable; outcome unknown. Later calls wait for this request to settle." : "No Computer Use action was sent.";
+				reject(new ComputerUseError(`${method} ${reason === "aborted" ? "was aborted" : `timed out after ${timeoutMs}ms`}. ${outcome}`, { method, id, reason, dispatched, outcomeUnknown: dispatched }));
+			};
+			const onAbort = () => abandon("aborted");
+			const timer = setTimeout(() => abandon("timeout"), timeoutMs);
 			signal?.addEventListener("abort", onAbort, { once: true });
-			this.pending.set(id, { resolve, reject, timer, method, onAbort: cleanup });
+			this.pending.set(id, { resolve, reject, timer, method, onAbort: cleanup, settled, settle, abandoned: false });
 			try {
 				this.write({ jsonrpc: "2.0", id, method, params });
 			} catch (error: unknown) {
 				this.pending.delete(id);
 				cleanup();
-				reject(error);
+				settle();
+				reject(new ComputerUseError(`${method} was not dispatched: ${errorMessage(error)}`, { method, id, dispatched: false, outcomeUnknown: false }));
 			}
 		});
 	}
@@ -645,10 +706,15 @@ export class AppServerClient {
 				acceptedElicitations: this.acceptedElicitations - acceptedBefore,
 				elicitationCount: this.elicitationCount - elicitationBefore,
 			};
-		});
+		}, opts.signal, opts.timeoutMs);
 	}
 
 	async stop(): Promise<void> {
+		if (!this.stopping) this.stopping = this.stopProcess().finally(() => { this.stopping = null; });
+		return this.stopping;
+	}
+
+	private async stopProcess(): Promise<void> {
 		const proc = this.proc;
 		const record = this.processRecord;
 		this.proc = null;
@@ -662,7 +728,8 @@ export class AppServerClient {
 		for (const pending of this.pending.values()) {
 			clearTimeout(pending.timer);
 			if (pending.onAbort) pending.onAbort();
-			pending.reject(new ComputerUseError("Codex app-server stopped by macuse"));
+			pending.reject(new ComputerUseError("Codex app-server stopped by macuse; any dispatched action has an unknown outcome", { method: pending.method, dispatched: pending.method === "mcpServer/tool/call", outcomeUnknown: pending.method === "mcpServer/tool/call" }));
+			pending.settle();
 		}
 		this.pending.clear();
 		if (proc.exitCode !== null || proc.signalCode !== null) return;

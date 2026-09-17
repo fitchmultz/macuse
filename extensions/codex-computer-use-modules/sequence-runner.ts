@@ -1,120 +1,82 @@
+import { setTimeout as delay } from "node:timers/promises";
 import {
-	APP_SCOPED_TOOLS,
-	ComputerUseError,
-	DEFAULT_MAX_TEXT_CHARS,
-	DEFAULT_TOOL_TIMEOUT_MS,
-	READ_ONLY_TOOLS,
-	WAIT_TOOLS,
-	asInt,
-	bridgeDetails,
-	errorMessage,
-	mcpServerForTool,
-	truncateString,
-	validateAuxiliarySafety,
-	type AppMetadata,
-	type ApprovalMode,
-	type ChangeSummary,
-	type ElementInfo,
-	type FilteredToolResult,
-	type ImageContentBlock,
-	type JsonValue,
-	type MachineElement,
-	type SequenceFailure,
-	type SequenceParams,
-	type SequenceStep,
-	type SequencedResult,
-	type StateSummary,
-	type TargetScope,
-	type TextContentBlock,
+	APP_SCOPED_TOOLS, ComputerUseError, DEFAULT_MAX_TEXT_CHARS, DEFAULT_TOOL_TIMEOUT_MS,
+	READ_ONLY_TOOLS, WAIT_TOOLS, asInt, bridgeDetails, errorMessage, isRecord, mcpServerForTool, truncateString, validateAuxiliarySafety,
+	type ApprovalMode, type ElementInfo, type FilteredToolResult, type ImageContentBlock,
+	type JsonValue, type SequenceFailure, type SequenceParams, type SequencedResult, type StateSummary, type TextContentBlock,
 } from "./core";
 import { AppServerClient } from "./app-server-client";
-import { pickUpstreamToolArgs } from "./upstream-tool-args.mjs";
-import { filterToolResult, isTextBlock, toolResultText } from "./content";
+import { pickUpstreamToolArgs, validateToolArguments } from "./upstream-tool-args.mjs";
+import { filterToolResult, toolResultText } from "./content";
 import { appendComputerUseDiagnostic, appendImageWarning, failureResult } from "./diagnostics";
 import { focusSnapshot } from "./apps";
-import { getMousePosition, nativeFrontmostApps, restoreMousePosition } from "./macos-focus";
+import { beginFocusObservation, endFocusObservation, macosNative } from "./macos-focus";
+import { nativeWindowClosed, nativeTextUnavailableReason } from "../../tools/macos-native.mjs";
 import {
-	appendElementStabilityNote,
-	appendText,
-	assertionContentText,
-	compactContent,
-	compareState,
-	contentIncludesMultilineValue,
-	describeTargetResolution,
-	elementLineWithTargetHint,
-	enrichActionError,
-	hasMutatingSteps,
-	hasStableSelector,
-	hasStateSummaryContent,
-	machineElements,
-	normalizeAssertionText,
-	normalizeDetail,
-	normalizeToolArguments,
-	observedStateChange,
-	resolveElementDescription,
-	resolveElementId,
-	resolveElementRoleName,
-	resolveElementTargetFallbacks,
-	stateSummary,
-	targetStateChanged,
-	updateElementCache,
-	validateIndexedTarget,
+	appendText, compactContent, compareState, describeTargetResolution, enrichActionError, hasMutatingSteps,
+	hasStableSelector, hasStateSummaryContent, machineElements, normalizeDetail, normalizeToolArguments,
+	observedStateChange, resolveElementDescription, resolveElementId, resolveElementRoleName,
+	resolveElementTargetFallbacks, stateSummary, targetStateChanged, updateElementCache, validateIndexedTarget,
 } from "./elements-state";
-import {
-	browserLikeAppName,
-	isWaitTool,
-	normalizeSequenceSteps,
-	sequenceContent,
-	validateStepResult,
-	validateWaitArguments,
-	waitConditionMet,
-} from "./sequence";
+import { browserLikeAppName, isWaitTool, normalizeSequenceSteps, sequenceContent, validateStepResult, validateWaitArguments, waitConditionMet } from "./sequence";
 
-export async function captureFocusSnapshot(): Promise<AppMetadata[] | null> {
-	return nativeFrontmostApps();
+const appKey = (app: string) => app.replace(/\/+$/, "");
+const appPid = (state: StateSummary | undefined) => Number(state?.app?.match(/\bpid\s+(\d+)/)?.[1]) || undefined;
+const appIdentity = (state: StateSummary) => appPid(state) ?? state.app?.match(/bundleID\s+([^,\s)]+)/)?.[1] ?? state.app?.replace(/\s+\(.*/, "").replace(/\/+$/, "");
+
+export function rememberAppState(cache: Map<string, StateSummary>, app: string, state: StateSummary): void {
+	const bundle = state.app?.match(/bundleID\s+([^,\s)]+)/)?.[1];
+	const path = state.app?.split(/\s+\(/)[0]?.trim();
+	// Read snapshots name the app by path; action snapshots use its bundle ID.
+	for (const [key, previous] of cache) if (appIdentity(previous) === appIdentity(state)) cache.set(key, state);
+	for (const key of [app, bundle, path]) if (key) cache.set(appKey(key), state);
 }
 
-async function runWaitStep(step: SequenceStep, args: Record<string, JsonValue>, opts: { getClient: () => AppServerClient; sessionElementCache: Map<string, ElementInfo[]>; approval: ApprovalMode; timeoutMs: number; maxTextChars: number; signal?: AbortSignal; cache: Map<string, ElementInfo[]>; beforeState: StateSummary | null; scope: TargetScope }): Promise<{ result: FilteredToolResult; durationMs: number; targetResolution?: string; elements: MachineElement[]; visibleText: string[]; changed: ChangeSummary | null; nextActions: string[] }> {
-	validateWaitArguments(step.tool, args);
-	const started = Date.now();
-	const waitTimeoutMs = asInt(args.timeoutMs, opts.timeoutMs);
-	const perPollToolTimeoutMs = asInt(args.toolTimeoutMs, opts.timeoutMs);
-	const deadline = started + waitTimeoutMs;
-	const intervalMs = Math.max(100, Math.min(asInt(args.intervalMs, 750), 10_000));
-	let last: FilteredToolResult | null = null;
-	let lastMessage = "condition did not match";
-	for (;;) {
-		const remainingMs = deadline - Date.now();
-		if (remainingMs < 1_000) break;
-		const callTimeoutMs = Math.max(1_000, Math.min(perPollToolTimeoutMs, remainingMs));
-		const call = await opts.getClient().callTool("get_app_state", { app: args.app }, { approval: opts.approval, timeoutMs: callTimeoutMs, signal: opts.signal });
-		const result = filterToolResult(call.result, { maxTextChars: opts.maxTextChars });
-		appendComputerUseDiagnostic(result, "get_app_state", { app: args.app });
-		updateElementCache(opts.cache, args.app, result.content);
-		updateElementCache(opts.sessionElementCache, args.app, result.content);
-		last = result;
-		try {
-			const matched = waitConditionMet(step.tool, args, result, opts.cache);
-			if (matched) {
-				appendText(result, matched);
-				const after = stateSummary(result.content, opts.scope);
-				return { result, durationMs: Date.now() - started, targetResolution: matched, elements: machineElements(result.content, opts.scope), visibleText: after.visibleText, changed: compareState(opts.beforeState, after), nextActions: [] };
-			}
-		} catch (error) {
-			lastMessage = errorMessage(error);
-			if (lastMessage.includes("Stale element_index")) throw error;
-		}
-		const sleepMs = Math.min(intervalMs, deadline - Date.now());
-		if (sleepMs <= 0) break;
-		await new Promise((resolve) => setTimeout(resolve, sleepMs));
+function documentChanged(previous: StateSummary, current: StateSummary): boolean {
+	return appIdentity(previous) !== appIdentity(current) || (previous.url || current.url ? previous.url !== current.url : previous.title !== current.title);
+}
+
+export function assertSameDocument(previous: StateSummary | undefined, current: StateSummary, args: Record<string, JsonValue>): void {
+	if (typeof args.expectedTitle === "string" && current.title !== args.expectedTitle) throw new Error(`Window guard failed: expected title ${JSON.stringify(args.expectedTitle)}, found ${JSON.stringify(current.title)}. No mutation performed.`);
+	if (typeof args.expectedUrl === "string" && current.url !== args.expectedUrl) throw new Error(`Document guard failed: expected URL ${JSON.stringify(args.expectedUrl)}, found ${JSON.stringify(current.url)}. No mutation performed.`);
+	if (!previous) return;
+	if (documentChanged(previous, current)) throw new Error(`Target document changed since the last observed state: ${JSON.stringify(previous.url ?? previous.title)} → ${JSON.stringify(current.url ?? current.title)}. No mutation performed. Call get_app_state and inspect the intended document before retrying.`);
+}
+
+function resolvedTarget(before: StateSummary, after: StateSummary, args: Record<string, JsonValue>) {
+	const original = before.targets.find((target) => target.index === args.element_index);
+	if (!original) return undefined;
+	const matches = after.targets.filter((target) => original.id ? target.id === original.id
+		: original.description ? target.role === original.role && target.description === original.description
+		: target.role === original.role && target.name === original.name);
+	return matches.length === 1 ? matches[0] : undefined;
+}
+
+function assertEditedValue(before: StateSummary, after: StateSummary, args: Record<string, JsonValue>): void {
+	if (documentChanged(before, after)) throw new Error("set_value was dispatched, but readback belongs to a different document. Its edit outcome is unknown; inspect the original document without replaying the edit.");
+	const target = resolvedTarget(before, after, args);
+	if (!target || target.value === undefined || target.value.normalize("NFC") !== String(args.value).normalize("NFC")) {
+		throw new Error(`set_value was dispatched but the resolved field did not expose the requested value. Do not replay automatically. Expected ${JSON.stringify(truncateString(String(args.value), 200))}; observed ${JSON.stringify(target?.value === undefined ? null : truncateString(target.value, 200))}.`);
 	}
-	const message = `${step.tool} timed out after ${waitTimeoutMs}ms: ${lastMessage}. Next action: call get_app_state with detail:"minimal" for ${args.app}. Transport get_app_state calls used up to ${perPollToolTimeoutMs}ms each, with the final sub-1000ms remainder handled by the wait predicate instead of issuing a tiny transport call.`;
-	if (last) appendText(last, message);
-	else last = failureResult(message, opts.maxTextChars);
-	last.isError = true;
-	throw new ComputerUseError(message, last);
 }
 
+function actionChanged(before: StateSummary, after: StateSummary, args: Record<string, JsonValue>, tool: string): boolean {
+	if (typeof args.element_index !== "string") return observedStateChange(compareState(before, after));
+	if (targetStateChanged(before, after, args) || before.title !== after.title || before.url !== after.url) return true;
+	if (tool === "set_value") return false;
+	if (tool === "scroll") return after.targets.some((target) => target.role === "scroll bar" && before.targets.some((old) => old.index === target.index && old.value !== target.value));
+	// Opening a menu/popover can leave the pressed button unchanged; a clock elsewhere is not evidence.
+	const control = (role: string) => /button|field|entry area|menu|checkbox|switch|dialog/.test(role);
+	const identity = (target: StateSummary["targets"][number]) => `${target.role}:${target.id ?? target.description ?? target.name}`;
+	const oldControls = new Set(before.targets.filter((target) => control(target.role)).map(identity));
+	return after.targets.some((target) => control(target.role) && !oldControls.has(identity(target)));
+}
+
+function isWindowClose(tool: string, args: Record<string, JsonValue>, before: StateSummary | undefined): boolean {
+	if (tool === "press_key") return args.key === "super+w" || args.key === "super+shift+w";
+	const target = before?.targets.find((element) => element.index === args.element_index);
+	return (tool === "click" || (tool === "perform_secondary_action" && args.action === "Press")) && Boolean(target && (target.role === "close button" || /^close(?: tab| window)?$/i.test(target.description ?? target.name)));
+}
 
 export async function executeSequence(
 	params: unknown,
@@ -123,420 +85,256 @@ export async function executeSequence(
 	getClient: () => AppServerClient,
 	sessionElementCache: Map<string, ElementInfo[]>,
 	resultTool = "macuse_sequence",
+	sessionStateCache = new Map<string, StateSummary>(),
 ): Promise<{ content: (TextContentBlock | ImageContentBlock)[]; details: Record<string, unknown> }> {
-		const input = params as SequenceParams;
-		const toolName = resultTool;
-		const pointerClickFlag = resultTool === "macuse_sequence" ? "allowPointerClick" : "allowPointer";
-		const defaultApp = typeof input.app === "string" ? input.app : undefined;
-		const steps = normalizeSequenceSteps(input.steps).map((step) => {
-			if (!defaultApp || step.arguments.app !== undefined || !APP_SCOPED_TOOLS.has(step.tool)) return step;
-			return { ...step, arguments: { app: defaultApp, ...step.arguments } };
-		});
-		const mutating = hasMutatingSteps(steps);
-		const hasPointerClick = steps.some((step) => step.tool === "click");
-		const hasPointerDrag = steps.some((step) => step.tool === "drag");
-		if (hasPointerClick && !input.allowPointerClick) {
-			throw new Error(`${toolName} pointer click requires ${toolName === "click" ? "allowPointer=true" : "allowPointerClick=true"}. Prefer perform_secondary_action with action=Press when possible to preserve mouse focus.`);
+	const started = Date.now();
+	const input = params as SequenceParams;
+	const defaultApp = typeof input.app === "string" ? input.app : undefined;
+	const steps = normalizeSequenceSteps(input.steps).map((step) => !defaultApp || step.arguments.app !== undefined || !APP_SCOPED_TOOLS.has(step.tool)
+		? step : { ...step, arguments: { app: defaultApp, ...step.arguments } });
+	const mutating = hasMutatingSteps(steps);
+	const pointerClick = steps.some((step) => step.tool === "click");
+	const pointerDrag = steps.some((step) => step.tool === "drag");
+	if (pointerClick && !input.allowPointerClick) throw new Error(`${resultTool} pointer click requires ${resultTool === "click" ? "allowPointer=true" : "allowPointerClick=true"}. Prefer perform_secondary_action when possible.`);
+	if (pointerDrag && !input.allowPointerDrag) throw new Error(`${resultTool} pointer drag requires ${resultTool === "drag" ? "allowPointer=true" : "allowPointerDrag=true"}.`);
+	if (mutating && input.allowMutating !== true) throw new Error(`${resultTool} mutations require allowMutating=true.`);
+	if (mutating && String(input.safetyNote || "").trim().length < 20) throw new Error(`${resultTool} mutations require a safetyNote describing target, intended effect, and stop boundary.`);
+	// Validate the entire flow before dispatching its first action.
+	for (const step of steps) {
+		if (Object.hasOwn(step.arguments, "approval")) throw new Error(`${resultTool} step arguments cannot set approval; use the top-level approval option.`);
+		validateAuxiliarySafety(step.tool, { ...step.arguments, allowRecording: input.allowRecording === true, allowPrivacyChange: input.allowPrivacyChange === true, safetyNote: input.safetyNote ?? "" });
+		if (WAIT_TOOLS.has(step.tool)) validateWaitArguments(step.tool, step.arguments);
+		else {
+			validateToolArguments(step.tool, step.arguments);
+			pickUpstreamToolArgs(step.tool, step.arguments);
 		}
-		if (hasPointerDrag && !input.allowPointerDrag) {
-			throw new Error(`${toolName} pointer drag requires ${toolName === "drag" ? "allowPointer=true" : "allowPointerDrag=true"}. Pointer drag can move the user's cursor; the extension restores mouse position afterward.`);
-		}
-		if (mutating) {
-			if (!input.allowMutating) throw new Error(`${toolName} mutations require allowMutating=true.`);
-			const safetyNote = String(input.safetyNote || "").trim();
-			if (safetyNote.length < 20) throw new Error(`${toolName} mutations require a safetyNote describing target, intended effect, and stop boundary.`);
-		}
-		for (const step of steps) {
-			if (Object.hasOwn(step.arguments, "approval")) throw new Error(`${toolName} step arguments cannot set approval; use the top-level approval option.`);
-			validateAuxiliarySafety(step.tool, {
-				...step.arguments,
-				allowRecording: input.allowRecording === true,
-				allowPrivacyChange: input.allowPrivacyChange === true,
-				safetyNote: input.safetyNote ?? "",
-			});
-			if (!WAIT_TOOLS.has(step.tool)) pickUpstreamToolArgs(step.tool, step.arguments);
-		}
-		const approval = input.approval || "inherit";
-		onUpdate?.({ content: [{ type: "text", text: `Running ${toolName} through persistent Codex Computer Use (${steps.length} step${steps.length === 1 ? "" : "s"}, mutating=${mutating})...` }], details: {} });
-		const toolTimeoutMs = asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
-		const maxTextChars = asInt(input.maxTextChars, DEFAULT_MAX_TEXT_CHARS);
-		const detail = normalizeDetail(input.detail, "compact");
-		const targetScope: TargetScope = input.targetScope === "main" ? "main" : "all";
-		const screenshotStep = input.screenshotStep === "final" ? "final" : "first";
-		const preserveMouse = hasPointerClick || hasPointerDrag;
-		const mouseBefore = preserveMouse ? getMousePosition() : null;
-		let mouseRestored = false;
-		const frontmostBefore = await captureFocusSnapshot();
-		const results: SequencedResult[] = [];
-		const elementCache = new Map(sessionElementCache);
-		const stateCache = new Map<string, StateSummary>();
-		let failed: SequenceFailure | null = null;
-		let implicitRefreshes = 0;
+	}
+	signal?.throwIfAborted();
+	const approval: ApprovalMode = input.approval || "inherit";
+	const toolTimeoutMs = asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
+	const maxTextChars = asInt(input.maxTextChars, DEFAULT_MAX_TEXT_CHARS);
+	const detail = normalizeDetail(input.detail, "compact");
+	const targetScope = input.targetScope === "main" ? "main" : "all";
+	const screenshotStep = input.screenshotStep === "final" ? "final" : "first";
+	const knownPids = [...new Set(steps.map((step) => typeof step.arguments.app === "string" ? appPid(sessionStateCache.get(appKey(step.arguments.app))) : undefined).filter((pid): pid is number => pid !== undefined))];
+	let observationError: string | null = null;
+	let observation = await beginFocusObservation(knownPids).catch((error) => { observationError = errorMessage(error); return null; });
+	const results: SequencedResult[] = [];
+	let failed: SequenceFailure | null = null;
+	let implicitRefreshes = 0;
+
+	const remember = (app: string, result: FilteredToolResult) => {
+		if (result.isError) return;
+		updateElementCache(sessionElementCache, app, result.content);
+		rememberAppState(sessionStateCache, app, stateSummary(result.content));
+	};
+	const call = async (tool: string, args: Record<string, JsonValue>, timeoutMs = toolTimeoutMs, image = false) => {
+		signal?.throwIfAborted();
+		const response = await getClient().callTool(tool, args, { approval, timeoutMs, signal });
+		const result = filterToolResult(response.result, { includeImage: Boolean(input.includeImage) && image, saveImagePath: image ? input.saveImagePath : undefined });
+		return { response, result };
+	};
+
+	for (const [index, step] of steps.entries()) {
+		const stepStarted = Date.now();
+		let args = normalizeToolArguments(step.arguments);
+		const app = typeof args.app === "string" ? args.app : undefined;
+		const guiMutation = !isWaitTool(step.tool) && mcpServerForTool(step.tool) === "computer-use" && !READ_ONLY_TOOLS.has(step.tool);
+		let before = app ? sessionStateCache.get(appKey(app)) : undefined;
+		let dispatchPending = false;
+		let verifyAssertions = false;
+		let row: SequencedResult = {
+			index, tool: step.tool, label: step.label, arguments: args, durationMs: 0, dispatched: false, outcome: "reported",
+			result: failureResult("Step did not run.", maxTextChars), expectText: step.expectText, expectAbsentText: step.expectAbsentText,
+			expectVisibleText: step.expectVisibleText, allowError: step.allowError, targetWarnings: [], elements: [], visibleText: [], changed: null,
+			nextActions: [], acceptedElicitations: 0, elicitationCount: 0,
+		};
+		onUpdate?.({ content: [{ type: "text", text: `${resultTool}: step ${index + 1}/${steps.length} ${step.tool}${app ? ` (${app})` : ""}...` }], details: {} });
 		try {
-			for (const [index, step] of steps.entries()) {
-				const originalStepArgs = normalizeToolArguments(step.arguments);
-				let stepArgs = originalStepArgs;
-				let targetResolution: string | undefined;
-				let beforeState = typeof stepArgs.app === "string" ? stateCache.get(stepArgs.app) ?? null : null;
-				try {
-					if (isWaitTool(step.tool)) {
-						const waited = await runWaitStep(step, stepArgs, { getClient, sessionElementCache, approval, timeoutMs: toolTimeoutMs, maxTextChars, signal, cache: elementCache, beforeState, scope: targetScope });
-						const row: SequencedResult = {
-							index,
-							label: step.label,
-							tool: step.tool,
-							arguments: stepArgs,
-							durationMs: waited.durationMs,
-							result: waited.result,
-							expectText: step.expectText,
-							expectAbsentText: step.expectAbsentText,
-							expectVisibleText: step.expectVisibleText,
-							allowError: step.allowError,
-							targetResolution: waited.targetResolution,
-							targetWarnings: [],
-							elements: waited.elements,
-							visibleText: waited.visibleText,
-							changed: waited.changed,
-							nextActions: waited.nextActions,
-							acceptedElicitations: 0,
-							elicitationCount: 0,
-						};
-						if (typeof stepArgs.app === "string") stateCache.set(stepArgs.app, stateSummary(waited.result.content, targetScope));
-						validateStepResult(row);
-						if (detail === "compact") row.result.content = compactContent(row.result.content, targetScope);
-						results.push(row);
-						continue;
+			signal?.throwIfAborted();
+			if (isWaitTool(step.tool)) {
+				const deadline = Date.now() + asInt(args.timeoutMs, toolTimeoutMs);
+				const interval = Math.max(100, Math.min(asInt(args.intervalMs, 750), 10_000));
+				let matched: string | null = null;
+				let lastMessage = "condition did not match";
+				while (Date.now() < deadline) {
+					const remaining = deadline - Date.now();
+					if (remaining < 1_000) break;
+					const read = await call("get_app_state", { app: app! }, Math.min(asInt(args.toolTimeoutMs, toolTimeoutMs), remaining));
+					row.result = read.result;
+					if (row.result.isError) throw new ComputerUseError(toolResultText(row.result));
+					remember(app!, row.result);
+					try { matched = waitConditionMet(step.tool, args, row.result, sessionElementCache); }
+					catch (error) {
+						lastMessage = errorMessage(error);
+						if (/Guard failed|Stale element_index/.test(lastMessage)) throw error;
 					}
-					const server = mcpServerForTool(step.tool);
-					if (server === "computer-use" && !READ_ONLY_TOOLS.has(step.tool) && typeof stepArgs.app === "string") {
-						const refresh = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
-						const refreshed = filterToolResult(refresh.result, { maxTextChars });
-						if (refreshed.isError) throw new ComputerUseError(`Fresh app-state preflight failed before ${step.tool}: ${toolResultText(refreshed)}`);
-						updateElementCache(elementCache, stepArgs.app, refreshed.content);
-						updateElementCache(sessionElementCache, stepArgs.app, refreshed.content);
-						beforeState = stateSummary(refreshed.content, targetScope);
-						stateCache.set(stepArgs.app, beforeState);
-						implicitRefreshes += 1;
-					}
-					if (!beforeState && step.requireStateChange && step.tool !== "get_app_state" && step.tool !== "list_apps" && typeof stepArgs.app === "string") {
-						const refresh = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
-						const refreshed = filterToolResult(refresh.result, { maxTextChars });
-						updateElementCache(elementCache, stepArgs.app, refreshed.content);
-						updateElementCache(sessionElementCache, stepArgs.app, refreshed.content);
-						beforeState = stateSummary(refreshed.content, targetScope);
-						stateCache.set(stepArgs.app, beforeState);
-						implicitRefreshes += 1;
-					}
-					stepArgs = resolveElementTargetFallbacks(stepArgs, elementCache);
-					stepArgs = resolveElementId(stepArgs, elementCache);
-					stepArgs = resolveElementDescription(stepArgs, elementCache);
-					stepArgs = resolveElementRoleName(stepArgs, elementCache);
-					const targetWarnings = validateIndexedTarget(stepArgs, elementCache, hasStableSelector(originalStepArgs));
-					targetResolution = describeTargetResolution(originalStepArgs, stepArgs, elementCache);
-					let callTool = step.tool;
-					let callArgs = stepArgs;
-					if (step.tool === "set_value" && stepArgs.value === "" && typeof stepArgs.app === "string") {
-						const setValueTarget = (elementCache.get(stepArgs.app) ?? []).find((element) => element.index === stepArgs.element_index);
-						const targetCanUseClearControl = Boolean(setValueTarget && (setValueTarget.role === "search" || setValueTarget.tags.includes("search-field")));
-						const targetIndex = Number(setValueTarget?.index);
-						const clearCandidates = targetCanUseClearControl && Number.isFinite(targetIndex) ? (elementCache.get(stepArgs.app) ?? []).filter((element) => {
-							const clearIndex = Number(element.index);
-							return element.role === "button" &&
-								element.tags.includes("clear-control") &&
-								!element.tags.includes("risk-sensitive-control") &&
-								Number.isFinite(clearIndex) &&
-								Math.abs(clearIndex - targetIndex) <= 3;
-						}) : [];
-						if (clearCandidates.length === 1) {
-							const clearTarget = clearCandidates[0];
-							callTool = "perform_secondary_action";
-							callArgs = { app: stepArgs.app, element_index: clearTarget.index, action: "Press" };
-							targetResolution = `${targetResolution ?? "resolved target"}; empty set_value fallback used clear-control button element_index ${clearTarget.index} (${elementLineWithTargetHint(clearTarget)})`;
-						}
-					}
-					const saveImageForStep = screenshotStep === "first" ? index === 0 : index === steps.length - 1;
-					const call = await getClient().callTool(callTool, callArgs, { approval, timeoutMs: toolTimeoutMs, signal });
-					let filtered = filterToolResult(call.result, {
-						includeImage: Boolean(input.includeImage),
-						saveImagePath: saveImageForStep ? input.saveImagePath : undefined,
-						maxTextChars,
-					});
-					let postActionNoChange = false;
-					let postActionReadbackDone = false;
-					let actionErrorRecoveredByStateChange = false;
-					const hasAssertions = step.expectText.length > 0 || step.expectAbsentText.length > 0 || step.expectVisibleText.length > 0;
-					const needsStateReadback = step.requireStateChange || hasAssertions || Boolean((input.includeImage || input.saveImagePath) && saveImageForStep);
-					if (filtered.isError && step.requireStateChange && typeof stepArgs.app === "string") {
-						const verify = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
-						const verified = filterToolResult(verify.result, {
-							includeImage: Boolean(input.includeImage),
-							saveImagePath: saveImageForStep ? input.saveImagePath : undefined,
-							maxTextChars,
-						});
-						appendComputerUseDiagnostic(verified, "get_app_state", { app: stepArgs.app });
-						const verifiedState = stateSummary(verified.content, targetScope);
-						const errorReadbackChange = compareState(beforeState, verifiedState);
-						const changedDespiteError = targetStateChanged(beforeState, verifiedState, stepArgs);
-						if (changedDespiteError) {
-							actionErrorRecoveredByStateChange = true;
-							appendText(verified, `Warning: actionReportedErrorButStateChanged — ${step.tool} returned an upstream error, but requireStateChange was satisfied by post-action get_app_state readback. Treat the action as dispatched, then inspect final state before continuing. Original error output: ${truncateString(toolResultText(filtered), 800)}`);
-							updateElementCache(elementCache, stepArgs.app, verified.content);
-							updateElementCache(sessionElementCache, stepArgs.app, verified.content);
-							filtered = verified;
-							postActionReadbackDone = true;
-						}
-					}
-					if (needsStateReadback && step.tool === "set_value" && typeof stepArgs.value === "string" && stepArgs.value.length > 0 && typeof stepArgs.app === "string") {
-						const verify = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
-						const verified = filterToolResult(verify.result, {
-							includeImage: Boolean(input.includeImage),
-							saveImagePath: saveImageForStep ? input.saveImagePath : undefined,
-							maxTextChars,
-						});
-						appendComputerUseDiagnostic(verified, "get_app_state", { app: stepArgs.app });
-						updateElementCache(elementCache, stepArgs.app, verified.content);
-						updateElementCache(sessionElementCache, stepArgs.app, verified.content);
-						postActionReadbackDone = true;
-						const normalizedStateText = normalizeAssertionText(assertionContentText(verified.content));
-						const multilineMatch = contentIncludesMultilineValue(verified.content, stepArgs.value);
-						if (normalizedStateText.includes(normalizeAssertionText(stepArgs.value)) || multilineMatch.matched) {
-							appendText(verified, `set_value verified in post-action app state: ${JSON.stringify(stepArgs.value)}`);
-							filtered = verified;
-						} else if (multilineMatch.partial) {
-							appendText(verified, `Warning: set_value multiline verification was partial. Matched ${multilineMatch.matchedLines.length} expected line(s), but post-action state output did not expose ${multilineMatch.missingLines.length} line(s). This often means upstream accessibility/minimal output truncated a multiline text value; verify with follow-up expectVisibleText/expectText lines before relying on the edit. Missing lines: ${JSON.stringify(multilineMatch.missingLines.slice(0, 5))}`);
-							filtered = verified;
-						} else {
-							filtered.isError = true;
-							appendText(filtered, `set_value did not appear in post-action app state; upstream may have reported a false positive for target ${targetResolution ?? "<unknown>"}. Expected value: ${JSON.stringify(stepArgs.value)}. Try a focused keyboard fallback only when the target document/window is unambiguous.`);
-						}
-					}
-					const isStateTool = step.tool === "get_app_state" || step.tool === "list_apps";
-					if (needsStateReadback && !postActionReadbackDone && !filtered.isError && !isStateTool && typeof stepArgs.app === "string") {
-						const verify = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
-						let verified = filterToolResult(verify.result, {
-							includeImage: Boolean(input.includeImage),
-							saveImagePath: saveImageForStep ? input.saveImagePath : undefined,
-							maxTextChars,
-						});
-						appendComputerUseDiagnostic(verified, "get_app_state", { app: stepArgs.app });
-						let verifiedState = stateSummary(verified.content, targetScope);
-						let readbackChange = compareState(beforeState, verifiedState);
-						postActionNoChange = !observedStateChange(readbackChange);
-						if (postActionNoChange && step.requireStateChange) {
-							await new Promise((resolve) => setTimeout(resolve, 600));
-							const delayedVerify = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
-							const delayed = filterToolResult(delayedVerify.result, {
-								includeImage: Boolean(input.includeImage),
-								saveImagePath: saveImageForStep ? input.saveImagePath : undefined,
-								maxTextChars,
-							});
-							appendComputerUseDiagnostic(delayed, "get_app_state", { app: stepArgs.app });
-							const delayedState = stateSummary(delayed.content, targetScope);
-							const delayedChange = compareState(beforeState, delayedState);
-							const delayedNoChange = !observedStateChange(delayedChange);
-							if (!delayedNoChange) {
-								appendText(delayed, "requireStateChange verified after delayed post-action readback; transient UI was not visible on the first readback.");
-								verified = delayed;
-								verifiedState = delayedState;
-								readbackChange = delayedChange;
-								postActionNoChange = false;
-							}
-						}
-						if (postActionNoChange) {
-							appendText(verified, `Warning: actionDispatchedButNoStateChange — ${step.tool} returned success, but a post-action get_app_state readback did not show observable title, URL, visible-text, or target changes. If the target should have opened/navigated, treat this as a failed UI action; retry after a fresh state read or escalate to guarded pointer click using ${pointerClickFlag} when the target/window is unambiguous.`);
-						}
-						if (step.requireStateChange && postActionNoChange) verified.isError = true;
-						updateElementCache(elementCache, stepArgs.app, verified.content);
-						updateElementCache(sessionElementCache, stepArgs.app, verified.content);
-						filtered = verified;
-					}
-					const diagnostics = [appendComputerUseDiagnostic(filtered, step.tool, stepArgs)].filter((item): item is string => Boolean(item));
-					const hasStateContent = hasStateSummaryContent(filtered.content);
-					const afterState = hasStateContent ? stateSummary(filtered.content, targetScope) : null;
-					if (hasStateContent) {
-						updateElementCache(elementCache, stepArgs.app, filtered.content);
-						updateElementCache(sessionElementCache, stepArgs.app, filtered.content);
-						if (typeof stepArgs.app === "string" && afterState) stateCache.set(stepArgs.app, afterState);
-					}
-					if (detail === "full") appendElementStabilityNote(filtered);
-					appendImageWarning(filtered, { includeImage: Boolean(input.includeImage), saveImagePath: saveImageForStep ? input.saveImagePath : undefined });
-					enrichActionError(filtered, stepArgs, elementCache);
-					const changed = compareState(beforeState, afterState);
-					const rawIndexTarget = originalStepArgs.element_index !== undefined || originalStepArgs.element !== undefined;
-					const browserTextInput = browserLikeAppName(stepArgs.app) && ["set_value", "type_text"].includes(step.tool);
-					const browserInputChangedNavigationState = browserTextInput && Boolean(changed && (changed.urlChanged || changed.titleChanged));
-					if (browserInputChangedNavigationState) {
-						appendText(filtered, `Warning: browserInputChangedNavigationState — ${step.tool} in a browser changed URL/title state. Treat address/search fields as navigation controls even without pressing Return; verify no unintended external request or tab navigation occurred before continuing.`);
-					}
-					const nextActions = [
-						...(rawIndexTarget && changed && (changed.urlChanged || changed.titleChanged || changed.visibleTextChanged) && !step.tool.startsWith("get_app_state") ? [`If the UI rerendered or navigated, call get_app_state for ${JSON.stringify(stepArgs.app)} with detail:"minimal" before using raw element_index targets.`] : []),
-						...(!hasStateContent && filtered.isError ? [`No app-state readback was available from this failed step, so changed-state summaries are intentionally suppressed to avoid false deltas. Re-run get_app_state before deciding whether the UI actually changed.`] : []),
-						...(diagnostics.length > 0 ? [`Resolve upstream Computer Use state for ${JSON.stringify(stepArgs.app)} before retrying mutating actions; use agent_browser for web/Chrome if Computer Use state keeps timing out.`] : []),
-						...(postActionNoChange ? [`AX action dispatched but no observable state change was seen. If a click/open was expected, retry with a fresh state read; use a pointer click fallback only with ${pointerClickFlag} and an unambiguous target/window.`] : []),
-						...(actionErrorRecoveredByStateChange ? [`Upstream reported an error, but post-action state changed. Inspect the final state carefully before issuing another mutating step.`] : []),
-						...(browserTextInput && step.tool === "type_text" ? [`type_text sends keys to the browser's current focus, which may be page content rather than the address bar. Prefer set_value on a verified address/search target only when navigation is allowed, or verify focused UI before typing.`] : []),
-						...(browserInputChangedNavigationState ? [`Browser text input changed URL/title state. Audit final browser state and close/restore any scratch tab before continuing.`] : []),
-					];
-					const row: SequencedResult = {
-						index,
-						label: step.label,
-						tool: step.tool,
-						arguments: callArgs,
-						durationMs: call.durationMs,
-						result: filtered,
-						expectText: step.expectText,
-						expectAbsentText: step.expectAbsentText,
-						expectVisibleText: step.expectVisibleText,
-						allowError: step.allowError,
-						targetResolution,
-						targetWarnings,
-						elements: (step.tool === "get_app_state" || resultTool !== "macuse_sequence") && hasStateContent ? machineElements(filtered.content, targetScope) : [],
-						visibleText: afterState?.visibleText ?? [],
-						changed,
-						nextActions,
-						acceptedElicitations: call.acceptedElicitations,
-						elicitationCount: call.elicitationCount,
-					};
-					try {
-						validateStepResult(row);
-					} catch (error) {
-						row.result.isError = true;
-						row.result.content = [{ type: "text", text: `Sequence stopped: ${errorMessage(error)}` }, ...row.result.content];
-						failed = { index, stepNumber: index + 1, tool: step.tool, label: step.label, message: errorMessage(error) };
-					}
-					if (detail === "compact" && !row.result.isError) row.result.content = compactContent(row.result.content, targetScope);
-					results.push(row);
-					if (failed) break;
-				} catch (error) {
-					const message = errorMessage(error);
-					if (targetResolution && step.requireStateChange && !READ_ONLY_TOOLS.has(step.tool) && typeof stepArgs.app === "string") {
-						try {
-							const verify = await getClient().callTool("get_app_state", { app: stepArgs.app }, { approval, timeoutMs: toolTimeoutMs, signal });
-							const verified = filterToolResult(verify.result, { maxTextChars });
-							appendComputerUseDiagnostic(verified, "get_app_state", { app: stepArgs.app });
-							const afterState = stateSummary(verified.content, targetScope);
-							const changed = compareState(beforeState, afterState);
-							const changedTarget = targetStateChanged(beforeState, afterState, stepArgs);
-							updateElementCache(elementCache, stepArgs.app, verified.content);
-							updateElementCache(sessionElementCache, stepArgs.app, verified.content);
-							if (changedTarget) {
-								verified.isError = false;
-								appendText(verified, `Warning: actionReportedErrorButStateChanged — ${step.tool} returned an upstream transport/tool error, but requireStateChange was satisfied by post-error get_app_state readback. Original error output: ${truncateString(message, 800)}`);
-								const row: SequencedResult = {
-									index,
-									label: step.label,
-									tool: step.tool,
-									arguments: stepArgs,
-									durationMs: verify.durationMs,
-									result: verified,
-									expectText: step.expectText,
-									expectAbsentText: step.expectAbsentText,
-									expectVisibleText: step.expectVisibleText,
-									allowError: step.allowError,
-									targetResolution,
-									targetWarnings: [],
-									elements: machineElements(verified.content, targetScope),
-									visibleText: afterState.visibleText,
-									changed,
-									nextActions: ["Upstream reported an error, but post-error app state changed. Inspect final state before issuing another mutating step."],
-									acceptedElicitations: verify.acceptedElicitations,
-									elicitationCount: verify.elicitationCount,
-								};
-								validateStepResult(row);
-								if (detail === "compact") row.result.content = compactContent(row.result.content, targetScope);
-								results.push(row);
-								if (typeof stepArgs.app === "string") stateCache.set(stepArgs.app, afterState);
-								continue;
-							}
-						} catch {
-							// Fall through to the original failure; readback recovery is best-effort.
-						}
-					}
-					const allowed = step.allowError;
-					if (!allowed) failed = { index, stepNumber: index + 1, tool: step.tool, label: step.label, message };
-					results.push({
-						index,
-						label: step.label,
-						tool: step.tool,
-						arguments: stepArgs,
-						durationMs: 0,
-						result: failureResult(`Sequence ${allowed ? "allowed error" : "stopped"} before completing step ${index + 1} (index ${index}, ${step.tool}):\n${message}`, maxTextChars),
-						expectText: step.expectText,
-						expectAbsentText: step.expectAbsentText,
-						expectVisibleText: step.expectVisibleText,
-						allowError: step.allowError,
-						targetResolution,
-						targetWarnings: [],
-						elements: [],
-						visibleText: [],
-						changed: null,
-						nextActions: ["Inspect the failed-step diagnostic, then re-run get_app_state with detail:\"minimal\" before retrying any raw element_index target."],
-						acceptedElicitations: 0,
-						elicitationCount: 0,
-					});
-					if (!allowed) break;
+					if (matched) break;
+					await delay(Math.max(0, Math.min(interval, deadline - Date.now())), undefined, { signal });
 				}
+				if (!matched) throw new Error(`${step.tool} timed out after ${asInt(args.timeoutMs, toolTimeoutMs)}ms: ${lastMessage}.`);
+				row.targetResolution = matched;
+				appendText(row.result, matched);
+				row.outcome = "verified";
+			} else {
+				if (guiMutation && app) {
+					const refresh = await call("get_app_state", { app });
+					if (refresh.result.isError) throw new ComputerUseError(`Fresh app-state preflight failed before ${step.tool}: ${toolResultText(refresh.result)}`);
+					const freshState = stateSummary(refresh.result.content);
+					if (!freshState.app) throw new Error("Fresh app-state preflight did not identify an app. No mutation performed.");
+					before ??= [...sessionStateCache.values()].find((state) => appIdentity(state) === appIdentity(freshState));
+					assertSameDocument(before, freshState, args);
+					remember(app, refresh.result);
+					before = freshState;
+					implicitRefreshes++;
+				}
+				args = resolveElementTargetFallbacks(args, sessionElementCache);
+				args = resolveElementId(args, sessionElementCache);
+				args = resolveElementDescription(args, sessionElementCache);
+				args = resolveElementRoleName(args, sessionElementCache);
+				row.arguments = args;
+				row.targetWarnings = validateIndexedTarget(args, sessionElementCache, hasStableSelector(step.arguments));
+				row.targetResolution = describeTargetResolution(step.arguments, args, sessionElementCache);
+				const image = screenshotStep === "final" ? index === steps.length - 1 : index === 0;
+				let nativeTextVerified = false;
+				let nativeTextReason = "Native text inspection unavailable: app state did not expose a target PID.";
+				let closeInspectionError: string | null = null;
+				let closeVerified = false;
+				if (step.tool === "type_text" && before && appPid(before)) {
+					let inspectionError: string | null = null;
+					const native = await macosNative.inspectApp(appPid(before)!).catch((error) => { inspectionError = errorMessage(error); return null; });
+					nativeTextReason = inspectionError ? `Native text inspection unavailable: ${inspectionError}` : nativeTextUnavailableReason(native);
+					if (native?.accessibilityTrusted !== false && native?.focusedWindow && native.focusedElement?.selectedTextSettable) {
+						const window = native.focusedWindow;
+						const matches = window.document && before.url ? window.document === before.url : window.title === before.title;
+						if (!matches) throw new Error("Native text target no longer matches the inspected document. No mutation performed; inspect the intended window again.");
+						signal?.throwIfAborted();
+						row.dispatched = true;
+						row.outcome = "unknown";
+						let insertion;
+						try {
+							insertion = await macosNative.replaceSelectedText({ pid: native.pid, expected: { windowToken: window.token, windowTitle: window.title, document: window.document, elementToken: native.focusedElement.token }, text: String(args.text) });
+						} catch (error) {
+							await macosNative.stop();
+							observation = null;
+							observationError = `Native helper stopped after edit failure: ${errorMessage(error)}`;
+							throw error;
+						}
+						row.dispatched = insertion.mutationAttempted;
+						if (insertion.status === "unsupported") nativeTextReason = `Native text insertion unsupported: ${insertion.reason}`;
+						if (insertion.status === "guard_failed" || insertion.status === "unverified") throw new Error(insertion.reason);
+						if (insertion.status === "applied") {
+							nativeTextVerified = true;
+							row.outcome = "verified";
+							row.result = { ...failureResult("Text inserted and verified through native Accessibility; no clipboard or global keyboard input used.", maxTextChars), isError: false };
+						}
+					}
+				}
+				if (!nativeTextVerified) {
+					if (step.tool === "type_text" && /[^\x00-\x7f]/.test(String(args.text))) throw new Error(`${nativeTextReason} No text was dispatched: upstream keyboard typing is not a safe Unicode fallback. Use set_value on a verified settable field instead.`);
+					let dispatchTool = step.tool;
+					let dispatchArgs = args;
+					if (step.tool === "set_value" && args.value === "") {
+						const target = before?.targets.find((element) => element.index === args.element_index);
+						const clears = target?.tags.includes("search-field") ? before!.targets.filter((element) => element.role === "button" && element.tags.includes("clear-control") && !element.tags.includes("risk-sensitive-control") && Math.abs(Number(element.index) - Number(target.index)) <= 3) : [];
+						if (clears.length === 1) {
+							dispatchTool = "perform_secondary_action";
+							dispatchArgs = { app: app!, element_index: clears[0].index, action: "Press" };
+							row.targetResolution += `; empty set_value used clear-control ${clears[0].index}`;
+						}
+					}
+					signal?.throwIfAborted();
+					row.dispatched = !READ_ONLY_TOOLS.has(step.tool);
+					row.outcome = row.dispatched ? "unknown" : "reported";
+					dispatchPending = true;
+					const dispatched = await call(dispatchTool, dispatchArgs, toolTimeoutMs, image);
+					dispatchPending = false;
+					row.result = dispatched.result;
+					row.acceptedElicitations += dispatched.response.acceptedElicitations;
+					row.elicitationCount += dispatched.response.elicitationCount;
+				}
+				const closeAction = isWindowClose(step.tool, args, before);
+				if (closeAction && (!row.result.isError || /noWindowsAvailable/.test(toolResultText(row.result))) && appPid(before)) {
+					const native = await macosNative.inspectApp(appPid(before)!).catch((error) => { closeInspectionError = errorMessage(error); return null; });
+					if (native?.accessibilityTrusted === false) closeInspectionError = "Native Accessibility access is unavailable (accessibilityTrusted=false).";
+					if (closeInspectionError) row.targetWarnings.push(`Native close inspection unavailable: ${closeInspectionError}`);
+					if (native?.accessibilityTrusted !== false && nativeWindowClosed(before!, native)) {
+						closeVerified = true;
+						if (native?.windowsCount === 0) row.result = { ...row.result, isError: false, content: [{ type: "text", text: `App=${before!.app}\nNo windows remain. Native Accessibility verified that the last window closed; do not replay the close.` }] };
+						else if (row.result.isError) row.result = { ...row.result, isError: false, content: [{ type: "text", text: "Native Accessibility verified that the target document is no longer among the app's windows. Other windows remain; do not replay the close." }] };
+						row.outcome = "verified";
+					}
+				}
+				if (closeAction && step.requireStateChange && !closeVerified) throw new Error(`Close was dispatched, but native inspection did not verify the target window/document closed.${closeInspectionError ? ` Native inspection unavailable: ${closeInspectionError}` : ""} No reopening readback was attempted; inspect current windows without replaying the close.`);
+				const assertions = step.expectText.length + step.expectAbsentText.length + step.expectVisibleText.length > 0;
+				const needsReadback = guiMutation && app && !closeAction && (step.tool === "set_value" || step.tool === "type_text" || step.requireStateChange || assertions || (image && (input.includeImage || input.saveImagePath)));
+				if (needsReadback) {
+					const actionError = row.result.isError ? toolResultText(row.result) : null;
+					let readback = await call("get_app_state", { app }, toolTimeoutMs, image);
+					if (readback.result.isError) throw new ComputerUseError(`Action dispatched, but post-action state is unavailable: ${toolResultText(readback.result)}`);
+					let after = stateSummary(readback.result.content);
+					if (step.requireStateChange && before && !actionChanged(before, after, args, step.tool)) {
+						await delay(600, undefined, { signal });
+						readback = await call("get_app_state", { app }, toolTimeoutMs, image);
+						if (readback.result.isError) throw new ComputerUseError(`Action dispatched, but delayed readback failed: ${toolResultText(readback.result)}`);
+						after = stateSummary(readback.result.content);
+					}
+					row.result = readback.result;
+					remember(app, row.result);
+					if (step.tool === "set_value" && before) assertEditedValue(before, after, args);
+					if (step.requireStateChange && before && !actionChanged(before, after, args, step.tool)) throw new Error("actionDispatchedButNoStateChange: no relevant target or document change was observed. Do not replay automatically; inspect the intended outcome.");
+					if (actionError && step.tool !== "set_value" && !(step.requireStateChange && before && actionChanged(before, after, args, step.tool)) && !assertions) throw new Error(`Action returned an error and its intended outcome was not verified: ${actionError}`);
+					row.outcome = nativeTextVerified || step.tool === "set_value" || step.requireStateChange ? "verified" : assertions ? "unknown" : "reported";
+					verifyAssertions = assertions;
+					if (actionError) appendText(row.result, `The intended outcome was verified despite an upstream error: ${truncateString(actionError, 300)}`);
+				} else if (!row.result.isError && row.outcome !== "verified") row.outcome = "reported";
 			}
-		} finally {
-			if (mouseBefore) mouseRestored = restoreMousePosition(mouseBefore);
+			appendComputerUseDiagnostic(row.result, step.tool, args, row);
+			if (hasStateSummaryContent(row.result.content)) {
+				const after = stateSummary(row.result.content);
+				if (app) remember(app, row.result);
+				row.visibleText = after.visibleText;
+				row.elements = machineElements(row.result.content, targetScope);
+				row.changed = compareState(before ?? null, after);
+			}
+			if (browserLikeAppName(args.app) && ["set_value", "type_text"].includes(step.tool) && (row.changed?.urlChanged || row.changed?.titleChanged)) {
+				row.nextActions.push("Browser text input changed URL/title state. Treat navigation fields as submission controls and inspect the destination before continuing.");
+			}
+			validateStepResult(row);
+			if (verifyAssertions) row.outcome = "verified";
+		} catch (error) {
+			if (dispatchPending && error instanceof ComputerUseError && isRecord(error.details) && error.details.dispatched === false) {
+				row.dispatched = false;
+				row.outcome = "reported";
+			}
+			const message = errorMessage(error);
+			row.result.isError = true;
+			appendText(row.result, message);
+			const queueDiagnostic = !row.dispatched && /while waiting for the previous request; no new action was sent/i.test(message)
+				? appendComputerUseDiagnostic(row.result, step.tool, args, row) : null;
+			row.nextActions.push(queueDiagnostic ?? (row.dispatched ? "The action was dispatched and may already have taken effect. Inspect current state; do not replay automatically." : "No action was dispatched. Inspect the target and retry only the failed step."));
+			if (!step.allowError || signal?.aborted) failed = { index, stepNumber: index + 1, tool: step.tool, label: step.label, message, dispatched: row.dispatched };
 		}
-		const mouseAfter = mouseBefore ? getMousePosition() : null;
-		const frontmostAfter = await captureFocusSnapshot();
-		const focus = focusSnapshot(frontmostBefore, frontmostAfter);
-		const mousePreservation = mouseBefore ? { before: mouseBefore, after: mouseAfter, restored: mouseRestored } : undefined;
-		const content = sequenceContent(results, Boolean(input.includeImage), failed, steps.length, detail, maxTextChars, focus, defaultApp, mousePreservation);
-		const details = bridgeDetails({
-			tool: toolName,
-			computerUseTool: resultTool === "macuse_sequence" ? "sequence" : resultTool,
-			threadId: getClient().status().threadId,
-			detail,
-			targetScope,
-			failed,
-			failedStepIndex: failed?.index ?? null,
-			failedStepNumber: failed?.stepNumber ?? null,
-			failedStepLabel: failed?.label ?? null,
-			completedStepCount: failed ? failed.index : results.length,
-			resumeFromStepIndex: failed?.index ?? null,
-			defaultApp: defaultApp ?? null,
-			implicitRefreshes,
-			imageSupportNote: input.includeImage || input.saveImagePath ? "Image rendering is model/host dependent; saveImagePath is the reliable screenshot artifact path." : null,
-			screenshotStep,
-			focus,
-			pointerToolsUsed: hasPointerClick || hasPointerDrag,
-			steps: results.map((step) => ({
-				index: step.index,
-				tool: step.tool,
-				arguments: step.arguments,
-				durationMs: step.durationMs,
-				isError: step.result.isError,
-				omittedImages: step.result.omittedImages,
-				savedImagePath: step.result.savedImagePath,
-				savedImageArtifact: step.result.savedImageArtifact,
-				acceptedElicitations: step.acceptedElicitations,
-				elicitationCount: step.elicitationCount,
-				targetResolution: step.targetResolution ?? null,
-				targetWarnings: step.targetWarnings,
-				visibleText: step.visibleText,
-				changed: step.changed,
-				nextActions: step.nextActions,
-				elements: step.elements,
-			})),
-			mousePreservation: mousePreservation ?? null,
-			computerUseRecoveryEvents: getClient().status().computerUseRecoveryEvents,
-		}, getClient().status().stderrTail);
-		// Resumable partial failure (>=1 step completed before a hard failure): keep
-		// the rich content/details so the agent can resume from failedStepIndex.
-		// Zero-progress hard failure (no step completed) or a wait-step timeout on
-		// step 0: surface as a tool error so pi marks the result failed, carrying
-		// the run summary as the error message and the structured details.
-		const completedStepCount = failed ? failed.index : results.length;
-		if (failed && completedStepCount === 0) {
-			// pi discards thrown error `details`, so the error message must be
-			// self-contained: include the run summary text so the model can
-			// diagnose the zero-progress failure from the message alone.
-			const summaryBlock = content.find(isTextBlock);
-			throw new ComputerUseError(`${toolName} failed at step 1 (index 0, ${failed.tool}): ${failed.message}.\n\n${truncateString(summaryBlock?.text ?? "", 4000)}`, details);
-		}
-		return { content: content as (TextContentBlock | ImageContentBlock)[], details };
-	
+		row.durationMs = Date.now() - stepStarted;
+		enrichActionError(row.result, args, sessionElementCache);
+		appendImageWarning(row.result, { includeImage: Boolean(input.includeImage), saveImagePath: (screenshotStep === "final" ? index === steps.length - 1 : index === 0) ? input.saveImagePath : undefined });
+		if (detail === "compact" && !row.result.isError) row.result.content = compactContent(row.result.content, targetScope);
+		results.push(row);
+		if (failed) break;
+	}
+	const observed = observation ? await endFocusObservation(observation.id).catch((error) => { observationError = errorMessage(error); return null; }) : null;
+	const focus = { ...focusSnapshot(observed?.before ?? null, observed?.after ?? null), ...observed, observationAvailable: Boolean(observed?.coverage.applicationActivation), observationError, observedChanges: observed?.transitions.length };
+	if (observed?.transitions.some((event) => event.kind === "activation")) focus.changed = true;
+	const content = sequenceContent(results, Boolean(input.includeImage), failed, steps.length, detail, maxTextChars, focus, defaultApp);
+	const details = bridgeDetails({
+		tool: resultTool, computerUseTool: resultTool === "macuse_sequence" ? "sequence" : resultTool,
+		threadId: getClient().status().threadId, detail, targetScope, isError: Boolean(failed), failed,
+		failedStepIndex: failed?.index ?? null, failedStepNumber: failed?.stepNumber ?? null, failedStepLabel: failed?.label ?? null,
+		completedStepCount: failed ? failed.index : results.length, resumeFromStepIndex: failed && !failed.dispatched ? failed.index : null,
+		defaultApp: defaultApp ?? null, implicitRefreshes, durationMs: Date.now() - started, screenshotStep, focus,
+		pointerToolsUsed: pointerClick || pointerDrag,
+		steps: results.map(({ result, ...step }) => ({ ...step, isError: result.isError, omittedImages: result.omittedImages, savedImagePath: result.savedImagePath, savedImageArtifact: result.savedImageArtifact })),
+		computerUseRecoveryEvents: getClient().status().computerUseRecoveryEvents,
+	}, getClient().status().stderrTail);
+	return { content: content as (TextContentBlock | ImageContentBlock)[], details };
 }

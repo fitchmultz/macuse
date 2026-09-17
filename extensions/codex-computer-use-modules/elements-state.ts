@@ -15,6 +15,7 @@ import {
 	type TargetScope,
 } from "./core";
 import { isTextBlock, normalizeContent } from "./content";
+import { documentTitle, documentUrl } from "./document-metadata.mjs";
 
 export function hasMutatingSteps(steps: Array<{ tool: string }>): boolean {
 	return steps.some((step) => !READ_ONLY_TOOLS.has(step.tool));
@@ -36,7 +37,7 @@ export function normalizeRole(value: string): string {
 }
 
 export function parseElementRole(body: string): string {
-	const match = body.match(/^(standard window|split group|container|scroll area|text entry area|secure text field|search text field|text field|edit field|close button|zoom button|minimize button|radio button|pop up button|menu bar|menu item|button|checkbox|switch|slider|splitter|combo box|tab|link|row|text|toolbar|group|web area|search)\b/i);
+	const match = body.match(/^(standard window|split group|container|scroll area|scroll bar|value indicator|text entry area|secure text field|search text field|text field|edit field|close button|zoom button|minimize button|full screen button|increment arrow button|decrement arrow button|increment page button|decrement page button|radio button|pop up button|sort button|menu button|menu bar|menu item|button|checkbox|switch|slider|splitter|combo box|tab group|tab|link|row|text|toolbar|group|web area|HTML content|search)\b/i);
 	return normalizeRole(match?.[1] ?? body.split(/\s+/)[0] ?? "unknown");
 }
 
@@ -49,15 +50,28 @@ export function roleMatches(actual: string, expected: string): boolean {
 	return false;
 }
 
-export function settableFieldValue(body: string): string | undefined {
-	const valueMatch = body.match(/(?:^|,\s*)Value:\s*([\s\S]+)$/i);
-	if (valueMatch?.[1]) return valueMatch[1].trim();
-	const settableMatch = body.match(/\((?:settable|editable),\s*string\)\s+([\s\S]+)$/i);
-	return settableMatch?.[1]?.trim();
+function elementParts(body: string): { label: string; fields: Map<string, string>; continuation: string } {
+	const [header = "", ...lines] = body.split("\n");
+	const labelAndFields = header.replace(rolePrefixPattern(parseElementRole(body)), "").trimStart().replace(/^\([^)]*\)\s*/, "");
+	const markers = [...labelAndFields.matchAll(/(?:^|,\s*)(ID|Description|Help|Secondary Actions|URL|Value|Placeholder):[ \t]?/gi)];
+	const fields = new Map<string, string>();
+	for (const [index, marker] of markers.entries()) {
+		const key = marker[1].toLowerCase();
+		const value = labelAndFields.slice(marker.index + marker[0].length, markers[index + 1]?.index);
+		fields.set(key, key === "value" ? value : value.trim());
+	}
+	return { label: stripElementAttributes(labelAndFields.slice(0, markers[0]?.index)), fields, continuation: lines.join("\n") };
 }
 
-export function stableFieldName(value: string): string {
-	return value.replace(/(\((?:settable|editable),\s*string\))\s+[\s\S]+$/i, "$1").trim();
+export function settableFieldValue(body: string): string | undefined {
+	const { fields, continuation } = elementParts(body);
+	const value = fields.get("value");
+	if (value !== undefined) return `${value}${continuation ? `\n${continuation}` : ""}`;
+	const settableMatch = body.match(/\((?:disabled,\s*)?(?:settable|editable),\s*(?:string|float|int|integer|bool|boolean)\)[ \t]?([\s\S]*)$/i);
+	if (settableMatch) return settableMatch[1];
+	// Native search fields render their string directly, omitting it when empty.
+	if (parseElementRole(body) === "search" && fields.size === 0) return body.match(/\((?:disabled,\s*)?(?:settable|editable)\)[ \t]?([\s\S]*)$/i)?.[1];
+	return undefined;
 }
 
 export function stripElementAttributes(value: string): string {
@@ -72,11 +86,9 @@ export function rolePrefixPattern(role: string): RegExp {
 
 export function parseElementName(body: string, role: string, id?: string, description?: string): string {
 	if (description) return description;
-	const withoutRole = body.replace(rolePrefixPattern(role), "").trim();
-	const beforeComma = withoutRole.split(/,\s*(?:ID:|Help:|Secondary Actions:|URL:|Value:|Placeholder:)/)[0]?.trim() ?? "";
-	const textFieldLike = ["text field", "search", "edit field", "text entry area", "secure text field"].includes(role);
-	const cleaned = textFieldLike ? stableFieldName(stripElementAttributes(beforeComma)) : stripElementAttributes(beforeComma);
-	return cleaned || id || role;
+	const { label, fields } = elementParts(body);
+	const inlineValue = /\((?:disabled,\s*)?(?:settable|editable),\s*(?:string|float|int|integer|bool|boolean)\)/i.test(body.split("\n")[0]) || (role === "search" && fields.size === 0 && settableFieldValue(body) !== undefined);
+	return (inlineValue ? "" : label) || id || role;
 }
 
 export function elementTags(line: string, role: string, name: string, description?: string): string[] {
@@ -104,10 +116,18 @@ export function elementBlocks(text: string): string[] {
 	const blocks: string[] = [];
 	let current: string[] = [];
 	for (const rawLine of text.split("\n")) {
-		if (/^\s*\d+\s+/.test(rawLine)) {
+		if (/^\s*(?:<\/?app_state>|Computer Use state|App=|Window:|The focused UI element is|Visible text:|Targets:|Target groups:|Focus summary:|Warning:|Selected text:|Note:|Target element|Valid secondary actions:|Hints:|waitFor\w+ matched|set_value |requireStateChange |Sequence )/.test(rawLine)) {
+			if (current.length > 0) blocks.push(current.join("\n"));
+			current = [];
+			continue;
+		}
+		// Activity Monitor emits unindented row values such as "123 KB".
+		// Reject that value shape, not unfamiliar roles or sparse menu labels.
+		const measurement = /^\s*\d+(?:\.\d+)?\s+(?:bytes?|[kmgtpe]?i?b)(?:\/s)?\s*$/i.test(rawLine);
+		if (/^\s*\d+\s+/.test(rawLine) && !measurement) {
 			if (current.length > 0) blocks.push(current.join("\n"));
 			current = [rawLine];
-		} else if (current.length > 0 && /\b(?:Value:|\((?:settable|editable),\s*string\))/.test(current[0] ?? "") && rawLine.trim() && !/^\s*<\/?\w+/.test(rawLine) && !/^\s*(?:App=|Window:|Visible text:|Targets:|Target groups:|Focus summary:|Warning:|Target element|Valid secondary actions:|Hints:|waitFor\w+ matched|set_value |requireStateChange |Sequence )/.test(rawLine)) {
+		} else if (current.length > 0) {
 			current.push(rawLine);
 		}
 	}
@@ -122,20 +142,21 @@ export function parseElementInfo(text: string): ElementInfo[] {
 		if (!match) continue;
 		const line = match[0].trim();
 		const body = stripInvisibleBidiMarks(match[2] ?? "");
-		const id = line.match(/(?:^|[\s,])ID:\s*([^,\n]+)/)?.[1]?.trim();
-		const explicitDescription = line.match(/Description:\s*([^,\n]+)/)?.[1]?.trim();
+		const { label, fields, continuation } = elementParts(body);
+		const id = fields.get("id");
+		const explicitDescription = fields.get("description");
 		const role = parseElementRole(body);
-		const controlLabel = ["button", "pop up button", "switch", "checkbox", "radio button", "combo box", "link"].includes(role) ? stripElementAttributes(body.replace(rolePrefixPattern(role), "").split(/,\s*(?:ID:|Help:|Secondary Actions:|URL:|Value:|Placeholder:)/)[0]?.trim() ?? "") : "";
-		const description = explicitDescription ?? (controlLabel && !controlLabel.startsWith("Description:") ? stripInvisibleBidiMarks(controlLabel) : undefined);
-		const value = role === "text" ? body.replace(/^text\s+/i, "").trim() : settableFieldValue(body);
+		const controlLabel = ["button", "pop up button", "menu button", "sort button", "switch", "checkbox", "radio button", "combo box", "link"].includes(role) ? label : "";
+		const description = explicitDescription ?? (controlLabel || undefined);
+		const value = settableFieldValue(body) ?? (role === "text" ? `${label}${continuation ? `\n${continuation}` : ""}`.trim() : undefined);
 		const name = parseElementName(body, role, id, description);
-		const secondaryActions = line.match(/Secondary Actions:\s*([^\n]+)/)?.[1]
+		const secondaryActions = fields.get("secondary actions")
 			?.split(",")
 			.map((item) => item.trim())
 			.filter(Boolean) ?? [];
 		const disabled = /\bdisabled\b|\(disabled\)/i.test(line);
 		const tags = elementTags(line, role, name, description);
-		elements.push({ index: match[1], id, description, role, name, value, disabled, tags, group: elementGroup(line, role), line, secondaryActions });
+		elements.push({ index: match[1], id, description, role, name, value, ...(fields.has("url") ? { url: fields.get("url") } : {}), disabled, tags, group: elementGroup(line, role), line, secondaryActions });
 	}
 	return elements;
 }
@@ -154,15 +175,27 @@ export function elementTargetHint(element: ElementInfo): string {
 	return `fallback: { element_index: ${JSON.stringify(element.index)} }`;
 }
 
+function preview(value: string, limit = 160): string {
+	return truncateString(stripInvisibleBidiMarks(value).replace(/\s+/g, " ").trim(), limit);
+}
+
+function presentationTargetHint(element: ElementInfo): string {
+	const hint = elementTargetHint(element);
+	// Never offer a truncated selector: it would not resolve to the original target.
+	return hint.length <= 240 ? hint : `fallback: { element_index: ${JSON.stringify(element.index)}, expectedRole: ${JSON.stringify(element.role)} }`;
+}
+
 export function elementLineWithTargetHint(element: ElementInfo): string {
 	const tags = element.tags.length > 0 ? ` tags=${element.tags.join(",")}` : "";
-	const value = element.value ? ` value=${JSON.stringify(element.value)}` : "";
-	return `${stripInvisibleBidiMarks(element.line)}${value}${tags} — ${elementTargetHint(element)}`;
+	const value = element.value !== undefined ? ` value=${JSON.stringify(preview(element.value))}` : "";
+	const label = element.name !== element.role && element.name !== element.value ? ` ${preview(element.name, 80)}` : "";
+	const actions = element.secondaryActions.length ? ` actions=${JSON.stringify(preview(element.secondaryActions.join(", ")))}` : "";
+	return `${element.index} ${element.role}${label}${element.disabled ? " (disabled)" : ""}${value}${tags}${actions} — ${presentationTargetHint(element)}`;
 }
 
 export function shortElementLabel(element: ElementInfo): string {
 	const raw = element.name || element.description || element.id || stripInvisibleBidiMarks(element.line.replace(/^\d+\s+/, ""));
-	return truncateString(raw.replace(/,\s*Help:.*$/, ""), 80);
+	return preview(raw.replace(/,\s*Help:.*$/, ""), 80);
 }
 
 export function rankElement(element: ElementInfo): number {
@@ -207,19 +240,26 @@ export function elementStabilityNote(text: string): string | null {
 		if (element.id) idCounts.set(element.id, [...(idCounts.get(element.id) ?? []), element]);
 		if (element.role && element.name) roleNameElements.set(`${element.role}\u0000${element.name}`, [...(roleNameElements.get(`${element.role}\u0000${element.name}`) ?? []), element]);
 	}
-	const duplicateIds = [...idCounts.entries()].filter(([, elements]) => elements.length > 1).slice(0, 3).map(([id, elements]) => `${JSON.stringify(id)} at indexes ${elements.map((element) => element.index).join("/")}`);
+	const duplicateIds = [...idCounts.entries()].filter(([, elements]) => elements.length > 1).slice(0, 3).map(([id, elements]) => `${JSON.stringify(preview(id, 80))} at indexes ${elements.map((element) => element.index).join("/")}`);
 	const duplicateRoleNames = [...roleNameElements.entries()].filter(([, elements]) => elements.length > 1 && !elements.some((element) => element.id || element.description)).slice(0, 3).map(([key, elements]) => {
 		const [role, name] = key.split("\u0000");
-		return `${role}/${JSON.stringify(name)} at indexes ${elements.map((element) => element.index).join("/")}`;
+		return `${role}/${JSON.stringify(preview(name, 80))} at indexes ${elements.map((element) => element.index).join("/")}`;
 	});
 	if (rawIndexOnly === 0 && withIds === interactive.length && duplicateIds.length === 0) return null;
 	return `Target stability: ${interactive.length} interactive elements; elementId=${withIds}; elementDescription=${withDescriptions}; unique role/name=${uniqueRoleName}; raw index only=${rawIndexOnly}${duplicateIds.length ? `; duplicate elementId: ${duplicateIds.join(", ")}` : ""}${duplicateRoleNames.length ? `; duplicate role/name: ${duplicateRoleNames.join(", ")}` : ""}. Prefer elementId, then elementDescription, then unique role/name or press_key/type_text; use element_index with expectedRole/expectedName guards after mutations. When IDs/names are duplicated, use the shown indexes with stale-target guards after a fresh state read.`;
 }
 
+function displayWindowTitle(line: string, elements: ElementInfo[]): string {
+	if (!/^Window:/.test(line.trim())) return line;
+	const title = documentTitle(elements, null);
+	return title ? line.replace(/^(\s*Window:\s*)".*"(,\s*App:.*)$/, (_match, prefix, suffix) => `${prefix}${JSON.stringify(title)}${suffix}`) : line;
+}
+
 export function compactText(text: string, scope: TargetScope = "all"): string {
 	const lines = text.split("\n");
-	const header = lines.filter((line) => /^(Computer Use state|<app_state>|App=|Window:)/.test(line.trim())).slice(0, 4);
-	const interactive = prioritizedElements(parseElementInfo(text).filter(isInteractiveElement), scope);
+	const elements = parseElementInfo(text);
+	const header = lines.filter((line) => /^(Computer Use state|<app_state>|App=|Window:)/.test(line.trim())).slice(0, 4).map((line) => displayWindowTitle(line, elements));
+	const interactive = prioritizedElements(elements.filter(isInteractiveElement), scope);
 	const note = elementStabilityNote(text);
 	const riskNote = riskControlNote(text);
 	const groups = ["content", "chrome", "window", "other"] as const;
@@ -236,17 +276,17 @@ export function compactText(text: string, scope: TargetScope = "all"): string {
 
 export function minimalText(text: string, scope: TargetScope = "all"): string {
 	const lines = text.split("\n");
-	const header = lines.filter((line) => /^(Computer Use state|App=|Window:)/.test(line.trim())).slice(0, 3);
 	const elements = parseElementInfo(text);
+	const header = lines.filter((line) => /^(Computer Use state|App=|Window:)/.test(line.trim())).slice(0, 3).map((line) => displayWindowTitle(line, elements));
 	const visibleText = elements
-		.filter((element) => /\btext\b/i.test(element.line))
+		.filter((element) => element.role === "text" && !isInteractiveElement(element))
 		.slice(0, 8)
-		.map((element) => `${element.index} ${stripInvisibleBidiMarks(element.line.replace(/^\d+\s+/, ""))}${element.value ? ` value=${JSON.stringify(element.value)}` : ""}${element.tags.length > 0 ? ` tags=${element.tags.join(",")}` : ""}`);
+		.map((element) => `${element.index} ${preview(element.value ?? element.name)}`);
 	const ranked = prioritizedElements(elements.filter(isInteractiveElement), scope);
 	const targets = ranked
 		.filter((element) => element.group !== "window")
 		.slice(0, 24)
-		.map((element) => `${element.index} ${shortElementLabel(element)} [${element.role}${element.disabled ? ", disabled" : ""}${element.tags.length > 0 ? `; tags=${element.tags.join(",")}` : ""}${element.value ? `; value=${JSON.stringify(element.value)}` : ""}] — ${elementTargetHint(element)}`);
+		.map(elementLineWithTargetHint);
 	const omittedByGroup = ["content", "chrome", "window", "other"]
 		.map((group) => ({ group, count: ranked.filter((element) => element.group === group).length }))
 		.filter((item) => item.count > 0)
@@ -310,21 +350,9 @@ export function assertionContentText(content: ContentBlock[] | undefined): strin
 	return [...values].join("\n");
 }
 
-export function contentIncludesMultilineValue(content: ContentBlock[] | undefined, expectedValue: string): { matched: boolean; partial: boolean; matchedLines: string[]; missingLines: string[] } {
-	const normalizedContent = normalizeAssertionText(contentText(content));
-	const normalizedExpected = normalizeAssertionText(expectedValue);
-	if (normalizedContent.includes(normalizedExpected)) return { matched: true, partial: false, matchedLines: [expectedValue], missingLines: [] };
-	const lines = normalizedExpected.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-	if (lines.length <= 1) return { matched: false, partial: false, matchedLines: [], missingLines: lines };
-	const matchedLines = lines.filter((line) => normalizedContent.includes(line));
-	const missingLines = lines.filter((line) => !normalizedContent.includes(line));
-	return { matched: missingLines.length === 0, partial: matchedLines.length > 0, matchedLines, missingLines };
-}
-
 export function visibleTextValues(content: ContentBlock[]): string[] {
 	const values: string[] = [];
 	for (const element of parseElementInfo(contentText(content))) {
-		if (/\btext\b/i.test(element.line)) values.push(element.line.replace(/^\s*\d+\s+text\s+/, "").trim());
 		if (element.value && /\b(text|field|search|edit|scroll area)\b/i.test(element.role)) values.push(element.value);
 	}
 	return values
@@ -356,7 +384,7 @@ export function machineElements(content: ContentBlock[], scope: TargetScope = "a
 		...(element.description ? { description: element.description } : {}),
 		role: element.role,
 		name: element.name,
-		...(element.value ? { value: element.value } : {}),
+		...(element.value !== undefined ? { value: element.value } : {}),
 		disabled: element.disabled,
 		group: element.group,
 		tags: element.tags,
@@ -375,8 +403,9 @@ export function stateSummary(content: ContentBlock[], scope: TargetScope = "all"
 	const text = contentText(content);
 	const app = text.match(/^App=([^\n]+)/m)?.[1]?.trim() ?? null;
 	const windowLine = text.match(/^Window:\s*([^\n]+)/m)?.[1]?.trim() ?? null;
-	const title = windowLine?.match(/^"([^"]+)"/)?.[1] ?? null;
-	const url = text.match(/\b(?:https?|file|brave|chrome|about):\/\/[^\s"'<>]+|\babout:[^\s"'<>]+/)?.[0] ?? null;
+	const elements = parseElementInfo(text);
+	const title = documentTitle(elements, windowLine?.match(/^"([^"]+)"/)?.[1] ?? null);
+	const url = documentUrl(elements);
 	return {
 		app,
 		window: windowLine,
@@ -408,7 +437,7 @@ export function compareState(before: StateSummary | null, after: StateSummary | 
 	const summary: string[] = [];
 	if (urlChanged) summary.push(`URL changed ${before.url ?? "<none>"} → ${after.url ?? "<none>"}`);
 	if (titleChanged) summary.push(`title changed ${before.title ?? "<none>"} → ${after.title ?? "<none>"}`);
-	if (visible.added.length || visible.removed.length) summary.push(`visible text changed${visible.added.length ? `; added ${JSON.stringify(visible.added.join(" | "))}` : ""}${visible.removed.length ? `; removed ${JSON.stringify(visible.removed.join(" | "))}` : ""}`);
+	if (visible.added.length || visible.removed.length) summary.push(`visible text changed${visible.added.length ? `; added ${JSON.stringify(preview(visible.added.join(" | "), 400))}` : ""}${visible.removed.length ? `; removed ${JSON.stringify(preview(visible.removed.join(" | "), 400))}` : ""}`);
 	if (targets.added.length || targets.removed.length) summary.push(`targets changed${targets.added.length ? `; added ${targets.added.length}` : ""}${targets.removed.length ? `; removed ${targets.removed.length}` : ""}`);
 	return {
 		visibleTextChanged: visible.added.length > 0 || visible.removed.length > 0,
@@ -596,12 +625,13 @@ export function resolveElementId(args: Record<string, JsonValue>, cache: Map<str
 	if (typeof elementId !== "string" || normalized.element_index !== undefined) return normalized;
 	if (typeof normalized.app !== "string") throw new Error("elementId targeting requires an app argument.");
 	const elements = cache.get(normalized.app) ?? [];
-	const match = elements.find((element) => element.id === elementId);
-	if (!match) {
-		const closest = closestElementSuggestions(elements, elementId, "id");
-		throw new Error(`No elementId ${elementId} found for ${normalized.app}.${closest ? `\nClosest elementId matches: ${closest}.` : ""}\nAvailable targets:\n${actionableElementSummary(elements)}`);
+	const matches = elements.filter((element) => element.id === elementId);
+	if (matches.length !== 1) {
+		const reason = matches.length === 0 ? "No" : `Ambiguous ${matches.length}`;
+		const closest = matches.length === 0 ? closestElementSuggestions(elements, elementId, "id") : "";
+		throw new Error(`${reason} elementId ${elementId} found for ${normalized.app}.${closest ? `\nClosest elementId matches: ${closest}.` : ""}\nAvailable targets:\n${actionableElementSummary(elements)}`);
 	}
-	normalized.element_index = match.index;
+	normalized.element_index = matches[0].index;
 	delete normalized.elementId;
 	delete normalized.element_id;
 	return normalized;
@@ -732,8 +762,8 @@ export function describeTargetResolution(originalArgs: Record<string, JsonValue>
 	if (typeof resolvedArgs.app !== "string" || typeof resolvedArgs.element_index !== "string") return undefined;
 	const element = (cache.get(resolvedArgs.app) ?? []).find((item) => item.index === resolvedArgs.element_index);
 	const tags = element?.tags.length ? `, tags=${JSON.stringify(element.tags)}` : "";
-	const identity = element ? `role=${JSON.stringify(element.role)}, name=${JSON.stringify(element.name)}, id=${JSON.stringify(element.id ?? null)}, description=${JSON.stringify(element.description ?? null)}, value=${JSON.stringify(element.value ?? null)}${tags}` : "";
-	const resolved = `resolved target: element_index ${resolvedArgs.element_index}${element ? ` (${identity}; ${elementTargetHint(element)})` : ""}`;
+	const identity = element ? `role=${JSON.stringify(element.role)}, name=${JSON.stringify(preview(element.name, 80))}, id=${JSON.stringify(element.id ? preview(element.id, 80) : null)}, description=${JSON.stringify(element.description ? preview(element.description, 80) : null)}, value=${JSON.stringify(element.value === undefined ? null : preview(element.value))}${tags}` : "";
+	const resolved = `resolved target: element_index ${resolvedArgs.element_index}${element ? ` (${identity}; ${presentationTargetHint(element)})` : ""}`;
 	if (!Array.isArray(originalArgs.targets)) return hasElementTarget(originalArgs) ? resolved : undefined;
 	const targetIndex = originalArgs.targets.findIndex((target) => {
 		if (!isJsonRecord(target)) return false;
@@ -755,7 +785,8 @@ export function describeTargetResolution(originalArgs: Record<string, JsonValue>
 export function updateElementCache(cache: Map<string, ElementInfo[]>, app: JsonValue | undefined, content: ContentBlock[]): void {
 	if (typeof app !== "string") return;
 	const elements = parseElementInfo(contentText(content));
-	if (elements.length > 0) cache.set(app, elements);
+	// A refresh replaces the snapshot, including when no accessible elements remain.
+	cache.set(app, elements);
 }
 
 export function appendText(result: FilteredToolResult, text: string): void {

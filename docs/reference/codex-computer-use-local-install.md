@@ -233,11 +233,13 @@ The bridge starts:
 /Applications/ChatGPT.app/Contents/Resources/codex app-server \
   --enable computer_use \
   --enable plugins \
-  --enable tool_call_mcp_elicitation
+  --enable tool_call_mcp_elicitation \
+  --disable apps
 ```
 
-It sends the current `initialized` notification, creates an ephemeral app-server thread, explicitly configures the `computer-use`, `event-stream`, and `computer-history` transports from their current ChatGPT-bundled plugin launchers, waits for asynchronous startup, verifies their paginated thread-scoped inventories, and calls the selected server through `mcpServer/tool/call`. The explicit transports
-prevent stale or disabled global Codex MCP config from shadowing them.
+It sends the current `initialized` notification, creates an ephemeral app-server thread, explicitly configures the `computer-use`, `event-stream`, and `computer-history` transports from their current ChatGPT-bundled plugin launchers, waits for asynchronous startup, verifies their paginated thread-scoped inventories, and calls the selected server through `mcpServer/tool/call`. Before `thread/start`, it reads effective config and disables inherited MCP servers/plugins for that thread; an empty `mcp_servers` table alone does not clear inherited entries. Only these three families start. The `apps` feature is disabled without discarding plugin `CODEX_HOME`; explicit transports prevent stale global entries from shadowing them.
+
+Native observation and selected-text replacement use `tools/macos-native.swift` via an async child, lazily compiled with installed `xcrun swiftc` and cached by source hash under `~/Library/Caches/macuse/native`. AX access requires Accessibility permission. The helper posts no keyboard events, writes no clipboard, and never activates apps. Unsupported Unicode text insertion fails before mutation; attempted unverified edits are not replayed. macuse does not warp the cursor or guarantee universal input/focus isolation. Restart the owning process after extension/native source updates; Pi `/reload` only refreshes resources and activation.
 
 Practical limits:
 

@@ -54,7 +54,8 @@
     "validate:focus": "node tools/validate-macuse.mjs focus",
     "validate:mcp": "node tools/validate-macuse.mjs mcp",
     "typecheck": "tsc --noEmit",
-    "ci": "tsc --noEmit && node tools/validate-macuse.mjs quick",
+    "test": "node --test tools/tests/*.test.mjs",
+    "ci": "tsc --noEmit && npm test && node tools/validate-macuse.mjs quick",
     "pack:check": "npm pack --dry-run"
   },
   "engines": {
