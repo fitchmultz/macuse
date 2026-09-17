@@ -2,10 +2,10 @@
 export function documentTitle(elements, headerTitle) {
 	const windows = elements.filter(element => element.role === "standard window");
 	if (windows.length !== 1) return headerTitle;
-	const window = windows[0];
-	const title = window.name && window.name !== window.role && window.name !== window.id
-		? window.name
-		: window.line.split("\n")[0].match(/(?:^|, )Secondary Actions: Raise, (.+)$/)?.[1];
+	// Generic element names strip parenthesized attributes; window titles are literal.
+	const row = windows[0].line.split("\n")[0].replace(/^\d+\s+standard window\s*/i, "");
+	const label = row.split(/(?:^|,\s*)(?:ID|Description|Help|Secondary Actions|URL|Value|Placeholder):/i)[0];
+	const title = label || row.match(/(?:^|, )Secondary Actions: Raise, (.+)$/)?.[1];
 	return title || headerTitle;
 }
 

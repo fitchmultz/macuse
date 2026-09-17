@@ -182,9 +182,9 @@ test('Unicode uses native selection replacement and is never replayed through up
 });
 
 test('native typing uses the full window title and still rejects different documents', async () => {
-  const title = 'A very long document title, with punctuation - Browser';
+  for (const title of ['A very long document title, with punctuation - Browser', '(Draft) Notes'])
   for (const row of [`0 standard window ${title}`, `0 standard window URL: example.com/page, Secondary Actions: Raise, ${title}`]) {
-    const text = `App=/Test.app (bundleID test.app, pid 4242)\nWindow: "A very long…Browser", App: Test.\n${row}\n1 text field (settable) ID: editor, Value: old`;
+    const text = `App=/Test.app (bundleID test.app, pid 4242)\nWindow: "${title.startsWith('(') ? title : 'A very long…Browser'}", App: Test.\n${row}\n1 text field (settable) ID: editor, Value: old`;
     for (const mismatch of [null, 'title', 'document']) {
       const window = { token: 'w', title: mismatch === 'title' ? 'Different document' : title, document: mismatch === 'document' ? 'https://other.example/page' : null };
       if (mismatch === 'document' && !row.includes('URL:')) continue;

@@ -249,10 +249,17 @@ export function elementStabilityNote(text: string): string | null {
 	return `Target stability: ${interactive.length} interactive elements; elementId=${withIds}; elementDescription=${withDescriptions}; unique role/name=${uniqueRoleName}; raw index only=${rawIndexOnly}${duplicateIds.length ? `; duplicate elementId: ${duplicateIds.join(", ")}` : ""}${duplicateRoleNames.length ? `; duplicate role/name: ${duplicateRoleNames.join(", ")}` : ""}. Prefer elementId, then elementDescription, then unique role/name or press_key/type_text; use element_index with expectedRole/expectedName guards after mutations. When IDs/names are duplicated, use the shown indexes with stale-target guards after a fresh state read.`;
 }
 
+function displayWindowTitle(line: string, elements: ElementInfo[]): string {
+	if (!/^Window:/.test(line.trim())) return line;
+	const title = documentTitle(elements, null);
+	return title ? line.replace(/^(\s*Window:\s*)"[^"]*"/, (_match, prefix) => `${prefix}${JSON.stringify(title)}`) : line;
+}
+
 export function compactText(text: string, scope: TargetScope = "all"): string {
 	const lines = text.split("\n");
-	const header = lines.filter((line) => /^(Computer Use state|<app_state>|App=|Window:)/.test(line.trim())).slice(0, 4);
-	const interactive = prioritizedElements(parseElementInfo(text).filter(isInteractiveElement), scope);
+	const elements = parseElementInfo(text);
+	const header = lines.filter((line) => /^(Computer Use state|<app_state>|App=|Window:)/.test(line.trim())).slice(0, 4).map((line) => displayWindowTitle(line, elements));
+	const interactive = prioritizedElements(elements.filter(isInteractiveElement), scope);
 	const note = elementStabilityNote(text);
 	const riskNote = riskControlNote(text);
 	const groups = ["content", "chrome", "window", "other"] as const;
@@ -269,8 +276,8 @@ export function compactText(text: string, scope: TargetScope = "all"): string {
 
 export function minimalText(text: string, scope: TargetScope = "all"): string {
 	const lines = text.split("\n");
-	const header = lines.filter((line) => /^(Computer Use state|App=|Window:)/.test(line.trim())).slice(0, 3);
 	const elements = parseElementInfo(text);
+	const header = lines.filter((line) => /^(Computer Use state|App=|Window:)/.test(line.trim())).slice(0, 3).map((line) => displayWindowTitle(line, elements));
 	const visibleText = elements
 		.filter((element) => element.role === "text" && !isInteractiveElement(element))
 		.slice(0, 8)

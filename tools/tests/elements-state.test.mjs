@@ -80,6 +80,17 @@ test("browser document URLs use scoped metadata and matching full address values
   assert.equal(stateSummary(content(state('0 standard window New Tab\n1 web area URL: brave://newtab/\n2 text https://unrelated.invalid/body-link'))).url, 'brave://newtab/');
 });
 
+test("displayed window titles can be copied into title guards and waits", () => {
+  const title = 'A very long document title, with punctuation - Browser';
+  const text = state(`0 standard window URL: example.com/page, Secondary Actions: Raise, ${title}\n1 text field (settable) ID: editor, Value: old`).replace('Window: "fixture.txt"', 'Window: "A very long…Browser"');
+  for (const render of [minimalText, compactText]) {
+    const displayed = render(text).match(/^Window: "([^"]*)"/m)[1];
+    assert.equal(displayed, title);
+    assert.ok(waitConditionMet('waitForText', { app: 'Browser', text: 'old', title: displayed }, filterToolResult({ content: content(text) }), new Map()));
+    assert.ok(waitConditionMet('waitForTitle', { app: 'Browser', title: displayed }, filterToolResult({ content: content(text) }), new Map()));
+  }
+});
+
 test("duplicate IDs reject ambiguity and a successful empty refresh invalidates targets", () => {
   const cache = new Map();
   updateElementCache(cache, "fixture", content(state("2 button First, ID: duplicate\n3 button Second, ID: duplicate")));
