@@ -8,7 +8,7 @@ export type NativeObservation = {
 	before: NativeSnapshot;
 	after: NativeSnapshot;
 	transitions: NativeTransition[];
-	coverage: { applicationActivation: boolean; focusedWindow: Record<string, number>; truncated: boolean; inputAttribution: false };
+	coverage: { applicationActivation: boolean; focusedWindow: Record<string, number>; truncated: boolean; inputAttribution: false; windowDetails: "targetAppsOnly" };
 };
 export type NativeAppState = {
 	pid: number;
@@ -30,6 +30,7 @@ export type NativeTextResult =
 	| { status: "unverified"; mutationAttempted: true; reason: string }
 	| { status: "applied"; mutationAttempted: true; verified: true; insertedUTF16Length: number; replacedUTF16Length: number };
 export function nativeWindowClosed(before: { title: string | null; url: string | null }, after: NativeAppState | null): boolean;
+export function nativeTextUnavailableReason(state: NativeAppState | null): string;
 export class MacOSNative {
 	snapshot(): Promise<NativeSnapshot>;
 	beginObservation(pids?: number[]): Promise<{ id: string; before: NativeSnapshot }>;

@@ -15,6 +15,7 @@ import {
 	type TargetScope,
 } from "./core";
 import { isTextBlock, normalizeContent } from "./content";
+import { documentTitle, documentUrl } from "./document-metadata.mjs";
 
 export function hasMutatingSteps(steps: Array<{ tool: string }>): boolean {
 	return steps.some((step) => !READ_ONLY_TOOLS.has(step.tool));
@@ -36,7 +37,7 @@ export function normalizeRole(value: string): string {
 }
 
 export function parseElementRole(body: string): string {
-	const match = body.match(/^(standard window|split group|container|scroll area|scroll bar|value indicator|text entry area|secure text field|search text field|text field|edit field|close button|zoom button|minimize button|full screen button|increment arrow button|decrement arrow button|increment page button|decrement page button|radio button|pop up button|sort button|menu button|menu bar|menu item|button|checkbox|switch|slider|splitter|combo box|tab group|tab|link|row|text|toolbar|group|web area|search)\b/i);
+	const match = body.match(/^(standard window|split group|container|scroll area|scroll bar|value indicator|text entry area|secure text field|search text field|text field|edit field|close button|zoom button|minimize button|full screen button|increment arrow button|decrement arrow button|increment page button|decrement page button|radio button|pop up button|sort button|menu button|menu bar|menu item|button|checkbox|switch|slider|splitter|combo box|tab group|tab|link|row|text|toolbar|group|web area|HTML content|search)\b/i);
 	return normalizeRole(match?.[1] ?? body.split(/\s+/)[0] ?? "unknown");
 }
 
@@ -67,7 +68,10 @@ export function settableFieldValue(body: string): string | undefined {
 	const value = fields.get("value");
 	if (value !== undefined) return `${value}${continuation ? `\n${continuation}` : ""}`;
 	const settableMatch = body.match(/\((?:disabled,\s*)?(?:settable|editable),\s*(?:string|float|int|integer|bool|boolean)\)[ \t]?([\s\S]*)$/i);
-	return settableMatch?.[1];
+	if (settableMatch) return settableMatch[1];
+	// Native search fields render their string directly, omitting it when empty.
+	if (parseElementRole(body) === "search" && fields.size === 0) return body.match(/\((?:disabled,\s*)?(?:settable|editable)\)[ \t]?([\s\S]*)$/i)?.[1];
+	return undefined;
 }
 
 export function stripElementAttributes(value: string): string {
@@ -82,8 +86,8 @@ export function rolePrefixPattern(role: string): RegExp {
 
 export function parseElementName(body: string, role: string, id?: string, description?: string): string {
 	if (description) return description;
-	const { label } = elementParts(body);
-	const inlineValue = /\((?:disabled,\s*)?(?:settable|editable),\s*(?:string|float|int|integer|bool|boolean)\)/i.test(body.split("\n")[0]);
+	const { label, fields } = elementParts(body);
+	const inlineValue = /\((?:disabled,\s*)?(?:settable|editable),\s*(?:string|float|int|integer|bool|boolean)\)/i.test(body.split("\n")[0]) || (role === "search" && fields.size === 0 && settableFieldValue(body) !== undefined);
 	return (inlineValue ? "" : label) || id || role;
 }
 
@@ -152,7 +156,7 @@ export function parseElementInfo(text: string): ElementInfo[] {
 			.filter(Boolean) ?? [];
 		const disabled = /\bdisabled\b|\(disabled\)/i.test(line);
 		const tags = elementTags(line, role, name, description);
-		elements.push({ index: match[1], id, description, role, name, value, disabled, tags, group: elementGroup(line, role), line, secondaryActions });
+		elements.push({ index: match[1], id, description, role, name, value, ...(fields.has("url") ? { url: fields.get("url") } : {}), disabled, tags, group: elementGroup(line, role), line, secondaryActions });
 	}
 	return elements;
 }
@@ -392,10 +396,9 @@ export function stateSummary(content: ContentBlock[], scope: TargetScope = "all"
 	const text = contentText(content);
 	const app = text.match(/^App=([^\n]+)/m)?.[1]?.trim() ?? null;
 	const windowLine = text.match(/^Window:\s*([^\n]+)/m)?.[1]?.trim() ?? null;
-	const title = windowLine?.match(/^"([^"]+)"/)?.[1] ?? null;
-	// A URL in document body text is not the identity of the current document.
-	const windowElement = elementBlocks(text).find((block) => /^\s*\d+\s+standard window\b/.test(block));
-	const url = windowElement ? elementParts(windowElement.replace(/^\s*\d+\s+/, "")).fields.get("url") ?? null : null;
+	const elements = parseElementInfo(text);
+	const title = documentTitle(elements, windowLine?.match(/^"([^"]+)"/)?.[1] ?? null);
+	const url = documentUrl(elements);
 	return {
 		app,
 		window: windowLine,

@@ -6,6 +6,7 @@ import {
 	DEFAULT_TOOL_TIMEOUT_MS,
 	asInt,
 	bridgeDetails,
+	errorMessage,
 	type ElementInfo,
 	type GetAppStateParams,
 	type ImageContentBlock,
@@ -313,11 +314,12 @@ async function executeGetAppState(input: GetAppStateParams, signal: AbortSignal 
 	const detail = normalizeDetail(input.detail, "minimal");
 	const targetScope: TargetScope = input.targetScope === "main" ? "main" : "all";
 	const trackFocus = input.trackFocus !== false;
-	const observation = trackFocus ? await beginFocusObservation().catch(() => null) : null;
+	let observationError: string | null = null;
+	const observation = trackFocus ? await beginFocusObservation().catch((error) => { observationError = errorMessage(error); return null; }) : null;
 	let observed;
 	let call;
 	try { call = await getClient().callTool("get_app_state", { app }, { approval, timeoutMs: toolTimeoutMs, signal }); }
-	finally { observed = observation ? await endFocusObservation(observation.id).catch(() => null) : null; }
+	finally { observed = observation ? await endFocusObservation(observation.id).catch((error) => { observationError = errorMessage(error); return null; }) : null; }
 	const result = filterToolResult(call.result, { includeImage: Boolean(input.includeImage), saveImagePath: input.saveImagePath });
 	if (!result.isError) {
 		updateElementCache(sessionElementCache, app, result.content);
@@ -326,7 +328,7 @@ async function executeGetAppState(input: GetAppStateParams, signal: AbortSignal 
 	const diagnostics = [appendComputerUseDiagnostic(result, "get_app_state", { app })].filter((item): item is string => Boolean(item));
 	if (detail === "full") appendElementStabilityNote(result);
 	appendImageWarning(result, { includeImage: Boolean(input.includeImage), saveImagePath: input.saveImagePath });
-	const focus = { ...focusSnapshot(observed?.before ?? null, observed?.after ?? null), ...observed, observationAvailable: Boolean(observed?.coverage.applicationActivation), observedChanges: observed?.transitions.length };
+	const focus = { ...focusSnapshot(observed?.before ?? null, observed?.after ?? null), ...observed, observationAvailable: Boolean(observed?.coverage.applicationActivation), observationError, observedChanges: observed?.transitions.length };
 	if (observed?.transitions.some((event) => event.kind === "activation")) focus.changed = true;
 	const transformedContent = detail === "minimal" ? minimalContent(result.content, targetScope) : detail === "compact" ? compactContent(result.content, targetScope) : result.content;
 	const focusLine = trackFocus ? { type: "text" as const, text: focusSummaryText(focus, app) } : null;

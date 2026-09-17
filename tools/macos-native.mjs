@@ -41,6 +41,17 @@ export function nativeWindowClosed(before, after) {
 		: before.title != null && window.title != null && window.title !== before.title);
 }
 
+export function nativeTextUnavailableReason(state) {
+	if (!state) return "Native inspection returned no app state.";
+	if (state.accessibilityTrusted === false) return "Native Accessibility access is unavailable (accessibilityTrusted=false).";
+	if (!state.focusedWindow || !state.focusedElement) return state.windowsError
+		? `Native window inspection failed (AX error ${state.windowsError}); focused text insertion capability is unknown.`
+		: "Native inspection found no focused window/control; text insertion capability is unknown.";
+	if (state.focusedElement.selectedTextError === -25205) return "This focused control does not support verified native text insertion (AXSelectedText unsupported; AX error -25205).";
+	if (state.focusedElement.selectedTextError) return `Native selected-text inspection failed (AX error ${state.focusedElement.selectedTextError}).`;
+	return "This focused control does not support verified native text insertion (AXSelectedText is not settable).";
+}
+
 /** One lazy child owned by the caller's session. No retries of potentially applied edits. */
 export class MacOSNative {
 	#child;

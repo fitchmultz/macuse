@@ -4,7 +4,8 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { sanitizeRecoverableComputerUseText } from '../extensions/codex-computer-use-modules/computer-use-recovery-runtime.mjs';
 import { validateToolArguments, pickUpstreamToolArgs } from '../extensions/codex-computer-use-modules/upstream-tool-args.mjs';
-import { MacOSNative, nativeWindowClosed } from './macos-native.mjs';
+import { MacOSNative, nativeWindowClosed, nativeTextUnavailableReason } from './macos-native.mjs';
+import { documentTitle, documentUrl } from '../extensions/codex-computer-use-modules/document-metadata.mjs';
 
 export {
   appServerSessionRecoverySummary,
@@ -102,7 +103,7 @@ export function parseElementInfo(text) {
     if (!match || !match[2].trim()) return [];
     const [, index, body] = match;
     const [header, ...continuation] = body.split('\n');
-    const role = header.match(/^(standard window|split group|scroll area|scroll bar|value indicator|text entry area|secure text field|search text field|text field|edit field|close button|zoom button|minimize button|full screen button|radio button|pop up button|sort button|menu button|menu bar|menu item|combo box|tab group|web area|\S+)/i)[1].toLowerCase();
+    const role = header.match(/^(standard window|split group|scroll area|scroll bar|value indicator|text entry area|secure text field|search text field|text field|edit field|close button|zoom button|minimize button|full screen button|radio button|pop up button|sort button|menu button|menu bar|menu item|combo box|tab group|web area|HTML content|\S+)/i)[1].toLowerCase();
     const rest = header.slice(role.length).trimStart().replace(/^\([^)]*\)\s*/, '');
     const markers = [...rest.matchAll(/(?:^|,\s*)(ID|Description|Help|Secondary Actions|URL|Value|Placeholder):[ \t]?/gi)];
     const fields = Object.fromEntries(markers.map((marker, i) => {
@@ -112,9 +113,10 @@ export function parseElementInfo(text) {
     }));
     const label = rest.slice(0, markers[0]?.index).trim();
     const description = fields.description ?? (/button|checkbox|switch|combo box|link/.test(role) ? label || undefined : undefined);
-    const inline = body.match(/\((?:disabled,\s*)?(?:settable|editable),\s*(?:string|float|int(?:eger)?|bool(?:ean)?)\)[ \t]?([\s\S]*)$/i)?.[1];
+    const inline = body.match(/\((?:disabled,\s*)?(?:settable|editable),\s*(?:string|float|int(?:eger)?|bool(?:ean)?)\)[ \t]?([\s\S]*)$/i)?.[1]
+      ?? (/^search(?: text field)?$/.test(role) && Object.keys(fields).length === 0 ? body.match(/\((?:disabled,\s*)?(?:settable|editable)\)[ \t]?([\s\S]*)$/i)?.[1] : undefined);
     const value = fields.value !== undefined ? fields.value + (continuation.length ? `\n${continuation.join('\n')}` : '') : inline;
-    return { index, id: fields.id, description, role, name: description || fields.id || (inline === undefined ? label : '') || role, value, disabled: /\(disabled\)/i.test(header), line: line.trim() };
+    return { index, id: fields.id, ...(fields.url !== undefined ? { url: fields.url } : {}), description, role, name: description || fields.id || (inline === undefined ? label : '') || role, value, disabled: /\(disabled\)/i.test(header), line: line.trim() };
   });
 }
 
@@ -256,10 +258,9 @@ export function validateBridgeArguments(tool, args) {
 
 function documentState(text) {
   const app = text.match(/^App=([^\n]+)/m)?.[1]?.trim() ?? null;
-  const title = text.match(/^Window:\s*"([^"]*)"/m)?.[1] ?? null;
   const elements = parseElementInfo(text);
-  const window = elements.find(element => element.role === 'standard window');
-  const url = window?.line.match(/(?:^|,\s*)URL:\s*([^,\n]+)/)?.[1]?.trim() ?? null;
+  const title = documentTitle(elements, text.match(/^Window:\s*"([^"]*)"/m)?.[1] ?? null);
+  const url = documentUrl(elements);
   return { app, title, url, pid: Number(app?.match(/\bpid\s+(\d+)/)?.[1]) || undefined, elements };
 }
 
@@ -333,10 +334,12 @@ export class BridgeComputerUseSession {
     const mutation = guiMutations.has(tool);
     // Capture BEFORE refreshing; otherwise a same-app tab/window race overwrites the guard.
     let before = this.states.get(app?.replace(/\/+$/, ''));
-    const observation = await this.native.beginObservation(before?.pid ? [before.pid] : []).catch(() => null);
+    let observationError = null;
+    const observation = await this.native.beginObservation(before?.pid ? [before.pid] : []).catch(error => { observationError = error.message || String(error); return null; });
     let dispatched = false;
     let dispatchPending = false;
     let nativeEditPending = false;
+    let closeInspectionError = null;
     let outcome = 'reported';
     let result;
     let focus;
@@ -358,9 +361,12 @@ export class BridgeComputerUseSession {
       const close = tool === 'press_key' && ['super+w', 'super+shift+w'].includes(args.key)
         || (tool === 'click' || tool === 'perform_secondary_action' && args.action === 'Press') && (target?.role === 'close button' || /^close(?: tab| window)?$/i.test(target?.description ?? ''));
       if (tool === 'type_text') {
-        const native = before?.pid ? await this.native.inspectApp(before.pid).catch(() => null) : null;
+        let inspectionError = null;
+        const native = before?.pid ? await this.native.inspectApp(before.pid).catch(error => { inspectionError = error.message || String(error); return null; }) : null;
+        let nativeTextReason = !before?.pid ? 'Native text inspection unavailable: app state did not expose a target PID.'
+          : inspectionError ? `Native text inspection unavailable: ${inspectionError}` : nativeTextUnavailableReason(native);
         const window = native?.focusedWindow;
-        if (window && native.focusedElement?.selectedTextSettable) {
+        if (native?.accessibilityTrusted !== false && window && native.focusedElement?.selectedTextSettable) {
           if (window.document && before.url ? window.document !== before.url : window.title !== before.title) throw new Error('Native text target no longer matches the inspected document. No mutation performed.');
           signal?.throwIfAborted();
           dispatched = true;
@@ -369,12 +375,13 @@ export class BridgeComputerUseSession {
           const edit = await this.native.replaceSelectedText({ pid: native.pid, expected: { windowToken: window.token, windowTitle: window.title, document: window.document, elementToken: native.focusedElement.token }, text: args.text });
           nativeEditPending = false;
           dispatched = edit.mutationAttempted;
+          if (edit.status === 'unsupported') nativeTextReason = `Native text insertion unsupported: ${edit.reason}`;
           if (edit.status === 'applied') {
             result = stateResult('Text inserted and exactly verified through native Accessibility; no clipboard or global keyboard input used.');
             outcome = 'verified';
           } else if (edit.status !== 'unsupported' || edit.mutationAttempted) throw new Error(`${edit.reason || 'Native edit not verified'}. Do not replay an attempted edit.`);
         }
-        if (!result && /[^\x00-\x7f]/.test(args.text)) throw new Error('This control does not support verified native Unicode insertion. No upstream text dispatched; use set_value on a verified settable field.');
+        if (!result && /[^\x00-\x7f]/.test(args.text)) throw new Error(`${nativeTextReason} No text was dispatched: upstream keyboard typing is not a safe Unicode fallback. Use set_value on a verified settable field instead.`);
       }
       signal?.throwIfAborted();
       if (!result) {
@@ -393,8 +400,10 @@ export class BridgeComputerUseSession {
       signal?.throwIfAborted();
       // Never reopen an application for a post-close readback.
       if (mutation && close && (!stateError(result) || /noWindowsAvailable/.test(toolResultText(result))) && before?.pid) {
-        const proof = await this.native.inspectApp(before.pid).catch(() => null);
-        if (nativeWindowClosed(before, proof)) {
+        const proof = await this.native.inspectApp(before.pid).catch(error => { closeInspectionError = error.message || String(error); return null; });
+        if (proof?.accessibilityTrusted === false) closeInspectionError = 'Native Accessibility access is unavailable (accessibilityTrusted=false).';
+        if (closeInspectionError) result.content = [...(result.content || []), { type: 'text', text: `Native close inspection unavailable: ${closeInspectionError}` }];
+        if (proof?.accessibilityTrusted !== false && nativeWindowClosed(before, proof)) {
           if (proof?.windowsCount === 0) result = stateResult(`App=${before.app}\nNo windows remain. Native Accessibility verified the last window closed; do not replay.`);
           else if (stateError(result)) result = stateResult("Native Accessibility verified that the target document is no longer among the app's windows. Other windows remain; do not replay the close.");
           outcome = 'verified';
@@ -418,7 +427,7 @@ export class BridgeComputerUseSession {
       }
       if (mutation && args.requireStateChange && !stateError(result)) {
         if (close) {
-          if (outcome !== 'verified') throw new Error('Close dispatched without independently verified state change. Do not replay.');
+          if (outcome !== 'verified') throw new Error(`Close dispatched without independently verified state change.${closeInspectionError ? ` Native inspection unavailable: ${closeInspectionError}` : ''} Do not replay.`);
         } else {
           const readback = /^App=/m.test(toolResultText(result)) ? result : await this.callTool('get_app_state', { app, approval: args.approval });
           if (stateError(readback)) throw new Error('Action dispatched but state-change readback unavailable. Do not replay.');
@@ -433,14 +442,17 @@ export class BridgeComputerUseSession {
       if (/^App=/m.test(toolResultText(result)) || tool === 'get_app_state') this.remember(app, result);
     } catch (error) {
       // Native request timeouts also must not free the MCP queue before helper exit.
-      if (nativeEditPending) await this.native.stop();
+      if (nativeEditPending) {
+        await this.native.stop();
+        observationError = `Native helper stopped after edit failure: ${error.message || String(error)}`;
+      }
       if (dispatchPending && error.details?.dispatched === false) dispatched = false;
       error.details = { ...error.details, dispatched, outcomeUnknown: dispatched, outcome: dispatched ? 'unknown' : 'not-dispatched' };
       failure = error;
       throw error;
     } finally {
-      const observed = observation && !nativeEditPending ? await this.native.endObservation(observation.id).catch(() => null) : null;
-      focus = { ...(observed || {}), observationAvailable: Boolean(observed?.coverage?.applicationActivation), observedChanges: observed?.transitions?.length ?? null, changed: observed ? (observed.transitions ?? []).some(event => event.kind === 'activation' || event.kind === 'focused_window') : null, attribution: 'unknown', isolationGuaranteed: false };
+      const observed = observation && !nativeEditPending ? await this.native.endObservation(observation.id).catch(error => { observationError = error.message || String(error); return null; }) : null;
+      focus = { ...(observed || {}), observationAvailable: Boolean(observed?.coverage?.applicationActivation), observationError, observedChanges: observed?.transitions?.length ?? null, changed: observed ? (observed.transitions ?? []).some(event => event.kind === 'activation' || event.kind === 'focused_window') : null, attribution: 'unknown', isolationGuaranteed: false };
       if (failure) failure.details.focus = focus;
     }
     return { result, args, dispatched, outcome, focus };

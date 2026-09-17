@@ -77,12 +77,12 @@ export function appMatches(app: AppMetadata, target: string): boolean {
 		.some((value) => value.toLowerCase() === expected || value.toLowerCase().includes(expected));
 }
 
-export function focusSummaryText(focus: FocusSnapshot, targetApp?: string): string {
+export function focusSummaryText(focus: FocusSnapshot & { observationError?: string | null }, targetApp?: string): string {
 	const before = focus.before?.map((app) => app.name).join(", ") || "<unknown>";
 	const after = focus.after?.map((app) => app.name).join(", ") || "<unknown>";
-	const targetBecameFrontmost = targetApp ? Boolean(focus.after?.some((app) => appMatches(app, targetApp)) && !focus.before?.some((app) => appMatches(app, targetApp))) : null;
-	const targetFrontmostAfter = targetApp ? Boolean(focus.after?.some((app) => appMatches(app, targetApp))) : null;
+	const targetBecameFrontmost = targetApp && focus.before && focus.after ? Boolean(focus.after?.some((app) => appMatches(app, targetApp)) && !focus.before?.some((app) => appMatches(app, targetApp))) : null;
+	const targetFrontmostAfter = targetApp && focus.after ? Boolean(focus.after?.some((app) => appMatches(app, targetApp))) : null;
 	const observation = focus.observationAvailable === undefined ? "" : `; eventObservation=${focus.observationAvailable ? "available" : "unavailable"}; observedEvents=${focus.observedChanges ?? "unknown"}; human/agent attribution=unknown`;
-	return `Focus summary: before=${before}; after=${after}; frontmostChanged=${focus.changed ?? "unknown"}${targetApp ? `; targetAppFrontmostAfter=${targetFrontmostAfter}; targetAppBecameFrontmost=${targetBecameFrontmost}` : ""}${observation}`;
+	return `Focus summary: before=${before}; after=${after}; frontmostChanged=${focus.changed ?? "unknown"}${targetApp ? `; targetAppFrontmostAfter=${targetFrontmostAfter ?? "unknown"}; targetAppBecameFrontmost=${targetBecameFrontmost ?? "unknown"}` : ""}${observation}${focus.observationError ? `; observationError=${JSON.stringify(focus.observationError)}` : ""}`;
 }
 

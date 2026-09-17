@@ -118,7 +118,7 @@ The demo checks:
 6. Native activation/window observations and endpoint snapshots report focus changes and capture gaps. These are observations, not input attribution or a universal non-interruption guarantee.
 7. The standard MCP wrapper validates mutation/safety-note/pointer guards and app-approval elicitation behavior when upstream emits a prompt.
 
-Native observation/text features lazily compile an async helper using installed `xcrun swiftc`; AX access needs Accessibility permission. Missing capture must be reported as unknown. Do not install tools or alter permissions implicitly. A timed-out action may still complete upstream; never replay it automatically. Keep screenshots/transcripts local when they contain private window content.
+Native observation/text features lazily compile an async helper using installed `xcrun swiftc`; AX access needs Accessibility permission. Doctor checks both requirements under its current launcher. Missing capture remains unknown, with the actual compiler, permission, or runtime error reported. Do not install tools or alter permissions implicitly. A timed-out action may still complete upstream; never replay it automatically. Keep screenshots/transcripts local when they contain private window content.
 
 ## Config generator
 

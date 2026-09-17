@@ -193,6 +193,7 @@ export type DetailMode = "compact" | "full" | "minimal";
 
 export type ElementInfo = {
 	index: string;
+	url?: string;
 	id?: string;
 	description?: string;
 	role: string;

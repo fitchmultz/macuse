@@ -67,6 +67,19 @@ test('helper parser preserves numeric continuation, exact values, and rejects du
   assert.deepEqual(parseElementInfo('App=test\n1 '), []);
 });
 
+test('native search input and empty clear verify without treating the query as a selector name', async () => {
+  const empty = 'App=/Test.app (bundleID test.app, pid 4242)\nWindow: "Activity Monitor", App: Test.\n0 standard window Activity Monitor\n57 search text field (settable)\n58 button search';
+  const filled = empty.replace('57 search text field (settable)\n58 button search', '30 search text field (settable) query\n31 button search\n32 button cancel');
+  const replies = [empty, 'Value set', filled, filled, 'Pressed clear', empty];
+  const calls = [];
+  const session = new BridgeComputerUseSession(async (tool, args) => { calls.push({ tool, args }); return result(replies.shift()); }, { native: noNative() });
+  await session.run('set_value', { app: 'Test', role: 'search text field', name: 'search text field', value: 'query', requireStateChange: true });
+  const cleared = await session.run('set_value', { app: 'Test', role: 'search text field', name: 'search text field', value: '', requireStateChange: true });
+  assert.equal(cleared.outcome, 'verified');
+  assert.equal(calls[4].tool, 'perform_secondary_action');
+  assert.equal(calls[4].args.element_index, '32');
+});
+
 test('native isolation merges disables without replacing CODEX_HOME', () => {
   const config = isolatedThreadConfig({ config: { mcp_servers: { inherited: {} }, plugins: { other: {} } } }, { 'computer-use': { enabled: true } });
   assert.equal(config.features.apps, false);
@@ -105,6 +118,17 @@ test('path read headers and bundle action headers retain the same app identity',
   assert.equal(replies.length, 0);
 });
 
+test('browser URL guards match the full address for a scheme-less window URL', async () => {
+  const text = 'App=/Browser.app (bundleID browser.app, pid 4242)\nWindow: "Review", App: Browser.\n0 standard window URL: example.com/review/7, Secondary Actions: Raise, Review - Browser\n13 text field (settable) Address and search bar, Value: https://example.com/review/7, Placeholder: Search\n48 HTML content URL: example.com/review/7, Review';
+  for (const [display, full] of [['example.com/review/7', 'https://example.com/review/7'], ['localhost:3000/review/7', 'http://localhost:3000/review/7'], ['example.com:8443/review/7', 'https://example.com:8443/review/7']]) {
+    const portState = text.replaceAll('https://example.com/review/7', full).replaceAll('example.com/review/7', display);
+    const calls = [];
+    const session = new BridgeComputerUseSession(async tool => { calls.push(tool); return result(portState); }, { native: noNative() });
+    await session.run('press_key', { app: 'Browser', key: 'Escape', expectedUrl: full });
+    assert.deepEqual(calls, ['get_app_state', 'press_key']);
+  }
+});
+
 test('set_value verifies only the resolved field, not an unrelated matching value', async () => {
   let calls = 0;
   const session = new BridgeComputerUseSession(async () => result(++calls === 1 ? tree() : tree('old', 'A.txt', '5 text field ID: unrelated, Value: desired')), { native: noNative() });
@@ -132,6 +156,28 @@ test('Unicode uses native selection insertion; attempted/unverified edits never 
     else await assert.rejects(promise, error => error.details.dispatched === true);
     assert.ok(calls.every(tool => tool === 'get_app_state'));
     assert.equal(calls.length, status === 'applied' ? 2 : 1);
+  }
+});
+
+test('native typing uses the full window title and still rejects different documents', async () => {
+  const title = 'A very long document title, with punctuation - Browser';
+  for (const row of [`0 standard window ${title}`, `0 standard window URL: example.com/page, Secondary Actions: Raise, ${title}`]) {
+    const text = `App=/Test.app (bundleID test.app, pid 4242)\nWindow: "A very long…Browser", App: Test.\n${row}\n1 text field (settable) ID: editor, Value: old`;
+    for (const mismatch of [null, 'title', 'document']) {
+      if (mismatch === 'document' && !row.includes('URL:')) continue;
+      const calls = [], edits = [];
+      const window = { token: 'w', title: mismatch === 'title' ? 'Different document' : title, document: mismatch === 'document' ? 'https://other.example/page' : null };
+      const native = { ...noNative(), inspectApp: async () => ({ pid: 4242, focusedWindow: window, focusedElement: { token: 'e', selectedTextSettable: true } }), replaceSelectedText: async args => { edits.push(args); return { status: 'applied', mutationAttempted: true }; } };
+      const session = new BridgeComputerUseSession(async tool => { calls.push(tool); return result(text); }, { native });
+      const pending = session.run('type_text', { app: 'Test', text: 'ASCII typing' });
+      if (mismatch) await assert.rejects(pending, error => !error.details.dispatched && /no longer matches/.test(error.message));
+      else {
+        assert.equal((await pending).outcome, 'verified');
+        assert.deepEqual(edits[0].expected, { windowToken: 'w', windowTitle: title, document: null, elementToken: 'e' });
+      }
+      assert.equal(edits.length, mismatch ? 0 : 1);
+      assert.ok(calls.every(tool => tool === 'get_app_state'));
+    }
   }
 });
 

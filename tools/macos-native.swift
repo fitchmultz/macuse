@@ -25,7 +25,8 @@ func token(_ element: AXUIElement) -> String {
     identities.append((element, id))
     return id
 }
-func windowInfo(_ window: AXUIElement) -> [String: Any] {
+func windowInfo(_ window: AXUIElement, details: Bool = true) -> [String: Any] {
+    if !details { return ["token": token(window), "title": null, "document": null] }
     return ["token": token(window), "title": readAX(window, kAXTitleAttribute) as? String ?? null as Any,
             "document": readAX(window, kAXDocumentAttribute) as? String ?? null as Any]
 }
@@ -33,10 +34,10 @@ func appInfo(_ app: NSRunningApplication) -> [String: Any] {
     return ["pid": app.processIdentifier, "name": app.localizedName ?? "<unknown>",
             "bundleId": app.bundleIdentifier ?? null as Any, "path": app.bundleURL?.path ?? null as Any]
 }
-func snapshot() -> [String: Any] {
+func snapshot(detailsFor targets: Set<pid_t>? = nil) -> [String: Any] {
     guard let app = NSWorkspace.shared.frontmostApplication else { return ["frontmost": null, "focusedWindow": null] }
     let window = AXIsProcessTrusted() ? elementAX(appAX(app.processIdentifier), kAXFocusedWindowAttribute) : nil
-    return ["frontmost": appInfo(app), "focusedWindow": window.map(windowInfo) ?? null as Any]
+    return ["frontmost": appInfo(app), "focusedWindow": window.map { windowInfo($0, details: targets?.contains(app.processIdentifier) ?? true) } ?? null as Any]
 }
 func focused(_ pid: pid_t) -> (AXUIElement, AXUIElement)? {
     let app = appAX(pid)
@@ -53,7 +54,7 @@ func inspect(_ pid: pid_t) -> [String: Any] {
     var result: [String: Any] = ["pid": pid, "accessibilityTrusted": AXIsProcessTrusted(),
         "app": NSRunningApplication(processIdentifier: pid).map(appInfo) ?? null as Any,
         "windowsCount": windows?.count ?? null as Any, "windowsError": error.rawValue,
-        "windows": windows?.map(windowInfo) ?? null as Any, "focusedWindow": null, "focusedElement": null]
+        "windows": windows?.map { windowInfo($0) } ?? null as Any, "focusedWindow": null, "focusedElement": null]
     if let (window, element) = focused(pid) {
         var settable = DarwinBoolean(false)
         let error = AXUIElementIsAttributeSettable(element, kAXSelectedTextAttribute as CFString, &settable)
@@ -121,6 +122,7 @@ func replaceText(_ request: [String: Any], _ pid: pid_t) -> [String: Any] {
 
 struct Observation {
     let before: [String: Any]
+    let targets: Set<pid_t>
     var transitions: [[String: Any]] = []
     var windows: [String: Int32] = [:]
     var truncated = false
@@ -130,7 +132,11 @@ var observers: [pid_t: AXObserver] = [:]
 var windowStatus: [pid_t: Int32] = [:]
 func record(_ event: [String: Any]) {
     for id in Array(observations.keys) {
-        if observations[id]!.transitions.count < 1000 { observations[id]!.transitions.append(event) }
+        var visible = event
+        if let pid = event["pid"] as? pid_t, !observations[id]!.targets.contains(pid), let window = event["window"] as? [String: Any] {
+            visible["window"] = ["token": window["token"] ?? null, "title": null, "document": null]
+        }
+        if observations[id]!.transitions.count < 1000 { observations[id]!.transitions.append(visible) }
         else { observations[id]!.truncated = true }
     }
 }
@@ -141,8 +147,9 @@ func watch(_ pid: pid_t) {
             var pid: pid_t = 0
             AXUIElementGetPid(element, &pid)
             let window = elementAX(appAX(pid), kAXFocusedWindowAttribute)
+            let target = observations.values.contains { $0.targets.contains(pid) }
             record(["kind": "focused_window", "pid": pid, "at": Date().timeIntervalSince1970 * 1000,
-                    "window": window.map(windowInfo) ?? null as Any])
+                    "window": window.map { windowInfo($0, details: target) } ?? null as Any])
         }, &observer)
         if created == .success, let observer = observer {
             let error = AXObserverAddNotification(observer, appAX(pid), kAXFocusedWindowChangedNotification as CFString, nil)
@@ -165,14 +172,15 @@ func handle(_ request: [String: Any]) -> [String: Any] {
     case "snapshot": return snapshot()
     case "beginObservation":
         let id = UUID().uuidString
-        observations[id] = Observation(before: snapshot())
+        let targets = Set((request["pids"] as? [pid_t] ?? []).filter { $0 > 0 })
+        observations[id] = Observation(before: snapshot(detailsFor: targets), targets: targets)
         if let app = NSWorkspace.shared.frontmostApplication { watch(app.processIdentifier) }
-        for pid in request["pids"] as? [Int32] ?? [] where pid > 0 { watch(pid) }
+        for pid in targets { watch(pid) }
         return ["id": id, "before": observations[id]!.before]
     case "endObservation":
         guard let id = request["observationId"] as? String, let observation = observations.removeValue(forKey: id) else { return ["error": "Unknown observation"] }
-        let result: [String: Any] = ["before": observation.before, "after": snapshot(), "transitions": observation.transitions,
-            "coverage": ["applicationActivation": true, "focusedWindow": observation.windows, "truncated": observation.truncated,
+        let result: [String: Any] = ["before": observation.before, "after": snapshot(detailsFor: observation.targets), "transitions": observation.transitions,
+            "coverage": ["applicationActivation": true, "windowDetails": "targetAppsOnly", "focusedWindow": observation.windows, "truncated": observation.truncated,
                          "inputAttribution": false]]
         if observations.isEmpty {
             for observer in observers.values { CFRunLoopRemoveSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(observer), .defaultMode) }

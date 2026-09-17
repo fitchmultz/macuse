@@ -18,7 +18,16 @@ test("native observer multiplexes requests and restarts cleanly", { skip: proces
 			assert.deepEqual(result.before, before);
 			assert.equal(result.coverage.applicationActivation, true);
 			assert.equal(result.coverage.inputAttribution, false);
+			assert.equal(result.coverage.windowDetails, "targetAppsOnly");
+			for (const state of [result.before, result.after]) if (state.focusedWindow) {
+				assert.equal(state.focusedWindow.title, null);
+				assert.equal(state.focusedWindow.document, null);
+			}
 			assert.ok(Array.isArray(result.transitions));
+			for (const event of result.transitions) if (event.window) {
+				assert.equal(event.window.title, null);
+				assert.equal(event.window.document, null);
+			}
 		}
 		await assert.rejects(native.endObservation(observations[0].id), /Unknown observation/);
 		await native.stop();

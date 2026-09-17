@@ -10,6 +10,7 @@ const {
 } = await jiti.import("../../extensions/codex-computer-use-modules/elements-state.ts");
 const { filterToolResult } = await jiti.import("../../extensions/codex-computer-use-modules/content.ts");
 const { parseAppListContent } = await jiti.import("../../extensions/codex-computer-use-modules/apps.ts");
+const { waitConditionMet } = await jiti.import("../../extensions/codex-computer-use-modules/sequence.ts");
 
 const content = (text) => [{ type: "text", text }];
 const state = (tree) => `Computer Use state (CUA App Version: 1001067)\n<app_state>\nApp=/System/Applications/TextEdit.app/ (bundleID com.apple.TextEdit, pid 123)\nWindow: "fixture.txt", App: TextEdit.\n${tree}\n</app_state>`;
@@ -59,6 +60,24 @@ test("retains actual multiword roles instead of treating role suffixes as names"
   const scalar = parseElementInfo("1 scroll bar (settable, float) 0.5\n2 slider (settable, int) 3\n3 checkbox (settable, bool) true");
   assert.deepEqual(scalar.map((element) => element.value), ["0.5", "3", "true"]);
   assert.equal(stateSummary(content(state("2 text https://example.com/body-only"))).url, null);
+});
+
+test("browser document URLs use scoped metadata and matching full address values", () => {
+  // Sanitized from a live Brave state: window URLs omit https://, address fields retain it.
+  const text = state('0 standard window URL: example.com/review/7, Secondary Actions: Raise, Review - Brave\n1 container URL: example.com/review/7, Review - Brave\n13 text field (settable) Address and search bar, Value: https://example.com/review/7, Placeholder: Search Brave or type a URL\n48 HTML content URL: example.com/review/7, Review\n49 text https://unrelated.invalid/body-link');
+  assert.equal(stateSummary(content(text)).url, 'https://example.com/review/7');
+  assert.ok(waitConditionMet('waitForURL', { app: 'Browser', url: 'https://example.com/review/7' }, filterToolResult({ content: content(text) }), new Map()));
+  assert.equal(waitConditionMet('waitForURL', { app: 'Browser', url: 'https://unrelated.invalid/body-link' }, filterToolResult({ content: content(text) }), new Map()), null);
+  for (const [display, full] of [['localhost:3000/review/7', 'http://localhost:3000/review/7'], ['example.com:8443/review/7', 'https://example.com:8443/review/7']]) {
+    const portState = text.replaceAll('https://example.com/review/7', full).replaceAll('example.com/review/7', display);
+    assert.equal(stateSummary(content(portState)).url, full);
+    assert.ok(waitConditionMet('waitForURL', { app: 'Browser', url: full }, filterToolResult({ content: content(portState) }), new Map()));
+  }
+  assert.equal(stateSummary(content(state('0 standard window URL: about:blank'))).url, 'about:blank');
+  assert.equal(parseElementInfo(text).find(e => e.index === '48').role, 'html content');
+  const draft = text.replace('Value: https://example.com/review/7', 'Value: https://different.invalid/typed-but-not-open');
+  assert.equal(stateSummary(content(draft)).url, 'example.com/review/7', 'draft address input cannot replace window identity');
+  assert.equal(stateSummary(content(state('0 standard window New Tab\n1 web area URL: brave://newtab/\n2 text https://unrelated.invalid/body-link'))).url, 'brave://newtab/');
 });
 
 test("duplicate IDs reject ambiguity and a successful empty refresh invalidates targets", () => {
@@ -118,6 +137,16 @@ test("inline string values and long selector names stay complete internally but 
     assert.ok(shown.includes('element_index: "3", expectedRole: "button"'));
     assert.ok(!shown.includes(`elementDescription: "LABEL_START`), "never offer a truncated selector");
   }
+});
+
+test("native search values remain values, including the empty omitted string", () => {
+  // Live Activity Monitor emits `(settable) query`, or just `(settable)` for an empty string.
+  for (const value of ['', 'MACUSE_NO_PROCESS_MATCH_7271', '  spaced query ']) {
+    const [field] = parseElementInfo(`57 search text field (settable)${value ? ` ${value}` : ''}`);
+    assert.equal(field.value, value);
+    assert.equal(field.name, 'search');
+  }
+  assert.equal(parseElementInfo('1 text field (settable) ID: unknown')[0].value, undefined, 'do not turn every missing value into an empty string');
 });
 
 test("parses live last-used= app flags", () => {

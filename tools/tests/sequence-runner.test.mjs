@@ -85,6 +85,20 @@ test('small presentation budgets keep late selectors and exact multiline field v
   assert.ok(result.content[0].text.length < 1100);
 });
 
+test('native search input and clear verify across changing indexes and omitted empty values', async () => {
+  const empty = 'App=/Test.app (bundleID test.app, pid 4242)\nWindow: "Activity Monitor", App: Test.\n0 standard window Activity Monitor\n57 search text field (settable)\n58 button search';
+  const filled = empty.replace('57 search text field (settable)\n58 button search', '30 search text field (settable) query\n31 button search\n32 button cancel');
+  const f = fixture([state(empty), wrap('Value set'), state(filled), state(filled), wrap('Pressed clear'), state(empty)]);
+  const result = await f.run([
+    { tool: 'set_value', arguments: { role: 'search', name: 'search', value: 'query' }, requireStateChange: true },
+    { tool: 'set_value', arguments: { role: 'search', name: 'search', value: '' }, requireStateChange: true },
+  ]);
+  assert.equal(result.details.computerUse.failed, null);
+  assert.equal(result.details.computerUse.steps[1].elements.find(e => e.role === 'search').value, '');
+  assert.equal(f.calls[4].tool, 'perform_secondary_action');
+  assert.equal(f.calls[4].args.element_index, '32');
+});
+
 test('unrelated clock text does not prove that a targeted no-op button worked', async () => {
   const f = fixture([state(tree('old', 'A.txt', 'clock 1')), wrap('Pressed'), state(tree('old', 'A.txt', 'clock 2')), state(tree('old', 'A.txt', 'clock 3'))]);
   const result = await f.run([{ tool: 'perform_secondary_action', arguments: { elementDescription: 'Toggle', action: 'Press' }, requireStateChange: true }]);
@@ -167,6 +181,26 @@ test('Unicode uses native selection replacement and is never replayed through up
   assert.deepEqual(f.calls.map(c => c.tool), ['get_app_state', 'get_app_state']);
 });
 
+test('native typing uses the full window title and still rejects different documents', async () => {
+  const title = 'A very long document title, with punctuation - Browser';
+  for (const row of [`0 standard window ${title}`, `0 standard window URL: example.com/page, Secondary Actions: Raise, ${title}`]) {
+    const text = `App=/Test.app (bundleID test.app, pid 4242)\nWindow: "A very long…Browser", App: Test.\n${row}\n1 text field (settable) ID: editor, Value: old`;
+    for (const mismatch of [null, 'title', 'document']) {
+      const window = { token: 'w', title: mismatch === 'title' ? 'Different document' : title, document: mismatch === 'document' ? 'https://other.example/page' : null };
+      if (mismatch === 'document' && !row.includes('URL:')) continue;
+      mock.method(macosNative, 'inspectApp', async () => ({ pid: 4242, focusedWindow: window, focusedElement: { token: 'e', selectedTextSettable: true } }));
+      const inserted = mock.method(macosNative, 'replaceSelectedText', async () => ({ status: 'applied', mutationAttempted: true }));
+      const f = fixture([state(text), state(text)]);
+      const result = await f.run([{ tool: 'type_text', arguments: { text: 'ASCII typing' } }]);
+      assert.equal(Boolean(result.details.computerUse.failed), Boolean(mismatch));
+      assert.equal(inserted.mock.callCount(), mismatch ? 0 : 1);
+      if (mismatch) assert.equal(result.details.computerUse.failed.dispatched, false);
+      else assert.deepEqual(inserted.mock.calls[0].arguments[0].expected, { windowToken: 'w', windowTitle: title, document: null, elementToken: 'e' });
+      assert.ok(f.calls.every(call => call.tool === 'get_app_state'));
+    }
+  }
+});
+
 test('native edit exceptions wait for helper exit before returning an unknown outcome', async () => {
   const stopped = Promise.withResolvers();
   const stopping = Promise.withResolvers();
@@ -182,6 +216,7 @@ test('native edit exceptions wait for helper exit before returning an unknown ou
   const result = await pending;
   assert.equal(result.details.computerUse.steps[0].outcome, 'unknown');
   assert.equal(result.details.computerUse.failed.dispatched, true);
+  assert.equal(result.details.computerUse.focus.observationAvailable, false, 'stopped helper cannot finish its old observation');
   assert.equal(f.calls.length, 1);
 });
 

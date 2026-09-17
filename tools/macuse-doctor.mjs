@@ -1,6 +1,7 @@
 #!/usr/bin/env node
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, realpathSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import {
   DEFAULT_CHATGPT_RESOURCES,
   DEFAULT_CODEX_BIN,
@@ -78,6 +79,32 @@ function commandCheck(name, command, args, opts = {}) {
       details: opts.keepOutput ? { stdout: result.stdout.slice(0, 4000), stderr: result.stderr.slice(0, 4000) } : null,
     },
   };
+}
+
+// Read-only requirements probe: no permission request, activation, app-server, or settings changes.
+export function nativeRequirementChecks() {
+  if (process.platform !== 'darwin') return [{ status: 'fail', name: 'Native Accessibility helper', summary: 'Native Accessibility requires macOS.' }];
+  const compiler = commandCheck('Native helper Swift compiler', '/usr/bin/xcrun', ['--find', 'swiftc'], { timeoutMs: 10_000 });
+  const checks = [{ ...compiler.check, summary: compiler.result.ok ? `swiftc: ${compiler.result.stdout.trim()}` : `Native helper compiler unavailable: ${compiler.check.summary}` }];
+  if (!compiler.result.ok) {
+    checks.push({ status: 'warn', name: 'Native helper Accessibility trust', summary: 'Unknown: compiler unavailable; native helper trust was not checked.' });
+    return checks;
+  }
+  const probe = `import { MacOSNative } from ${JSON.stringify(new URL('./macos-native.mjs', import.meta.url).href)};
+const native = new MacOSNative();
+try { const state = await native.inspectApp(process.pid); console.log(JSON.stringify({ accessibilityTrusted: state.accessibilityTrusted })); }
+finally { await native.stop(); }`;
+  const trust = commandCheck('Native helper Accessibility trust', process.execPath, ['--input-type=module', '-e', probe], { timeoutMs: 60_000 });
+  if (!trust.result.ok) checks.push({ ...trust.check, summary: `Native helper unavailable; Accessibility trust unknown: ${trust.check.summary}` });
+  else {
+    let trusted;
+    try { trusted = parseJsonOutput('native helper trust', trust.result.stdout).accessibilityTrusted; } catch { /* Unknown is not denial or trust. */ }
+    checks.push({ ...trust.check, status: trusted === true ? 'pass' : 'fail', summary: trusted === true
+      ? 'accessibilityTrusted=true for the native helper under this doctor host. Other Pi/CLI/MCP launchers may have different grants.'
+      : trusted === false ? 'accessibilityTrusted=false: native AX inspection and verified text insertion are unavailable under this host. No permission prompt was requested.'
+        : 'Native helper returned no Accessibility trust result; trust is unknown.' });
+  }
+  return checks;
 }
 
 function configuredToolNamesFromStatus(statusJson) {
@@ -165,6 +192,8 @@ async function main() {
   const nodeVersion = commandCheck('Node version', process.execPath, ['--version']);
   addCheck(checks, { ...nodeVersion.check, summary: nodeVersion.result.stdout.trim() || nodeVersion.check.summary });
 
+  for (const check of nativeRequirementChecks()) addCheck(checks, check);
+
   const codexVersion = commandCheck('Codex version', opts.codex, ['--version'], { warn: true });
   addCheck(checks, { ...codexVersion.check, summary: codexVersion.result.stdout.trim() || codexVersion.result.stderr.trim() || codexVersion.check.summary });
 
@@ -243,7 +272,7 @@ async function main() {
   if (!report.ok) process.exitCode = 1;
 }
 
-main().catch((error) => {
+if (process.argv[1] && existsSync(process.argv[1]) && pathToFileURL(realpathSync(process.argv[1])).href === import.meta.url) main().catch((error) => {
   process.stderr.write(`FAIL ${error.message || String(error)}\n`);
   process.exitCode = 1;
 });

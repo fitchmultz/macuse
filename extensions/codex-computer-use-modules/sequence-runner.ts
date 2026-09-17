@@ -11,7 +11,7 @@ import { filterToolResult, toolResultText } from "./content";
 import { appendComputerUseDiagnostic, appendImageWarning, failureResult } from "./diagnostics";
 import { focusSnapshot } from "./apps";
 import { beginFocusObservation, endFocusObservation, macosNative } from "./macos-focus";
-import { nativeWindowClosed } from "../../tools/macos-native.mjs";
+import { nativeWindowClosed, nativeTextUnavailableReason } from "../../tools/macos-native.mjs";
 import {
 	appendText, compactContent, compareState, describeTargetResolution, enrichActionError, hasMutatingSteps,
 	hasStableSelector, hasStateSummaryContent, machineElements, normalizeDetail, normalizeToolArguments,
@@ -117,7 +117,8 @@ export async function executeSequence(
 	const targetScope = input.targetScope === "main" ? "main" : "all";
 	const screenshotStep = input.screenshotStep === "final" ? "final" : "first";
 	const knownPids = [...new Set(steps.map((step) => typeof step.arguments.app === "string" ? appPid(sessionStateCache.get(appKey(step.arguments.app))) : undefined).filter((pid): pid is number => pid !== undefined))];
-	const observation = await beginFocusObservation(knownPids).catch(() => null);
+	let observationError: string | null = null;
+	let observation = await beginFocusObservation(knownPids).catch((error) => { observationError = errorMessage(error); return null; });
 	const results: SequencedResult[] = [];
 	let failed: SequenceFailure | null = null;
 	let implicitRefreshes = 0;
@@ -196,10 +197,14 @@ export async function executeSequence(
 				row.targetResolution = describeTargetResolution(step.arguments, args, sessionElementCache);
 				const image = screenshotStep === "final" ? index === steps.length - 1 : index === 0;
 				let nativeTextVerified = false;
+				let nativeTextReason = "Native text inspection unavailable: app state did not expose a target PID.";
+				let closeInspectionError: string | null = null;
 				let closeVerified = false;
 				if (step.tool === "type_text" && before && appPid(before)) {
-					const native = await macosNative.inspectApp(appPid(before)!).catch(() => null);
-					if (native?.focusedWindow && native.focusedElement?.selectedTextSettable) {
+					let inspectionError: string | null = null;
+					const native = await macosNative.inspectApp(appPid(before)!).catch((error) => { inspectionError = errorMessage(error); return null; });
+					nativeTextReason = inspectionError ? `Native text inspection unavailable: ${inspectionError}` : nativeTextUnavailableReason(native);
+					if (native?.accessibilityTrusted !== false && native?.focusedWindow && native.focusedElement?.selectedTextSettable) {
 						const window = native.focusedWindow;
 						const matches = window.document && before.url ? window.document === before.url : window.title === before.title;
 						if (!matches) throw new Error("Native text target no longer matches the inspected document. No mutation performed; inspect the intended window again.");
@@ -211,9 +216,12 @@ export async function executeSequence(
 							insertion = await macosNative.replaceSelectedText({ pid: native.pid, expected: { windowToken: window.token, windowTitle: window.title, document: window.document, elementToken: native.focusedElement.token }, text: String(args.text) });
 						} catch (error) {
 							await macosNative.stop();
+							observation = null;
+							observationError = `Native helper stopped after edit failure: ${errorMessage(error)}`;
 							throw error;
 						}
 						row.dispatched = insertion.mutationAttempted;
+						if (insertion.status === "unsupported") nativeTextReason = `Native text insertion unsupported: ${insertion.reason}`;
 						if (insertion.status === "guard_failed" || insertion.status === "unverified") throw new Error(insertion.reason);
 						if (insertion.status === "applied") {
 							nativeTextVerified = true;
@@ -223,7 +231,7 @@ export async function executeSequence(
 					}
 				}
 				if (!nativeTextVerified) {
-					if (step.tool === "type_text" && /[^\x00-\x7f]/.test(String(args.text))) throw new Error("This focused control does not support verified native text insertion. No text was dispatched: upstream keyboard typing corrupts Unicode here. Use set_value on a verified settable field instead.");
+					if (step.tool === "type_text" && /[^\x00-\x7f]/.test(String(args.text))) throw new Error(`${nativeTextReason} No text was dispatched: upstream keyboard typing is not a safe Unicode fallback. Use set_value on a verified settable field instead.`);
 					let dispatchTool = step.tool;
 					let dispatchArgs = args;
 					if (step.tool === "set_value" && args.value === "") {
@@ -247,15 +255,17 @@ export async function executeSequence(
 				}
 				const closeAction = isWindowClose(step.tool, args, before);
 				if (closeAction && (!row.result.isError || /noWindowsAvailable/.test(toolResultText(row.result))) && appPid(before)) {
-					const native = await macosNative.inspectApp(appPid(before)!).catch(() => null);
-					if (nativeWindowClosed(before!, native)) {
+					const native = await macosNative.inspectApp(appPid(before)!).catch((error) => { closeInspectionError = errorMessage(error); return null; });
+					if (native?.accessibilityTrusted === false) closeInspectionError = "Native Accessibility access is unavailable (accessibilityTrusted=false).";
+					if (closeInspectionError) row.targetWarnings.push(`Native close inspection unavailable: ${closeInspectionError}`);
+					if (native?.accessibilityTrusted !== false && nativeWindowClosed(before!, native)) {
 						closeVerified = true;
 						if (native?.windowsCount === 0) row.result = { ...row.result, isError: false, content: [{ type: "text", text: `App=${before!.app}\nNo windows remain. Native Accessibility verified that the last window closed; do not replay the close.` }] };
 						else if (row.result.isError) row.result = { ...row.result, isError: false, content: [{ type: "text", text: "Native Accessibility verified that the target document is no longer among the app's windows. Other windows remain; do not replay the close." }] };
 						row.outcome = "verified";
 					}
 				}
-				if (closeAction && step.requireStateChange && !closeVerified) throw new Error("Close was dispatched, but native inspection did not verify the target window/document closed. No reopening readback was attempted; inspect current windows without replaying the close.");
+				if (closeAction && step.requireStateChange && !closeVerified) throw new Error(`Close was dispatched, but native inspection did not verify the target window/document closed.${closeInspectionError ? ` Native inspection unavailable: ${closeInspectionError}` : ""} No reopening readback was attempted; inspect current windows without replaying the close.`);
 				const assertions = step.expectText.length + step.expectAbsentText.length + step.expectVisibleText.length > 0;
 				const needsReadback = guiMutation && app && !closeAction && (step.tool === "set_value" || step.tool === "type_text" || step.requireStateChange || assertions || (image && (input.includeImage || input.saveImagePath)));
 				if (needsReadback) {
@@ -279,7 +289,7 @@ export async function executeSequence(
 					if (actionError) appendText(row.result, `The intended outcome was verified despite an upstream error: ${truncateString(actionError, 300)}`);
 				} else if (!row.result.isError && row.outcome !== "verified") row.outcome = "reported";
 			}
-			appendComputerUseDiagnostic(row.result, step.tool, args);
+			appendComputerUseDiagnostic(row.result, step.tool, args, row);
 			if (hasStateSummaryContent(row.result.content)) {
 				const after = stateSummary(row.result.content);
 				if (app) remember(app, row.result);
@@ -293,11 +303,16 @@ export async function executeSequence(
 			validateStepResult(row);
 			if (verifyAssertions) row.outcome = "verified";
 		} catch (error) {
-			if (dispatchPending && error instanceof ComputerUseError && isRecord(error.details) && error.details.dispatched === false) row.dispatched = false;
+			if (dispatchPending && error instanceof ComputerUseError && isRecord(error.details) && error.details.dispatched === false) {
+				row.dispatched = false;
+				row.outcome = "reported";
+			}
 			const message = errorMessage(error);
 			row.result.isError = true;
 			appendText(row.result, message);
-			row.nextActions.push(row.dispatched ? "The action was dispatched and may already have taken effect. Inspect current state; do not replay automatically." : "No action was dispatched. Inspect the target and retry only the failed step.");
+			const queueDiagnostic = !row.dispatched && /while waiting for the previous request; no new action was sent/i.test(message)
+				? appendComputerUseDiagnostic(row.result, step.tool, args, row) : null;
+			row.nextActions.push(queueDiagnostic ?? (row.dispatched ? "The action was dispatched and may already have taken effect. Inspect current state; do not replay automatically." : "No action was dispatched. Inspect the target and retry only the failed step."));
 			if (!step.allowError || signal?.aborted) failed = { index, stepNumber: index + 1, tool: step.tool, label: step.label, message, dispatched: row.dispatched };
 		}
 		row.durationMs = Date.now() - stepStarted;
@@ -307,8 +322,8 @@ export async function executeSequence(
 		results.push(row);
 		if (failed) break;
 	}
-	const observed = observation ? await endFocusObservation(observation.id).catch(() => null) : null;
-	const focus = { ...focusSnapshot(observed?.before ?? null, observed?.after ?? null), ...observed, observationAvailable: Boolean(observed?.coverage.applicationActivation), observedChanges: observed?.transitions.length };
+	const observed = observation ? await endFocusObservation(observation.id).catch((error) => { observationError = errorMessage(error); return null; }) : null;
+	const focus = { ...focusSnapshot(observed?.before ?? null, observed?.after ?? null), ...observed, observationAvailable: Boolean(observed?.coverage.applicationActivation), observationError, observedChanges: observed?.transitions.length };
 	if (observed?.transitions.some((event) => event.kind === "activation")) focus.changed = true;
 	const content = sequenceContent(results, Boolean(input.includeImage), failed, steps.length, detail, maxTextChars, focus, defaultApp);
 	const details = bridgeDetails({

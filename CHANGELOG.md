@@ -9,6 +9,7 @@
 - Make wait cancellation prompt, retain ownership of outstanding app-server calls after timeout, and isolate startup to the three configured Computer Use families.
 - Validate complete sequences before dispatch and restore the original Activity Monitor tab in live checks.
 - Match the current upstream Computer History schema by removing its unsupported menu-bar-icon argument.
+- Recognize browser display URLs and native search-field values, including empty fields; report native dependency failures accurately and omit unrelated window details from focus observations.
 
 ## 0.4.0 - 2026-08-17
 
