@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.1 - 2026-09-17
 
 - Remove cursor warping; observe application activation and focused-window events without claiming input isolation.
 - Guard document identity before mutation and verify edits against the resolved field, with native selected-text insertion for Unicode-capable controls.
