@@ -14,6 +14,8 @@ import {
 	type SequenceParams,
 	type TargetScope,
 	type TextContentBlock,
+	type StateSummary,
+	isRecord,
 	validateAuxiliarySafety,
 } from "./codex-computer-use-modules/core";
 import { filterToolResult } from "./codex-computer-use-modules/content";
@@ -36,7 +38,8 @@ import {
 import { appendComputerUseDiagnostic, appendImageWarning } from "./codex-computer-use-modules/diagnostics";
 import { AppServerClient } from "./codex-computer-use-modules/app-server-client";
 import { restartComputerUseRuntime } from "./codex-computer-use-modules/computer-use-recovery";
-import { captureFocusSnapshot, executeSequence } from "./codex-computer-use-modules/sequence-runner";
+import { executeSequence, rememberAppState } from "./codex-computer-use-modules/sequence-runner";
+import { beginFocusObservation, endFocusObservation, stopNativeObserver } from "./codex-computer-use-modules/macos-focus";
 
 const timeoutParam = Type.Optional(Type.Number({ minimum: 1_000, maximum: 300_000, description: "Tool timeout ms. Default 90000." }));
 const maxTextParam = Type.Optional(Type.Number({ minimum: 1_000, maximum: 200_000, description: "Max characters per text block. Default 20000." }));
@@ -77,6 +80,8 @@ const elementTargetParams = {
 	expectedValue: Type.Optional(Type.String({ description: "Stale guard, as expectedRole." })),
 };
 const directMutationParams = {
+	expectedTitle: Type.Optional(Type.String({ description: "Exact expected window title at immediate preflight; stops before mutation if it changed." })),
+	expectedUrl: Type.Optional(Type.String({ description: "Exact expected document/page URL at immediate preflight." })),
 	allowMutating: Type.Boolean({ description: "Must be true. Explicitly authorizes this guarded app mutation." }),
 	safetyNote: Type.String({ minLength: 20, description: "Target app, intended effect, and stop boundary." }),
 	approval: approvalParam,
@@ -114,7 +119,7 @@ const getAppStateParam = Type.Object({
 	saveImagePath: Type.Optional(Type.String()),
 	detail: detailParam,
 	targetScope: targetScopeParam,
-	trackFocus: Type.Optional(Type.Boolean({ description: "Capture native frontmost-app focus before and after this read." })),
+	trackFocus: Type.Optional(Type.Boolean({ description: "Observe native activation/window events during this read. Default true; false skips observation." })),
 	maxTextChars: maxTextParam,
 	toolTimeoutMs: timeoutParam,
 }, { additionalProperties: false });
@@ -193,13 +198,13 @@ const mutationToolSpecs = [
 	{
 		name: "click",
 		label: "Computer Use Click",
-		description: "Pointer click by stable target, element index, or screenshot coordinates. Requires allowPointer:true and restores mouse position. Prefer perform_secondary_action.",
+		description: "Pointer click by stable target, element index, or screenshot coordinates. Requires allowPointer:true. Uses upstream app-targeted input; never warps the user's cursor. Prefer perform_secondary_action.",
 		parameters: Type.Object({ app: appParam, ...elementTargetParams, x: Type.Optional(Type.Number()), y: Type.Optional(Type.Number()), mouse_button: Type.Optional(StringEnum(["left", "right", "middle"] as const)), click_count: Type.Optional(Type.Integer()), allowPointer: Type.Boolean(), ...directMutationParams }, { additionalProperties: false }),
 	},
 	{
 		name: "drag",
 		label: "Computer Use Drag",
-		description: "Pointer drag using screenshot coordinates. Requires allowPointer:true and restores mouse position.",
+		description: "Pointer drag using screenshot coordinates. Requires allowPointer:true; never warps the user's cursor afterward.",
 		parameters: Type.Object({ app: appParam, from_x: Type.Number(), from_y: Type.Number(), to_x: Type.Number(), to_y: Type.Number(), allowPointer: Type.Boolean(), ...directMutationParams }, { additionalProperties: false }),
 	},
 ] as const;
@@ -251,15 +256,15 @@ const auxiliaryToolSpecs = [
 		name: "computer_history_get_settings",
 		server: "computer-history",
 		label: "Computer History Settings",
-		description: "Read all Computer History observation and menu-bar settings. Read-only, but exposes privacy metadata; call immediately before update_settings.",
+		description: "Read all Computer History observation settings. Read-only, but exposes privacy metadata; call immediately before update_settings.",
 		parameters: Type.Object({ toolTimeoutMs: timeoutParam }, { additionalProperties: false }),
 	},
 	{
 		name: "computer_history_update_settings",
 		server: "computer-history",
 		label: "Computer History Update Settings",
-		description: "Replace all Computer History settings. Read current settings first and preserve every unchanged field, including showMenuBarIcon. Requires exact approval, allowPrivacyChange:true, and a safety note.",
-		parameters: Type.Object({ observation: observationParam, showMenuBarIcon: Type.Optional(Type.Boolean()), allowPrivacyChange: Type.Boolean(), safetyNote: Type.String({ minLength: 1 }), toolTimeoutMs: timeoutParam }, { additionalProperties: false }),
+		description: "Replace all Computer History settings. Read current settings first and preserve every unchanged observation field. Requires exact approval, allowPrivacyChange:true, and a safety note.",
+		parameters: Type.Object({ observation: observationParam, allowPrivacyChange: Type.Boolean(), safetyNote: Type.String({ minLength: 1 }), toolTimeoutMs: timeoutParam }, { additionalProperties: false }),
 	},
 ] as const;
 
@@ -278,6 +283,7 @@ type ToolSpec<TParams extends TSchema = TSchema> = {
 
 let client: AppServerClient | null = null;
 const sessionElementCache = new Map<string, ElementInfo[]>();
+const sessionStateCache = new Map<string, StateSummary>();
 
 function getClient(): AppServerClient {
 	if (!client) client = new AppServerClient();
@@ -289,7 +295,7 @@ async function executeListApps(input: ListAppsParams, signal: AbortSignal | unde
 	const toolTimeoutMs = asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
 	const maxTextChars = asInt(input.maxTextChars, DEFAULT_MAX_TEXT_CHARS);
 	const call = await getClient().callTool("list_apps", {}, { approval: "inherit", timeoutMs: toolTimeoutMs, signal });
-	const result = filterToolResult(call.result, { maxTextChars });
+	const result = filterToolResult(call.result);
 	const diagnostics = [appendComputerUseDiagnostic(result, "list_apps", {})].filter((item): item is string => Boolean(item));
 	const apps = result.isError ? [] : parseAppListContent(result.content, { runningOnly: Boolean(input.runningOnly), filter: input.filter });
 	return {
@@ -304,18 +310,24 @@ async function executeGetAppState(input: GetAppStateParams, signal: AbortSignal 
 	onUpdate?.({ content: [{ type: "text", text: `Calling Computer Use get_app_state for ${app} with approval=${approval}...` }], details: {} });
 	const toolTimeoutMs = asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS);
 	const maxTextChars = asInt(input.maxTextChars, DEFAULT_MAX_TEXT_CHARS);
-	const detail = normalizeDetail(input.detail, "full");
+	const detail = normalizeDetail(input.detail, "minimal");
 	const targetScope: TargetScope = input.targetScope === "main" ? "main" : "all";
-	const trackFocus = input.trackFocus === true;
-	const frontmostBefore = trackFocus ? await captureFocusSnapshot() : null;
-	const call = await getClient().callTool("get_app_state", { app }, { approval, timeoutMs: toolTimeoutMs, signal });
-	const frontmostAfter = trackFocus ? await captureFocusSnapshot() : null;
-	const result = filterToolResult(call.result, { includeImage: Boolean(input.includeImage), saveImagePath: input.saveImagePath, maxTextChars });
-	updateElementCache(sessionElementCache, app, result.content);
+	const trackFocus = input.trackFocus !== false;
+	const observation = trackFocus ? await beginFocusObservation().catch(() => null) : null;
+	let observed;
+	let call;
+	try { call = await getClient().callTool("get_app_state", { app }, { approval, timeoutMs: toolTimeoutMs, signal }); }
+	finally { observed = observation ? await endFocusObservation(observation.id).catch(() => null) : null; }
+	const result = filterToolResult(call.result, { includeImage: Boolean(input.includeImage), saveImagePath: input.saveImagePath });
+	if (!result.isError) {
+		updateElementCache(sessionElementCache, app, result.content);
+		rememberAppState(sessionStateCache, app, stateSummary(result.content));
+	}
 	const diagnostics = [appendComputerUseDiagnostic(result, "get_app_state", { app })].filter((item): item is string => Boolean(item));
 	if (detail === "full") appendElementStabilityNote(result);
 	appendImageWarning(result, { includeImage: Boolean(input.includeImage), saveImagePath: input.saveImagePath });
-	const focus = focusSnapshot(frontmostBefore, frontmostAfter);
+	const focus = { ...focusSnapshot(observed?.before ?? null, observed?.after ?? null), ...observed, observationAvailable: Boolean(observed?.coverage.applicationActivation), observedChanges: observed?.transitions.length };
+	if (observed?.transitions.some((event) => event.kind === "activation")) focus.changed = true;
 	const transformedContent = detail === "minimal" ? minimalContent(result.content, targetScope) : detail === "compact" ? compactContent(result.content, targetScope) : result.content;
 	const focusLine = trackFocus ? { type: "text" as const, text: focusSummaryText(focus, app) } : null;
 	return {
@@ -353,15 +365,15 @@ async function executeDirectMutation(tool: string, input: Record<string, JsonVal
 		targetScope,
 		maxTextChars,
 		toolTimeoutMs,
-	} as SequenceParams, signal, onUpdate, getClient, sessionElementCache, tool);
+	} as SequenceParams, signal, onUpdate, getClient, sessionElementCache, tool, sessionStateCache);
 }
 
 async function executeAuxiliaryTool(tool: string, server: "event-stream" | "computer-history", input: Record<string, JsonValue>, signal: AbortSignal | undefined) {
 	validateAuxiliarySafety(tool, input);
 	const call = await getClient().callTool(tool, input, { approval: "inherit", timeoutMs: asInt(input.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS), signal, server });
-	const result = filterToolResult(call.result, { maxTextChars: DEFAULT_MAX_TEXT_CHARS });
+	const result = filterToolResult(call.result);
 	return {
-		content: result.content as (TextContentBlock | ImageContentBlock)[],
+		content: truncateTextContent(result.content, DEFAULT_MAX_TEXT_CHARS) as (TextContentBlock | ImageContentBlock)[],
 		details: bridgeDetails({ tool, auxiliaryTool: tool, threadId: getClient().status().threadId, isError: result.isError, durationMs: call.durationMs, acceptedElicitations: call.acceptedElicitations, elicitationCount: call.elicitationCount, computerUseRecoveryEvents: getClient().status().computerUseRecoveryEvents }, getClient().status().stderrTail),
 	};
 }
@@ -391,8 +403,13 @@ function registerAuxiliaryTool(pi: ExtensionAPI, spec: ToolSpec & { server: "eve
 }
 
 export default function (pi: ExtensionAPI) {
+	pi.on("tool_result", (event) => {
+		const details = isRecord(event.details) && isRecord(event.details.computerUse) ? event.details.computerUse : null;
+		if (details?.persistentAppServer === true && (details.isError === true || details.failed)) return { isError: true };
+	});
 	pi.on("session_start", (event, ctx) => {
 		sessionElementCache.clear();
+		sessionStateCache.clear();
 		pi.setActiveTools(pi.getActiveTools().filter((name) => !lazyToolNameSet.has(name)));
 		const latestActivationMarker = ctx.sessionManager.getBranch().findLast((entry) => {
 			if (entry.type === "custom_message" && entry.customType === "macuse-tools-reset") return true;
@@ -406,6 +423,8 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.on("session_shutdown", async () => {
 		sessionElementCache.clear();
+		sessionStateCache.clear();
+		await stopNativeObserver();
 		if (client) await client.stop();
 		client = null;
 	});
@@ -427,6 +446,8 @@ export default function (pi: ExtensionAPI) {
 		description: "Stop the persistent Codex Computer Use app-server session",
 		handler: async (_args, ctx) => {
 			sessionElementCache.clear();
+			sessionStateCache.clear();
+			await stopNativeObserver();
 			if (client) await client.stop();
 			client = null;
 			if (ctx.hasUI) ctx.ui.notify("macuse Computer Use app-server stopped; it will restart lazily on the next tool call.", "info");
@@ -436,6 +457,8 @@ export default function (pi: ExtensionAPI) {
 		description: "Restart the persistent Codex Computer Use app-server session and Computer Use runtime helpers",
 		handler: async (_args, ctx) => {
 			sessionElementCache.clear();
+			sessionStateCache.clear();
+			await stopNativeObserver();
 			const recovery = restartComputerUseRuntime("/macuse-restart command");
 			await getClient().restart();
 			if (ctx.hasUI) ctx.ui.notify(`macuse Computer Use runtime restarted (${recovery.targets.length} helper signal event${recovery.targets.length === 1 ? "" : "s"}); app-server will restart on the next tool call.`, "info");
@@ -486,7 +509,7 @@ export default function (pi: ExtensionAPI) {
 		executionMode: "sequential",
 		async execute(_toolCallId, params, signal, onUpdate) {
 			const forwardUpdate = onUpdate ? (update: { content: TextContentBlock[]; details: Record<string, unknown> }) => onUpdate(update) : undefined;
-			return executeSequence(params, signal, forwardUpdate, getClient, sessionElementCache);
+			return executeSequence(params, signal, forwardUpdate, getClient, sessionElementCache, "macuse_sequence", sessionStateCache);
 		},
 	});
 	pi.registerTool({
@@ -523,6 +546,8 @@ export default function (pi: ExtensionAPI) {
 			onUpdate?.({ content: [{ type: "text", text: "Restarting macuse Computer Use runtime helpers..." }], details: {} });
 			const reason = typeof params.reason === "string" && params.reason.trim() ? params.reason.trim() : "macuse_restart tool";
 			sessionElementCache.clear();
+			sessionStateCache.clear();
+			await stopNativeObserver();
 			const recovery = await getClient().recoverComputerUseSession(reason, asInt(params.toolTimeoutMs, DEFAULT_TOOL_TIMEOUT_MS), signal);
 			return {
 				content: [{ type: "text" as const, text: `Computer Use runtime restarted. Helper signal events: ${recovery.targets.length}. App-server thread is ready for retry.` }],

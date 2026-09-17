@@ -24,7 +24,7 @@ export function parseAppListLine(line: string): AppMetadata {
 		.split(",")
 		.map((flag) => flag.trim())
 		.filter(Boolean);
-	const lastUsedFlag = flags.find((flag) => /^last[- ]used:/i.test(flag));
+	const lastUsedFlag = flags.find((flag) => /^last[- ]used[:=]/i.test(flag));
 	return {
 		name: parts[0] || line,
 		path: parts[1] || null,
@@ -32,7 +32,7 @@ export function parseAppListLine(line: string): AppMetadata {
 		flags,
 		running: flags.some((flag) => flag.toLowerCase() === "running"),
 		frontmost: flags.some((flag) => flag.toLowerCase() === "frontmost"),
-		lastUsed: lastUsedFlag?.replace(/^last[- ]used:\s*/i, "") ?? null,
+		lastUsed: lastUsedFlag?.replace(/^last[- ]used[:=]\s*/i, "") ?? null,
 		line,
 	};
 }
@@ -82,6 +82,7 @@ export function focusSummaryText(focus: FocusSnapshot, targetApp?: string): stri
 	const after = focus.after?.map((app) => app.name).join(", ") || "<unknown>";
 	const targetBecameFrontmost = targetApp ? Boolean(focus.after?.some((app) => appMatches(app, targetApp)) && !focus.before?.some((app) => appMatches(app, targetApp))) : null;
 	const targetFrontmostAfter = targetApp ? Boolean(focus.after?.some((app) => appMatches(app, targetApp))) : null;
-	return `Focus summary: before=${before}; after=${after}; frontmostChanged=${focus.changed ?? "unknown"}${targetApp ? `; targetAppFrontmostAfter=${targetFrontmostAfter}; targetAppBecameFrontmost=${targetBecameFrontmost}` : ""}`;
+	const observation = focus.observationAvailable === undefined ? "" : `; eventObservation=${focus.observationAvailable ? "available" : "unavailable"}; observedEvents=${focus.observedChanges ?? "unknown"}; human/agent attribution=unknown`;
+	return `Focus summary: before=${before}; after=${after}; frontmostChanged=${focus.changed ?? "unknown"}${targetApp ? `; targetAppFrontmostAfter=${targetFrontmostAfter}; targetAppBecameFrontmost=${targetBecameFrontmost}` : ""}${observation}`;
 }
 

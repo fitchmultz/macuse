@@ -4,7 +4,6 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
 	isRecord,
-	truncateString,
 	type ComputerUseToolResult,
 	type ContentBlock,
 	type FilteredToolResult,
@@ -62,7 +61,7 @@ export function imageDimensions(path: string): { width: number | null; height: n
 	};
 }
 
-export function filterToolResult(result: ComputerUseToolResult, opts: { includeImage?: boolean; saveImagePath?: string; maxTextChars: number }): FilteredToolResult {
+export function filterToolResult(result: ComputerUseToolResult, opts: { includeImage?: boolean; saveImagePath?: string } = {}): FilteredToolResult {
 	const content: ContentBlock[] = [];
 	let omittedImages = 0;
 	let savedImagePath: string | null = null;
@@ -73,12 +72,13 @@ export function filterToolResult(result: ComputerUseToolResult, opts: { includeI
 		? rawContent
 		: rawContent === undefined
 			? []
-			: [{ type: "text", text: `Malformed Computer Use content field: ${truncateString(JSON.stringify(rawContent) ?? String(rawContent), opts.maxTextChars)}` }];
+			: [{ type: "text", text: `Malformed Computer Use content field: ${JSON.stringify(rawContent) ?? String(rawContent)}` }];
 	for (const block of blocks) {
 		if (isTextBlock(block)) {
 			const sanitized = sanitizeRecoverableComputerUseText(block.text);
 			forcedError = forcedError || sanitized.forcedError;
-			content.push({ ...block, text: truncateString(sanitized.text, opts.maxTextChars) });
+			// Keep state complete for target resolution and assertions; entrypoints limit presentation.
+			content.push({ ...block, text: sanitized.text });
 		} else if (isImageBlock(block)) {
 			if (opts.saveImagePath && !savedImagePath) {
 				const outPath = path.resolve(opts.saveImagePath);

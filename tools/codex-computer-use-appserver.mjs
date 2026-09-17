@@ -8,14 +8,13 @@ import {
   contentText,
   appServerSessionRecoverySummary,
   filterToolResult,
-  getMousePosition,
+  BridgeComputerUseSession,
+  isolatedThreadConfig,
+  validateBridgeArguments,
   normalizeToolArguments,
-  resolveElementTarget as resolveElementTargetHelper,
-  restoreMousePosition,
   sanitizeRecoverableComputerUseText,
   toolResultText,
   truncateString,
-  updateElementCache,
   withReadOnlyComputerUseRecovery,
 } from './cu-helpers.mjs';
 
@@ -84,10 +83,10 @@ class ChildExitError extends CliError {
 function printHelp() {
   process.stdout.write(`Codex Computer Use app-server bridge ${VERSION}\n\nUsage:\n  node tools/codex-computer-use-appserver.mjs status [--full] [options]\n  node tools/codex-computer-use-appserver.mjs list-apps [options]\n  node tools/codex-computer-use-appserver.mjs get-state --app <app> [--approval inherit|accept-all|accept-once|deny] [options]\n  node tools/codex-computer-use-appserver.mjs call --server <server> --tool <tool> --arguments-json <json> [options]\n  node tools/codex-computer-use-appserver.mjs sequence --steps-json <json-array> [options]\n\nModes:\n  status\n      Start Codex app-server and print all three public MCP inventories:\n      computer-use (10), event-stream (3), and computer-history (5).\n      Pass --full to print every app-server MCP server for diagnostics.\n\n  list-apps\n      Call the read-only Computer Use list_apps tool through Codex app-server.\n      This is the safest positive service-backed regression probe.\n\n  get-state --app <app> [--approval inherit|accept-all|accept-once|deny]\n      Call the read-only get_app_state tool through Codex app-server.\n      Default approval=inherit auto-accepts Computer Use app-approval\n      elicitations under macuse's standing app-access policy.\n\n  call --server <server> --tool <tool> --arguments-json <json>\n      Call any of the 18 public tools. App mutation, recording starts/resumes,\n      and settings changes have separate guards. Status/get_settings calls may\n      expose activity, artifact, or privacy metadata.\n\n  sequence --steps-json <json-array>\n      Run calls across Computer Use, Record & Replay, and Computer History in one app-server thread. Each step\n      is {\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Activity Monitor\"}}.\n      Steps may include label, expectText, expectAbsentText, and allowError.\n      Element-targeted tools accept element_index as a string or number,\n      element as an alias, stable elementId / element_id values, or exact\n      elementDescription / element_description matches. press_key accepts\n      xdotool-style combos or key plus modifiers, e.g. key=\",\" with COMMAND\n      normalizes to super+comma. The bridge refreshes app state before every\n      Computer Use mutation, then resolves stable targets and coerces indexes.\n      Use this for get_app_state -> action -> get_app_state validation or ordered auxiliary status/control calls.\n\nOptions:\n  --codex <path>                 Codex CLI/app-server binary.\n                                 Default: ${DEFAULT_CODEX_BIN}\n                                 Env: CODEX_BIN\n  --cwd <path>                   Thread cwd. Default: current directory.\n  --app <name|bundle|path>       App for get-state.\n  --server <name>                computer-use (default), event-stream, or computer-history.
   --tool <name>                  Tool for call mode.\n  --arguments-json <json>        JSON object arguments for call mode.\n  --steps-json <json-array>      JSON array of sequence steps.\n  --approval <mode>              inherit, accept-all, accept-once, or deny. Default: inherit.\n  --running-only                 For list-apps, return only currently running apps.\n  --filter <text>                For list-apps, substring-filter app name/path/bundle lines.\n  --include-image                Keep image blocks in JSON output. Default: omit.\n  --save-image <path>            Save the first returned image block to a file.\n  --max-text-chars <n>           Truncate each text block in output. Default: ${DEFAULT_MAX_TEXT_CHARS}\n  --tool-timeout-ms <ms>         Tool call timeout. Default: ${DEFAULT_TOOL_TIMEOUT_MS}\n  --startup-timeout-ms <ms>      initialize timeout. Default: ${DEFAULT_STARTUP_TIMEOUT_MS}\n  --thread-timeout-ms <ms>       thread/start timeout. Default: ${DEFAULT_THREAD_TIMEOUT_MS}\n  --shutdown-timeout-ms <ms>     app-server shutdown grace period. Default: ${DEFAULT_SHUTDOWN_TIMEOUT_MS}\n  --allow-mutating               Permit app-control mutation; requires --safety-note.
-  --allow-pointer                Permit click/drag and restore the mouse afterward.
+  --allow-pointer                Permit click/drag; no cursor or focus restoration.
   --allow-recording              Required for event_stream_start and computer_history_resume.
   --allow-privacy-change         Required for computer_history_update_settings.
-  --safety-note <text>           Required with mutation, recording, or privacy allow flags.\n  --preserve-mouse               Restore mouse cursor position after the call/sequence.\n  --no-auto-restart-computer-use Disable one-shot app-server session restart/retry for read-only stopped-session/transport failures.\n  --full                         For status mode, include every app-server MCP server.\n  --pretty                       Pretty-print JSON output.\n  --quiet                        Suppress stderr event logs.\n  -h, --help                     Show this help.\n\nExit codes:\n  0  success\n  1  bridge/app-server failure\n  2  usage error\n  3  missing Codex app-server binary\n  4  timeout\n  5  child process exited unexpectedly\n\nSafety:\n  list-apps and get-state are read-only Computer Use tools, though get-state can\n  reveal screen/app contents and may launch or foreground an app. Mutating tools\n  require --allow-mutating plus a concrete --safety-note.\n\nExamples:\n  node tools/codex-computer-use-appserver.mjs status --pretty\n  node tools/codex-computer-use-appserver.mjs status --full --pretty\n  node tools/codex-computer-use-appserver.mjs list-apps --running-only --filter "Activity Monitor" --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app "Activity Monitor" --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app "Activity Monitor" --include-image --save-image .scratch/activity-monitor.jpg\n  node tools/codex-computer-use-appserver.mjs call --tool list_apps --arguments-json '{}' --pretty\n  node tools/codex-computer-use-appserver.mjs sequence --allow-mutating --safety-note "Activity Monitor only; switch Memory then restore CPU without other changes." --steps-json '[{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Activity Monitor\"}},{\"tool\":\"perform_secondary_action\",\"arguments\":{\"app\":\"Activity Monitor\",\"elementDescription\":\"Memory\",\"action\":\"Press\"}},{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Activity Monitor\"}}]'\n`);
+  --safety-note <text>           Required with mutation, recording, or privacy allow flags.\n  --no-auto-restart-computer-use Disable one-shot app-server session restart/retry for read-only stopped-session/transport failures.\n  --full                         For status mode, include every app-server MCP server.\n  --pretty                       Pretty-print JSON output.\n  --quiet                        Suppress stderr event logs.\n  -h, --help                     Show this help.\n\nExit codes:\n  0  success\n  1  bridge/app-server failure\n  2  usage error\n  3  missing Codex app-server binary\n  4  timeout\n  5  child process exited unexpectedly\n\nSafety:\n  list-apps and get-state are read-only Computer Use tools, though get-state can\n  reveal screen/app contents and may launch or foreground an app. Mutating tools\n  require --allow-mutating plus a concrete --safety-note. Native focus notifications\n  are observations, not a guarantee of input isolation. No cursor/focus restoration.\n  Text uses exact native selection insertion when supported; unsupported Unicode\n  fails before upstream typing. Never replay an attempted, unverified action.\n\nExamples:\n  node tools/codex-computer-use-appserver.mjs status --pretty\n  node tools/codex-computer-use-appserver.mjs status --full --pretty\n  node tools/codex-computer-use-appserver.mjs list-apps --running-only --filter "Activity Monitor" --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app "Activity Monitor" --pretty\n  node tools/codex-computer-use-appserver.mjs get-state --app "Activity Monitor" --include-image --save-image .scratch/activity-monitor.jpg\n  node tools/codex-computer-use-appserver.mjs call --tool list_apps --arguments-json '{}' --pretty\n  node tools/codex-computer-use-appserver.mjs sequence --allow-mutating --safety-note "Activity Monitor only; switch to Memory; stop after state readback." --steps-json '[{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Activity Monitor\"}},{\"tool\":\"perform_secondary_action\",\"arguments\":{\"app\":\"Activity Monitor\",\"elementDescription\":\"Memory\",\"action\":\"Press\"}},{\"tool\":\"get_app_state\",\"arguments\":{\"app\":\"Activity Monitor\"}}]'\n`);
 }
 function normalizeArgTokens(argv) {
   const tokens = [];
@@ -149,7 +148,7 @@ function parseAppListLine(line) {
   const [left, flagsPart = ''] = line.split(/\s+\[([^\]]+)\]\s*$/).filter((part) => part !== undefined);
   const parts = (left || line).split(' — ').map((part) => part.trim());
   const flags = flagsPart.split(',').map((flag) => flag.trim()).filter(Boolean);
-  const lastUsedFlag = flags.find((flag) => /^last[- ]used:/i.test(flag));
+  const lastUsedFlag = flags.find((flag) => /^last[- ]used[:=]/i.test(flag));
   return {
     name: parts[0] || line,
     path: parts[1] || null,
@@ -157,7 +156,7 @@ function parseAppListLine(line) {
     flags,
     running: flags.some((flag) => flag.toLowerCase() === 'running'),
     frontmost: flags.some((flag) => flag.toLowerCase() === 'frontmost'),
-    lastUsed: lastUsedFlag?.replace(/^last[- ]used:\s*/i, '') ?? null,
+    lastUsed: lastUsedFlag?.replace(/^last[- ]used[:=]\s*/i, '') ?? null,
     line,
   };
 }
@@ -184,15 +183,6 @@ function listAppsHostOptions(args, opts = {}) {
   };
 }
 
-function resolveElementTarget(args, cache) {
-  return resolveElementTargetHelper(args, cache, {
-    closestSuggestions: true,
-    targetHints: true,
-    usageError: (message) => new UsageError(message),
-    targetError: (message) => new CliError(message),
-  });
-}
-
 function normalizeSequenceSteps(value) {
   if (!Array.isArray(value) || value.length === 0) {
     throw new UsageError('--steps-json must contain at least one step');
@@ -204,11 +194,15 @@ function normalizeSequenceSteps(value) {
     if (typeof step.tool !== 'string' || step.tool.length === 0) {
       throw new UsageError(`sequence step ${index} requires a non-empty tool string`);
     }
-    const args = { ...(step.arguments ?? {}) };
-    if (!args || typeof args !== 'object' || Array.isArray(args)) {
+    const rawArgs = step.arguments === undefined ? {} : step.arguments;
+    if (!rawArgs || typeof rawArgs !== 'object' || Array.isArray(rawArgs)) {
       throw new UsageError(`sequence step ${index} arguments must be a JSON object`);
     }
+    if (step.allowError !== undefined && typeof step.allowError !== 'boolean') throw new UsageError(`sequence step ${index} allowError must be a boolean`);
+    if (step.label !== undefined && typeof step.label !== 'string') throw new UsageError(`sequence step ${index} label must be a string`);
+    const args = { ...rawArgs };
     if (step.tool === 'set_value' && args.value === undefined && step.value !== undefined) args.value = step.value;
+    validateUpstreamToolArgs(step.tool, args);
     return {
       tool: step.tool,
       arguments: normalizeToolArguments(args),
@@ -229,7 +223,7 @@ function normalizeStringList(value, name) {
 
 function validateUpstreamToolArgs(tool, args) {
   try {
-    pickUpstreamToolArgs(tool, args);
+    validateBridgeArguments(tool, args);
   } catch (error) {
     throw new UsageError(error.message || String(error));
   }
@@ -283,7 +277,6 @@ function parseArgs(argv) {
     allowRecording: false,
     allowPrivacyChange: false,
     safetyNote: '',
-    preserveMouse: false,
     autoRestartComputerUse: true,
     runningOnly: false,
     filter: undefined,
@@ -305,7 +298,7 @@ function parseArgs(argv) {
       case '--app': opts.app = next(); break;
       case '--server': opts.server = next(); break;
       case '--tool': opts.tool = next(); break;
-      case '--arguments-json': opts.arguments = normalizeToolArguments(parseJsonObject('--arguments-json', next())); break;
+      case '--arguments-json': opts.arguments = parseJsonObject('--arguments-json', next()); break;
       case '--steps-json': opts.steps = normalizeSequenceSteps(parseJsonArray('--steps-json', next())); break;
       case '--approval': opts.approval = next(); break;
       case '--running-only': opts.runningOnly = true; break;
@@ -318,11 +311,10 @@ function parseArgs(argv) {
       case '--tool-timeout-ms': opts.toolTimeoutMs = parsePositiveInt('--tool-timeout-ms', next()); break;
       case '--shutdown-timeout-ms': opts.shutdownTimeoutMs = parsePositiveInt('--shutdown-timeout-ms', next()); break;
       case '--allow-mutating': opts.allowMutating = true; break;
-      case '--allow-pointer': opts.allowPointer = true; opts.preserveMouse = true; break;
+      case '--allow-pointer': opts.allowPointer = true; break;
       case '--allow-recording': opts.allowRecording = true; break;
       case '--allow-privacy-change': opts.allowPrivacyChange = true; break;
       case '--safety-note': opts.safetyNote = next(); break;
-      case '--preserve-mouse': opts.preserveMouse = true; break;
       case '--no-auto-restart-computer-use': opts.autoRestartComputerUse = false; break;
       case '--full': opts.statusFull = true; break;
       case '--pretty': opts.pretty = true; break;
@@ -361,7 +353,7 @@ function parseArgs(argv) {
   if (opts.server === 'computer-use' && opts.tool && !READ_ONLY_TOOLS.has(opts.tool)) {
     if (!opts.allowMutating) throw new UsageError(`tool ${opts.tool} is not read-only; pass --allow-mutating to acknowledge GUI mutation`);
     if (opts.safetyNote.trim().length < 20) throw new UsageError(`tool ${opts.tool} requires --safety-note describing target, intended effect, and stop boundary`);
-    if ((opts.tool === 'click' || opts.tool === 'drag') && !opts.allowPointer) throw new UsageError(`tool ${opts.tool} requires --allow-pointer and restores the mouse afterward`);
+    if ((opts.tool === 'click' || opts.tool === 'drag') && !opts.allowPointer) throw new UsageError(`tool ${opts.tool} requires --allow-pointer; pointer actions can interfere with user input`);
   }
   for (const [index, step] of opts.steps.entries()) {
     validateAuxiliaryGuard(step.tool, step.arguments, opts);
@@ -369,7 +361,7 @@ function parseArgs(argv) {
     if (!READ_ONLY_TOOLS.has(step.tool)) {
       if (!opts.allowMutating) throw new UsageError(`sequence step ${index} tool ${step.tool} is not read-only; pass --allow-mutating to acknowledge GUI mutation`);
       if (opts.safetyNote.trim().length < 20) throw new UsageError(`sequence step ${index} tool ${step.tool} requires --safety-note describing target, intended effect, and stop boundary`);
-      if ((step.tool === 'click' || step.tool === 'drag') && !opts.allowPointer) throw new UsageError(`sequence step ${index} tool ${step.tool} requires --allow-pointer and restores the mouse afterward`);
+      if ((step.tool === 'click' || step.tool === 'drag') && !opts.allowPointer) throw new UsageError(`sequence step ${index} tool ${step.tool} requires --allow-pointer; pointer actions can interfere with user input`);
     }
     validateUpstreamToolArgs(step.tool, step.arguments);
   }
@@ -401,6 +393,7 @@ class AppServerJsonRpc {
     this.notifications = [];
     this.elicitations = [];
     this.acceptedElicitations = 0;
+    this.abandoned = false;
   }
 
   log(event, details = undefined) {
@@ -411,7 +404,7 @@ class AppServerJsonRpc {
 
   start() {
     assertExecutable(this.opts.codexBin);
-    const args = ['app-server'];
+    const args = ['app-server', '--disable', 'apps'];
     for (const flag of FEATURE_FLAGS) args.push('--enable', flag);
     this.log('appserver.spawn', { command: this.opts.codexBin, args, cwd: this.opts.cwd });
     this.proc = spawn(this.opts.codexBin, args, {
@@ -426,10 +419,18 @@ class AppServerJsonRpc {
       if (this.stderr.length > 20000) this.stderr = this.stderr.slice(-20000);
       if (!this.opts.quiet) process.stderr.write(chunk);
     });
+    this.proc.on('error', (error) => {
+      if (this.proc?.pid) { this.log('appserver.process_error', error.message); return; }
+      for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(error); }
+      this.pending.clear();
+      this.proc = undefined;
+    });
+    this.proc.stdin.on('error', () => { void this.stop(); });
     this.proc.on('exit', (code, signal) => {
       this.log('appserver.exit', { code, signal });
-      for (const { reject, method } of this.pending.values()) {
-        reject(new ChildExitError(`app-server exited before ${method} completed`, { code, signal, stderr: this.stderr }));
+      for (const { reject, method, timer } of this.pending.values()) {
+        clearTimeout(timer);
+        reject(new ChildExitError(`app-server exited before ${method} completed; dispatched action outcome may be unknown`, { code, signal, stderr: this.stderr, dispatched: method === 'mcpServer/tool/call', outcomeUnknown: method === 'mcpServer/tool/call' }));
       }
       this.pending.clear();
     });
@@ -455,6 +456,7 @@ class AppServerJsonRpc {
       return;
     }
 
+    if (!message || typeof message !== 'object' || Array.isArray(message)) { this.log('appserver.invalid_message'); return; }
     if (Object.prototype.hasOwnProperty.call(message, 'id') && (Object.prototype.hasOwnProperty.call(message, 'result') || Object.prototype.hasOwnProperty.call(message, 'error')) && this.pending.has(message.id)) {
       const pending = this.pending.get(message.id);
       clearTimeout(pending.timer);
@@ -499,6 +501,7 @@ class AppServerJsonRpc {
   }
 
   decideElicitation(params) {
+    if (this.abandoned) return { action: 'decline', content: null, _meta: null };
     if (this.opts.approval === 'inherit' || this.opts.approval === 'accept-all') {
       this.acceptedElicitations += 1;
       return { action: 'accept', content: {}, _meta: null };
@@ -523,12 +526,16 @@ class AppServerJsonRpc {
     const id = this.nextId++;
     this.log('appserver.request.send', { id, method, params });
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = setTimeout(async () => {
+        this.abandoned = true;
         this.pending.delete(id);
-        reject(new TimeoutError(`${method} timed out after ${timeoutMs}ms`, { method, id }));
+        // Do not let an allowError sequence advance while an upstream action is alive.
+        await this.stop();
+        reject(new TimeoutError(`${method} timed out after ${timeoutMs}ms; owned transport stopped, action outcome unknown`, { method, id, dispatched: method === 'mcpServer/tool/call', outcomeUnknown: method === 'mcpServer/tool/call' }));
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer, method });
-      this.write({ jsonrpc: '2.0', id, method, params });
+      try { this.write({ jsonrpc: '2.0', id, method, params }); }
+      catch (error) { clearTimeout(timer); this.pending.delete(id); reject(error); }
     });
   }
 
@@ -536,16 +543,11 @@ class AppServerJsonRpc {
     if (!this.proc) return;
     if (this.proc.exitCode !== null || this.proc.signalCode !== null) return;
     this.log('appserver.stop');
-    this.proc.kill('SIGTERM');
+    const proc = this.proc;
     await new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        if (this.proc && this.proc.exitCode === null && this.proc.signalCode === null) this.proc.kill('SIGKILL');
-        resolve();
-      }, this.opts.shutdownTimeoutMs);
-      this.proc?.once('exit', () => {
-        clearTimeout(timer);
-        resolve();
-      });
+      const timer = setTimeout(() => { if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL'); }, this.opts.shutdownTimeoutMs);
+      proc.once('exit', () => { clearTimeout(timer); resolve(); });
+      proc.kill('SIGTERM');
     });
   }
 }
@@ -558,20 +560,13 @@ function assertExecutable(path) {
   }
 }
 
-function threadStartParams(opts) {
+function threadStartParams(opts, configRead) {
   return {
     cwd: opts.cwd,
     ephemeral: true,
     approvalPolicy: 'on-request',
     sandbox: 'workspace-write',
-    config: {
-      features: {
-        computer_use: true,
-        plugins: true,
-        tool_call_mcp_elicitation: true,
-      },
-      mcp_servers: mcpServerConfigs(),
-    },
+    config: isolatedThreadConfig(configRead, mcpServerConfigs()),
   };
 }
 
@@ -654,6 +649,9 @@ function summarizeComputerUseStatus(statusResult) {
 
 async function runWithThread(opts, fn) {
   const client = new AppServerJsonRpc(opts);
+  const session = new BridgeComputerUseSession((tool, args) => client.request('mcpServer/tool/call', {
+    threadId: client.threadId, server: mcpServerForTool(tool), tool, arguments: pickUpstreamToolArgs(tool, args),
+  }, opts.toolTimeoutMs));
   try {
     client.start();
     const initialized = await client.request('initialize', {
@@ -661,11 +659,13 @@ async function runWithThread(opts, fn) {
       capabilities: { experimentalApi: true, requestAttestation: false },
     }, opts.startupTimeoutMs);
     client.notify('initialized');
-    const threadStart = await client.request('thread/start', threadStartParams(opts), opts.threadTimeoutMs);
+    const configRead = await client.request('config/read', { cwd: opts.cwd, includeLayers: false }, opts.startupTimeoutMs);
+    const threadStart = await client.request('thread/start', threadStartParams(opts, configRead), opts.threadTimeoutMs);
     const threadId = threadStart?.thread?.id;
     if (!threadId) throw new CliError('thread/start response did not include thread.id', EXIT.FAILURE, threadStart);
     const mcpStatus = await waitForConfiguredMcpServers(client, threadId, opts.threadTimeoutMs);
-    const payload = await fn(client, { initialized, threadStart, threadId, mcpStatus });
+    client.threadId = threadId;
+    const payload = await fn(client, { initialized, threadStart, threadId, mcpStatus, session });
     return {
       ok: true,
       mode: opts.mode,
@@ -679,6 +679,7 @@ async function runWithThread(opts, fn) {
     };
   } finally {
     await client.stop();
+    await session.stop();
   }
 }
 
@@ -724,32 +725,10 @@ async function runStatus(opts) {
   });
 }
 
-async function refreshElementCache(client, threadId, args, cache, opts) {
-  const refresh = await client.request('mcpServer/tool/call', {
-    threadId,
-    server: 'computer-use',
-    tool: 'get_app_state',
-    arguments: { app: args.app },
-  }, opts.toolTimeoutMs);
-  const filtered = filterToolResult(refresh, opts);
-  if (filtered.isError) throw new CliError(`fresh app-state preflight failed: ${contentText(filtered.content)}`);
-  updateElementCache(cache, args.app, contentText(filtered.content));
-}
-
 async function runTool(opts) {
-  return runWithThread(opts, async (client, { initialized, threadStart, threadId }) => {
-    const elementCache = new Map();
-    let args = opts.arguments;
-    if (opts.server === 'computer-use' && !READ_ONLY_TOOLS.has(opts.tool) && typeof args.app === 'string') await refreshElementCache(client, threadId, args, elementCache, opts);
-    args = resolveElementTarget(args, elementCache);
-    const callArgs = pickUpstreamToolArgs(opts.tool, args);
-    const result = await client.request('mcpServer/tool/call', {
-      threadId,
-      server: opts.server,
-      tool: opts.tool,
-      arguments: callArgs,
-    }, opts.toolTimeoutMs);
-    let filtered = filterToolResult(result, opts);
+  return runWithThread(opts, async (_client, { initialized, threadStart, session }) => {
+    const { result, args, dispatched, outcome, focus } = await session.run(opts.tool, opts.arguments);
+    let filtered = filterToolResult(result, { ...opts, maxTextChars: Infinity });
     let apps = null;
     let frontmostApps = null;
     if (opts.tool === 'list_apps') {
@@ -759,8 +738,10 @@ async function runTool(opts) {
       delete filtered.apps;
       delete filtered.frontmostApps;
     }
-    updateElementCache(elementCache, args.app, contentText(filtered.content));
+    filtered.content = filtered.content.map(block => block.type === 'text' ? { ...block, text: truncateString(block.text, opts.maxTextChars) } : block);
     return {
+      ok: !filtered.isError,
+      dispatched, outcome, focus,
       ...(!opts.quiet ? { initialized, thread: threadStart.thread } : {}),
       tool: opts.tool,
       arguments: args,
@@ -771,33 +752,25 @@ async function runTool(opts) {
 }
 
 async function runSequence(opts) {
-  return runWithThread(opts, async (client, { initialized, threadStart, threadId }) => {
+  return runWithThread(opts, async (_client, { initialized, threadStart, session }) => {
+    const sequenceStarted = Date.now();
     const steps = [];
-    const elementCache = new Map();
     let failed = null;
     for (const [index, step] of opts.steps.entries()) {
       const started = Date.now();
       let stepArgs = step.arguments;
       try {
-        const server = mcpServerForTool(step.tool);
-        if (server === 'computer-use' && !READ_ONLY_TOOLS.has(step.tool) && typeof stepArgs.app === 'string') await refreshElementCache(client, threadId, stepArgs, elementCache, opts);
-        stepArgs = resolveElementTarget(stepArgs, elementCache);
-        const callArgs = pickUpstreamToolArgs(step.tool, stepArgs);
-        const result = await client.request('mcpServer/tool/call', {
-          threadId,
-          server,
-          tool: step.tool,
-          arguments: callArgs,
-        }, opts.toolTimeoutMs);
-        let filtered = filterToolResult(result, opts);
-        if (step.tool === 'list_apps') filtered = filterListAppsResult(filtered, listAppsHostOptions(stepArgs, opts));
-        updateElementCache(elementCache, stepArgs.app, contentText(filtered.content));
+        const execution = await session.run(step.tool, stepArgs, { readback: step.expectText.length + step.expectAbsentText.length > 0 });
+        stepArgs = execution.args;
+        let filtered = filterToolResult(execution.result, { ...opts, maxTextChars: Infinity });
+        if (step.tool === 'list_apps') filtered = filterListAppsResult(filtered, { ...listAppsHostOptions(stepArgs, opts), maxTextChars: Infinity });
         const sequencedStep = {
           index,
           label: step.label,
           tool: step.tool,
           arguments: stepArgs,
           durationMs: Date.now() - started,
+          dispatched: execution.dispatched, outcome: execution.outcome, focus: execution.focus,
           result: filtered,
           expectText: step.expectText,
           expectAbsentText: step.expectAbsentText,
@@ -809,20 +782,23 @@ async function runSequence(opts) {
           const message = safeErrorMessage(error);
           sequencedStep.result.isError = true;
           sequencedStep.result.content.push({ type: 'text', text: `Sequence stopped: ${message}` });
-          failed = { index, stepNumber: index + 1, tool: step.tool, label: step.label, message };
+          failed = { index, stepNumber: index + 1, tool: step.tool, label: step.label, message, dispatched: execution.dispatched };
         }
+        // Assertions and parsing have consumed the FULL result before presentation limits.
+        sequencedStep.result.content = sequencedStep.result.content.map(block => block.type === 'text' ? { ...block, text: truncateString(block.text, opts.maxTextChars) } : block);
         steps.push(sequencedStep);
         if (failed) break;
       } catch (error) {
         const message = safeErrorMessage(error);
-        const allowed = step.allowError;
-        if (!allowed) failed = { index, stepNumber: index + 1, tool: step.tool, label: step.label, message };
+        const allowed = step.allowError && !error.details?.outcomeUnknown;
+        if (!allowed) failed = { index, stepNumber: index + 1, tool: step.tool, label: step.label, message, dispatched: Boolean(error.details?.dispatched) };
         steps.push({
           index,
           label: step.label,
           tool: step.tool,
           arguments: stepArgs,
           durationMs: Date.now() - started,
+          dispatched: Boolean(error.details?.dispatched), outcome: error.details?.outcome ?? 'not-dispatched', focus: error.details?.focus,
           result: failureResult(`Sequence ${allowed ? 'allowed error' : 'stopped'} before completing step ${index + 1} (index ${index}, ${step.tool}):\n${message}`, opts.maxTextChars),
           expectText: step.expectText,
           expectAbsentText: step.expectAbsentText,
@@ -841,7 +817,8 @@ async function runSequence(opts) {
       failedStepNumber: failed?.stepNumber ?? null,
       failedStepLabel: failed?.label ?? null,
       completedStepCount,
-      resumeFromStepIndex: failed?.index ?? null,
+      resumeFromStepIndex: failed && !failed.dispatched ? failed.index : null,
+      durationMs: Date.now() - sequenceStarted,
       error: failed?.message ?? null,
       exitCode: failed ? EXIT.FAILURE : 0,
     };
@@ -886,14 +863,7 @@ async function main() {
     printHelp();
     return;
   }
-  let output;
-  const mouseBefore = opts.preserveMouse ? getMousePosition() : null;
-  try {
-    output = await runSelectedModeWithRecovery(opts);
-  } finally {
-    if (mouseBefore) restoreMousePosition(mouseBefore);
-  }
-  if (output && mouseBefore) output.mousePreservation = { before: mouseBefore, restored: getMousePosition() };
+  const output = await runSelectedModeWithRecovery(opts);
   writeJson(output, opts.pretty);
   if (output?.ok === false) process.exitCode = output.exitCode || EXIT.FAILURE;
 }

@@ -23,6 +23,7 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run typecheck
+      - run: npm test
       - run: node tools/validate-macuse.mjs extension
       - run: npx --no-install pi --no-context-files --no-skills --no-prompt-templates --no-themes --no-extensions -e ./extensions/codex-computer-use.ts --list-models '__no_such_model__'
         env:

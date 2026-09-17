@@ -6,6 +6,8 @@ Posted: 5:00 AM · May 21, 2026
 Scraped: May 22, 2026
 Observed engagement at scrape time: 8 replies, 43 reposts, 553 likes, 750 bookmarks, 59.2K views
 
+Historical third-party research, not macuse implementation guidance. macuse reuses upstream input dispatch and a narrow public-AX observation/selected-text helper; it does not implement the activation spoofing or event interception described below. See the [current safety policy](codex-computer-use-safety-policy.md) for coverage limits.
+
 Bridge describes a macOS computer-use stack where an AI agent can click, type,
 and read background windows without taking over the user's active cursor or
 frontmost app. The key claim is that the second cursor shown in demos is mostly

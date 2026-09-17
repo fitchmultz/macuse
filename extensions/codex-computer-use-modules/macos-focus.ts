@@ -1,43 +1,34 @@
-import { spawnSync } from "node:child_process";
-import { type AppMetadata, type MousePosition } from "./core";
+import { type AppMetadata } from "./core";
 
-function lsappinfoValue(text: string): string | null {
-	return text.match(/="([^"]+)"/)?.[1] ?? text.match(/^[^=]+=([^\n]+)$/)?.[1]?.trim() ?? null;
-}
+import { MacOSNative, type NativeApplication, type NativeObservation } from "../../tools/macos-native.mjs";
 
-export function getMousePosition(): MousePosition | null {
-	const script = "import CoreGraphics; if let e = CGEvent(source: nil) { let p = e.location; print(Int(p.x), Int(p.y)) }";
-	const result = spawnSync("swift", ["-e", script], { encoding: "utf8", timeout: 10_000 });
-	if (result.status !== 0) return null;
-	const [x, y] = result.stdout.trim().split(/\s+/).map((part) => Number(part));
-	if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-	return { x, y };
-}
+export const macosNative = new MacOSNative();
 
-export function restoreMousePosition(position: MousePosition | null): boolean {
-	if (!position) return false;
-	const script = `import CoreGraphics; CGWarpMouseCursorPosition(CGPoint(x: ${Math.trunc(position.x)}, y: ${Math.trunc(position.y)})); CGAssociateMouseAndMouseCursorPosition(1)`;
-	const result = spawnSync("swift", ["-e", script], { encoding: "utf8", timeout: 10_000 });
-	return result.status === 0;
-}
-
-export function nativeFrontmostApps(): AppMetadata[] | null {
-	const front = spawnSync("/usr/bin/lsappinfo", ["front"], { encoding: "utf8", timeout: 5_000 });
-	const asn = front.stdout?.trim() ?? "";
-	if (front.status !== 0 || !asn) return null;
-	const read = (field: string) => lsappinfoValue(spawnSync("/usr/bin/lsappinfo", ["info", "-only", field, asn], { encoding: "utf8", timeout: 5_000 }).stdout || "");
-	const name = read("name") || "<unknown>";
-	const path = read("bundlepath");
-	const bundleId = read("bundleid");
+function appMetadata(app: NativeApplication | null): AppMetadata[] | null {
+	if (!app) return null;
 	return [{
-		name,
-		path,
-		bundleId,
-		flags: ["frontmost", "running", "native"],
-		running: true,
-		frontmost: true,
-		lastUsed: null,
-		line: `${name}${path ? ` — ${path}` : ""}${bundleId ? ` — ${bundleId}` : ""} [frontmost, running, native]`,
+		name: app.name, path: app.path, bundleId: app.bundleId,
+		flags: ["frontmost", "running", "native"], running: true, frontmost: true, lastUsed: null,
+		line: `${app.name}${app.path ? ` — ${app.path}` : ""}${app.bundleId ? ` — ${app.bundleId}` : ""} [frontmost, running, native]`,
 	}];
+}
+
+export type NativeFocusObservation = Omit<NativeObservation, "before" | "after"> & {
+	before: AppMetadata[] | null;
+	after: AppMetadata[] | null;
+};
+
+export async function beginFocusObservation(pids: number[] = []) {
+	const observation = await macosNative.beginObservation(pids);
+	return { id: observation.id, before: appMetadata(observation.before.frontmost) };
+}
+
+export async function endFocusObservation(id: string): Promise<NativeFocusObservation> {
+	const observation = await macosNative.endObservation(id);
+	return { ...observation, before: appMetadata(observation.before.frontmost), after: appMetadata(observation.after.frontmost) };
+}
+
+export async function stopNativeObserver(): Promise<void> {
+	await macosNative.stop();
 }
 

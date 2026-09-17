@@ -17,6 +17,7 @@ export function appendImageWarning(result: FilteredToolResult, opts: { includeIm
 }
 
 export function computerUseDiagnostic(result: FilteredToolResult, tool: string, args: Record<string, JsonValue>): string | null {
+	if (!result.isError) return null;
 	const text = toolResultText(result);
 	const app = typeof args.app === "string" ? args.app : "the target app";
 	if (result.isError && /Computer Use application session is stopped/i.test(text)) {
@@ -29,10 +30,10 @@ export function computerUseDiagnostic(result: FilteredToolResult, tool: string, 
 		return `Diagnostic: upstream press_key rejected the key name for ${app}. macuse sends xdotool-style key names; Command-, is normalized to key="super+comma" from either key=",", modifiers=["COMMAND"] or key="Command+,".`;
 	}
 	if (/noWindowsAvailable/i.test(text)) {
-		return `Diagnostic: upstream pointer click could not find a hittable window for ${app}, even though get_app_state may still read the app through Accessibility. This usually means the coordinate target is covered, not frontmost, or not pointer-hittable by Computer Use. Prefer a non-pointer target or keyboard shortcut; for Settings use press_key key="super+comma" instead of focus-stealing osascript/cliclick.`;
+		return `Diagnostic: ${tool} returned noWindowsAvailable for ${app}. After a close action this can mean the last window closed successfully. The error alone does not prove whether the action ran; inspect native window state before retrying. Do not activate the app or replay a close just to obtain a screenshot.`;
 	}
 	if (/timeoutReached|timed out after|timed out while/i.test(text)) {
-		return `Diagnostic: upstream Computer Use timed out while collecting state for ${app}. macuse cannot safely operate that app until upstream get_app_state succeeds. detail:"minimal" and targetScope filtering reduce returned tokens only after upstream responds, so they cannot fix this timeout. Try /macuse-restart, a larger toolTimeoutMs, closing heavy browser windows/tabs, or use agent_browser for web/Chrome tasks when browser automation is acceptable.`;
+		return `Diagnostic: upstream ${tool} timed out for ${app}. A dispatched action may already have taken effect; timeout does not mean cancellation. Wait for the pending operation to settle and inspect current state before another mutation. A larger toolTimeoutMs may help; detail:"minimal" only limits presentation and cannot shorten upstream work.`;
 	}
 	if (/Computer Use is not active .*first must call get_app_state|first must call get_app_state/i.test(text)) {
 		return `Diagnostic: upstream Computer Use refused ${tool} because ${app} has no active state session. No mutation was performed by macuse. A successful get_app_state call for the same app is required first; if that state call times out, this is an upstream Computer Use blocker rather than a target-selection problem.`;

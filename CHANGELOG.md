@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Remove cursor warping; observe application activation and focused-window events without claiming input isolation.
+- Guard document identity before mutation and verify edits against the resolved field, with native selected-text insertion for Unicode-capable controls.
+- Preserve full internal state regardless of output limits; reject ambiguous and stale targets and keep minimal output bounded.
+- Report partial failures as Pi tool errors, distinguish dispatched actions from safe retries, and recognize independently verified last-window closes.
+- Make wait cancellation prompt, retain ownership of outstanding app-server calls after timeout, and isolate startup to the three configured Computer Use families.
+- Validate complete sequences before dispatch and restore the original Activity Monitor tab in live checks.
+- Match the current upstream Computer History schema by removing its unsupported menu-bar-icon argument.
+
 ## 0.4.0 - 2026-08-17
 
 - Follow ChatGPT's three current plugin launcher manifests, app-server `initialized` handshake, and asynchronous MCP startup behavior.
