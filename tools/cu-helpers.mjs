@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { sanitizeRecoverableComputerUseText } from '../extensions/codex-computer-use-modules/computer-use-recovery-runtime.mjs';
 import { validateToolArguments, pickUpstreamToolArgs } from '../extensions/codex-computer-use-modules/upstream-tool-args.mjs';
-import { MacOSNative } from './macos-native.mjs';
+import { MacOSNative, nativeWindowClosed } from './macos-native.mjs';
 
 export {
   appServerSessionRecoverySummary,
@@ -394,8 +394,9 @@ export class BridgeComputerUseSession {
       // Never reopen an application for a post-close readback.
       if (mutation && close && (!stateError(result) || /noWindowsAvailable/.test(toolResultText(result))) && before?.pid) {
         const proof = await this.native.inspectApp(before.pid).catch(() => null);
-        if (proof?.windowsCount === 0) {
-          result = stateResult(`App=${before.app}\nNo windows remain. Native Accessibility verified the last window closed; do not replay.`);
+        if (nativeWindowClosed(before, proof)) {
+          if (proof?.windowsCount === 0) result = stateResult(`App=${before.app}\nNo windows remain. Native Accessibility verified the last window closed; do not replay.`);
+          else if (stateError(result)) result = stateResult("Native Accessibility verified that the target document is no longer among the app's windows. Other windows remain; do not replay the close.");
           outcome = 'verified';
         }
       }

@@ -11,6 +11,7 @@ import { filterToolResult, toolResultText } from "./content";
 import { appendComputerUseDiagnostic, appendImageWarning, failureResult } from "./diagnostics";
 import { focusSnapshot } from "./apps";
 import { beginFocusObservation, endFocusObservation, macosNative } from "./macos-focus";
+import { nativeWindowClosed } from "../../tools/macos-native.mjs";
 import {
 	appendText, compactContent, compareState, describeTargetResolution, enrichActionError, hasMutatingSteps,
 	hasStableSelector, hasStateSummaryContent, machineElements, normalizeDetail, normalizeToolArguments,
@@ -195,7 +196,7 @@ export async function executeSequence(
 				row.targetResolution = describeTargetResolution(step.arguments, args, sessionElementCache);
 				const image = screenshotStep === "final" ? index === steps.length - 1 : index === 0;
 				let nativeTextVerified = false;
-				let lastWindowClosed = false;
+				let closeVerified = false;
 				if (step.tool === "type_text" && before && appPid(before)) {
 					const native = await macosNative.inspectApp(appPid(before)!).catch(() => null);
 					if (native?.focusedWindow && native.focusedElement?.selectedTextSettable) {
@@ -247,16 +248,17 @@ export async function executeSequence(
 				const closeAction = isWindowClose(step.tool, args, before);
 				if (closeAction && (!row.result.isError || /noWindowsAvailable/.test(toolResultText(row.result))) && appPid(before)) {
 					const native = await macosNative.inspectApp(appPid(before)!).catch(() => null);
-					if (native?.windowsCount === 0) {
-						lastWindowClosed = true;
-						row.result = { ...row.result, isError: false, content: [{ type: "text", text: `App=${before!.app}\nNo windows remain. Native Accessibility verified that the last window closed; do not replay the close.` }] };
+					if (nativeWindowClosed(before!, native)) {
+						closeVerified = true;
+						if (native?.windowsCount === 0) row.result = { ...row.result, isError: false, content: [{ type: "text", text: `App=${before!.app}\nNo windows remain. Native Accessibility verified that the last window closed; do not replay the close.` }] };
+						else if (row.result.isError) row.result = { ...row.result, isError: false, content: [{ type: "text", text: "Native Accessibility verified that the target document is no longer among the app's windows. Other windows remain; do not replay the close." }] };
 						row.outcome = "verified";
 					}
 				}
-				if (closeAction && step.requireStateChange && !lastWindowClosed) throw new Error("Close was dispatched, but native inspection did not verify the last window closed. No reopening readback was attempted; inspect current windows without replaying the close.");
+				if (closeAction && step.requireStateChange && !closeVerified) throw new Error("Close was dispatched, but native inspection did not verify the target window/document closed. No reopening readback was attempted; inspect current windows without replaying the close.");
 				const assertions = step.expectText.length + step.expectAbsentText.length + step.expectVisibleText.length > 0;
 				const needsReadback = guiMutation && app && !closeAction && (step.tool === "set_value" || step.tool === "type_text" || step.requireStateChange || assertions || (image && (input.includeImage || input.saveImagePath)));
-				if (needsReadback && !lastWindowClosed) {
+				if (needsReadback) {
 					const actionError = row.result.isError ? toolResultText(row.result) : null;
 					let readback = await call("get_app_state", { app }, toolTimeoutMs, image);
 					if (readback.result.isError) throw new ComputerUseError(`Action dispatched, but post-action state is unavailable: ${toolResultText(readback.result)}`);

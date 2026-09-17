@@ -166,6 +166,19 @@ test('last-window close requires independent native zero-window proof and never 
   }
 });
 
+test('closing one document is verified without closing all other windows or reading upstream again', async () => {
+  for (const oldStillPresent of [false, true]) {
+    const windows = [{ token: 'B', title: 'B.txt', document: 'file:///tmp/B.txt' }];
+    if (oldStillPresent) windows.push({ token: 'A', title: 'A.txt', document: 'file:///tmp/A.txt' });
+    const replies = [tree(), tree('old', 'B.txt')];
+    const session = new BridgeComputerUseSession(async () => result(replies.shift()), { native: { ...noNative(), inspectApp: async () => ({ windowsCount: windows.length, windows }) } });
+    const pending = session.run('press_key', { app: 'Test', key: 'super+w', requireStateChange: true });
+    if (oldStillPresent) await assert.rejects(pending, /without independently verified/);
+    else assert.equal((await pending).outcome, 'verified');
+    assert.equal(replies.length, 0);
+  }
+});
+
 test('requireStateChange rejects an unrelated clock and an idempotent set_value', async () => {
   for (const tool of ['perform_secondary_action', 'set_value']) {
     let count = 0;

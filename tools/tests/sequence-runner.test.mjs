@@ -130,6 +130,19 @@ test('last-window close is successful only when native inspection confirms zero 
   assert.equal(f.calls.length, 2, 'must not reopen the app for a post-close screenshot');
 });
 
+test('closing one document can be verified while other windows remain', async () => {
+  for (const oldStillPresent of [false, true]) {
+    const windows = [{ token: 'B', title: 'B.txt', document: 'file:///tmp/B.txt' }];
+    if (oldStillPresent) windows.push({ token: 'A', title: 'A.txt', document: 'file:///tmp/A.txt' });
+    mock.method(macosNative, 'inspectApp', async () => ({ windowsCount: windows.length, windows }));
+    const f = fixture([state(tree()), state(tree('old', 'B.txt'))]);
+    const result = await f.run([{ tool: 'press_key', arguments: { key: 'super+w' }, requireStateChange: true }]);
+    assert.equal(Boolean(result.details.computerUse.failed), oldStillPresent);
+    assert.equal(result.details.computerUse.steps[0].outcome, oldStillPresent ? 'unknown' : 'verified');
+    assert.deepEqual(f.calls.map(c => c.tool), ['get_app_state', 'press_key']);
+  }
+});
+
 test('unverified closes never read upstream state, even with requested evidence', async () => {
   mock.method(macosNative, 'inspectApp', async () => ({ windowsCount: null }));
   for (const reply of [wrap('Closed'), wrap('noWindowsAvailable', true)]) {

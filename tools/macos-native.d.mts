@@ -29,6 +29,7 @@ export type NativeTextResult =
 	| { status: "unsupported" | "guard_failed"; mutationAttempted: false; reason: string }
 	| { status: "unverified"; mutationAttempted: true; reason: string }
 	| { status: "applied"; mutationAttempted: true; verified: true; insertedUTF16Length: number; replacedUTF16Length: number };
+export function nativeWindowClosed(before: { title: string | null; url: string | null }, after: NativeAppState | null): boolean;
 export class MacOSNative {
 	snapshot(): Promise<NativeSnapshot>;
 	beginObservation(pids?: number[]): Promise<{ id: string; before: NativeSnapshot }>;
