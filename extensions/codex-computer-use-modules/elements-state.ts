@@ -252,7 +252,7 @@ export function elementStabilityNote(text: string): string | null {
 function displayWindowTitle(line: string, elements: ElementInfo[]): string {
 	if (!/^Window:/.test(line.trim())) return line;
 	const title = documentTitle(elements, null);
-	return title ? line.replace(/^(\s*Window:\s*)"[^"]*"/, (_match, prefix) => `${prefix}${JSON.stringify(title)}`) : line;
+	return title ? line.replace(/^(\s*Window:\s*)".*"(,\s*App:.*)$/, (_match, prefix, suffix) => `${prefix}${JSON.stringify(title)}${suffix}`) : line;
 }
 
 export function compactText(text: string, scope: TargetScope = "all"): string {
