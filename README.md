@@ -49,6 +49,8 @@ node tools/macuse-config.mjs cursor --pretty
 
 macuse requires macOS, the installed Codex Computer Use runtime, and Pi 0.84.0 or later for the extension. Pi runtime packages remain peer dependencies supplied by the host. Native observation and selected-text editing use an async helper lazily compiled by the installed Swift compiler (`xcrun swiftc`) and cached under `~/Library/Caches/macuse/native`. Accessibility permission is required for AX window/text access; upstream Screen Recording and Automation requirements still apply. macuse does not install a compiler or bypass permission gates. `macuse-doctor` checks the compiler and native helper's Accessibility access under the current launcher.
 
+Credential-free Pi qualification uses `npm ci --ignore-scripts` followed by `npm run check:compat` in an empty HOME/agent profile. The development baseline is official Pi **0.86.1**; this runs types, unit/fixture transport tests, `validate-macuse.mjs extension`, and dry-run packing. The `extension` mode prevents live Codex startup and does not inspect or mutate the desktop. In contrast, `npm run ci` and `quick` reach the installed Codex/Computer Use services and are **not** the credential-free Linux gate. A passing compatibility check is not macOS Accessibility, Swift helper, desktop, or all-platform certification.
+
 Run the reusable smoke suite (add `--json` to `validate-macuse.mjs` for machine-readable pass/warn/fail summaries):
 
 ```bash

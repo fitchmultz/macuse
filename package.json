@@ -53,6 +53,7 @@
     "validate:mutating": "node tools/validate-macuse.mjs mutating",
     "validate:focus": "node tools/validate-macuse.mjs focus",
     "validate:mcp": "node tools/validate-macuse.mjs mcp",
+    "check:compat": "npm run typecheck && npm test && node tools/validate-macuse.mjs extension && npm run pack:check",
     "typecheck": "tsc --noEmit",
     "test": "node --test tools/tests/*.test.mjs",
     "ci": "tsc --noEmit && npm test && node tools/validate-macuse.mjs quick",
@@ -62,8 +63,8 @@
     "node": ">=22.19.0"
   },
   "devDependencies": {
-    "@earendil-works/pi-ai": "0.84.0",
-    "@earendil-works/pi-coding-agent": "0.84.0",
+    "@earendil-works/pi-ai": "0.86.1",
+    "@earendil-works/pi-coding-agent": "0.86.1",
     "@types/node": "^22.0.0",
     "jiti": "^2.7.0",
     "typebox": "1.3.7",
