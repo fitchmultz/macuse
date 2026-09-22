@@ -1,152 +1,94 @@
-# macuse doctor, demo, and config tools
+# Validation and diagnostics
 
-Created: May 22, 2026
-Status: Current operator entrypoints; inspect each run's receipts rather than assuming success
+Choose checks by their real effects. A documented command is a procedure, not a claim that it passed on the current host. Keep screenshots, AX text, and transcripts local when they contain private content.
 
-## Tools
+## Validation modes
 
-```text
-tools/macuse-doctor.mjs
-tools/macuse-repair.mjs
-tools/macuse-demo.mjs
-tools/macuse-config.mjs
+```bash
+node tools/validate-macuse.mjs extension
+node tools/validate-macuse.mjs quick
+node tools/validate-macuse.mjs read-only
+node tools/validate-macuse.mjs mutating
+node tools/validate-macuse.mjs focus
+node tools/validate-macuse.mjs mcp
 ```
 
-These are the high-level entrypoints. Lower-level bridge/probe scripts remain
-available for focused debugging.
+| Mode | Scope |
+| --- | --- |
+| `extension` | Offline extension/contract checks; no live desktop or vendor service access. |
+| `quick` | Runtime/package checks and installed-service discovery; requires local vendor components. |
+| `read-only` | Live app inventory and state observations, without requested input actions. Reads can expose private content or open an app/window. |
+| `mutating` | Controlled Activity Monitor actions, with the actual original selected tab captured and restored in `finally`. |
+| `focus` | Controlled mutation plus native focus observations; coverage and attribution limits remain explicit. |
+| `mcp` | Standard MCP transport, eleven-tool inventory, routing, and guard checks; inspect current help for its live probes. |
+
+Use `--help` for current options and `--json` for machine-readable results. Offline compatibility checks do not certify macOS permissions, native runtime behavior, or every host. Latest stable official Pi and `fitchmultz/pi` 0.87.0 both need qualification through their public APIs; one host's result is not the other's evidence.
+
+The credential-free host probe exercises real Pi hooks, image normalization, both Responses adapters, schema binding, and image-removal policy with synthetic fixtures and no network:
+
+```bash
+node tools/validate-pi-host.mjs
+# Optionally select an installed Pi package directory explicitly.
+node tools/validate-pi-host.mjs /absolute/path/to/pi-coding-agent
+```
+
+`npm run check:compat` includes this probe alongside types, tests, offline extension checks, and dry-run packaging.
+
+For mutating/focus checks, no action should run unless Activity Monitor's original tab is known. Restore that exact tab and verify it after the test; never force CPU as cleanup. Do not terminate processes or modify unrelated Activity Monitor controls. A kernel reset may interrupt cleanup, so inspect the final result and restore only from known evidence. Raw-MCP diagnostics are kept separate from non-interruption checks.
 
 ## Doctor
-
-Run a health audit:
 
 ```bash
 node tools/macuse-doctor.mjs --out .scratch/doctor
 ```
 
-Run the full audit, including guarded mutating/focus and MCP wrapper smokes:
+The default audit is read-only. It checks local prerequisites, runtime/configuration health, and app observation, and writes `doctor.md` and `doctor.json`. Run under the same launcher as the failing Pi/MCP session when possible: Accessibility and Automation grants are host-specific.
+
+Only request the full audit when controlled UI changes are authorized:
 
 ```bash
 node tools/macuse-doctor.mjs --out .scratch/doctor-full --full
 ```
 
-Outputs:
-
-- `doctor.md` — Markdown verdict and check table
-- `doctor.json` — machine-readable evidence
-
-The standard doctor pass checks:
-
-- repo root and expected local paths,
-- ChatGPT, Codex app-server, and installed Computer Use client versions,
-- all three current plugin versions, launcher executability, and `.mcp.json` manifest parity,
-- console frontmost app health,
-- Node/script syntax,
-- app-server inventories for all 18 tools after asynchronous MCP startup,
-- direct raw-MCP discovery,
-- app-server filtered/running `list_apps` for the target app, including a warning when Computer Use reports `frontmost=<none>`,
-- app-server `get_app_state`, including classification for `cgWindowNotFound`, timeouts, and AppleEvents/TCC denials, and
-- config generation.
-
-The full pass also runs:
-
-- `node tools/validate-macuse.mjs focus`
-- `node tools/validate-macuse.mjs mcp`
-
-## Repair
-
-Preview optional repair actions without mutating state:
-
-```bash
-node tools/macuse-repair.mjs
-```
-
-Apply safe repair actions:
-
-```bash
-node tools/macuse-repair.mjs --apply
-```
-
-Safe apply mode:
-
-- wakes the display with a short user-activity assertion,
-- stops `ScreenSaver.Engine` if it is running, and
-- removes stale `/tmp/macuse-appserver/macuse-appserver-*.json` records whose owner or app-server process no longer matches.
-
-Additional auto-heal actions are opt-in because they can disrupt active local sessions or edit macOS privacy state:
-
-```bash
-# Restart only macuse-owned app-server processes recorded in /tmp/macuse-appserver.
-node tools/macuse-repair.mjs --apply --restart-appserver
-
-# Restart the global Computer Use service/helper stack when upstream service state is stale.
-node tools/macuse-repair.mjs --apply --restart-service
-
-# Unlock the console with a password supplied through an environment variable.
-node tools/macuse-repair.mjs --apply --unlock-with-env MACUSE_UNLOCK_PASSWORD
-
-# Add user TCC AppleEvents rows for the responsible launcher -> com.openai.sky.CUAService,
-# back up the user TCC database, and restart tccd.
-node tools/macuse-repair.mjs --apply --repair-tcc --responsible auto --restart-tccd --sudo-password-env MACUSE_SUDO_PASSWORD
-```
-
-The repair tool does **not** store or print passwords. It does not install third-party binaries. The unlock path compiles a temporary local Swift helper that posts HID events, then deletes the helper. `--repair-tcc --responsible auto` detects the responsible launcher from the current process tree (for example RepoPrompt or iTerm). `--repair-tcc` edits only the current user's TCC DB and writes a timestamped backup first, so the applying host needs Full Disk Access. `--restart-appserver` does not kill Codex's global `SkyComputerUseService` helper; use the separate `--restart-service` flag when that broader reset is intended. If broad unfiltered `list_apps` reports `procNotFound` but filtered/running `list_apps` and `get_app_state` pass, keep using filtered app lists and run `--restart-service` during a safe maintenance window.
+`--full` includes live mutating/focus checks. It is not a read-only health check.
 
 ## Demo
-
-Run the live demo:
 
 ```bash
 node tools/macuse-demo.mjs --out .scratch/macuse-demo
 ```
 
-Outputs:
+The demo is a live, controlled Activity Monitor tab workflow. It captures the original selection, changes tabs through the native API, and restores the original in `finally`. Review the generated report and transcript, including cleanup and focus coverage, before calling the run successful. Reports demonstrate that run's observations, not universal non-interruption or performance guarantees. Save screenshots separately with `saveImagePath` when visual artifacts are needed.
 
-- `report.md` — proof report
-- `index.html` — visual dashboard
-- `transcript.json` — exact commands and structured results
-- `manifest.json` — compact artifact manifest
-- `cursor-mcp.json` — ready-to-copy MCP config for the current checkout
-- `doctor/doctor.md` and `doctor/doctor.json` unless `--skip-doctor` is passed
+## Inspect schemas and generate config
 
-The demo checks:
-
-1. Codex app-server exposes all expected Computer Use tools.
-2. External Computer Use can capture app screenshots/state.
-3. A non-element Escape action refreshes Activity Monitor state before dispatch.
-4. CPU/Memory tab actions work through accessibility actions without pointer clicks.
-5. Validation captures Activity Monitor's original selected tab and restores it in `finally`, not to a hard-coded CPU tab.
-6. Native activation/window observations and endpoint snapshots report focus changes and capture gaps. These are observations, not input attribution or a universal non-interruption guarantee.
-7. The standard MCP wrapper validates mutation/safety-note/pointer guards and app-approval elicitation behavior when upstream emits a prompt.
-
-Native observation/text features lazily compile an async helper using installed `xcrun swiftc`; AX access needs Accessibility permission. Doctor checks both requirements under its current launcher. Missing capture remains unknown, with the actual compiler, permission, or runtime error reported. Do not install tools or alter permissions implicitly. A timed-out action may still complete upstream; never replay it automatically. Keep screenshots/transcripts local when they contain private window content.
-
-## Config generator
-
-Generate a Cursor-compatible MCP config for the current checkout:
+These commands inspect the interface or print configuration without requesting GUI actions:
 
 ```bash
+node tools/macuse.mjs tools --pretty
+node tools/macuse.mjs status
 node tools/macuse-config.mjs cursor --pretty
+node tools/macuse-config.mjs claude-desktop --pretty
 ```
 
-Write it to a file:
+CLI `status` reports its own session; it does not inspect another Pi/MCP process. The config generator supports `--out` for an explicit file destination. See [MCP setup](cursor-mcp-setup.md).
+
+For a live observation:
 
 ```bash
-node tools/macuse-config.mjs cursor --pretty --out configs/cursor-mcp.local.json
+node tools/macuse.mjs call macuse '{"code":"var app = await cua.getApp(\"Activity Monitor\")"}'
 ```
 
-`configs/*.local.json` is gitignored so local generated configs can contain
-machine-specific paths.
+Use `node tools/macuse.mjs session` for multiple calls sharing JavaScript bindings and observations. Each input line has `{ "tool": "macuse", "input": { "code": "await cua.getState()" } }`; separate `call` processes do not share state.
 
-## npm scripts
+## Diagnose before repair
 
-```bash
-npm run doctor
-npm run doctor:full
-npm run repair
-npm run repair:apply
-npm run demo
-npm run config:cursor
-npm run validate
-npm run validate:focus
-npm run validate:mcp
-```
+- **Missing compiler/AX access:** report the exact `xcrun swiftc` or Accessibility failure. Do not install tools or grant permissions implicitly.
+- **AppleEvents/TCC failures:** `-609`, `-1712`, `-1743`, and denial logs can identify the responsible launcher's missing Automation access. Preserve the error; do not report it as an empty app list. Use supported system/vendor permission flows.
+- **Missing window/locked console:** `cgWindowNotFound` or `frontmost=<none>` can reflect console/window state. Ask for the concrete user action needed; do not attempt automatic unlocking.
+- **Timeout/unknown action:** inspect partial evidence and fresh app state after settlement. Do not replay the mutation. A reset cannot prove UI cancellation.
+- **Stale bindings:** `macuse_reset({})` or Pi `/macuse-reset` clears owned JavaScript/observations. `/macuse-stop` stops the session's processes without killing global Computer Use helpers. Neither undoes application effects.
+
+The retained `tools/macuse-repair.mjs` is dry-run by default. Its apply paths can wake/unlock the console, stop processes, or alter privacy state; they are not routine setup or an implicit fix. Do not use TCC database editing as a permission bypass. Broader repairs require exact user authorization and inspection of the requested effects.
+
+`tools/probe-codex-computer-use-mcp.mjs` remains for non-mutating raw-MCP discovery and denial diagnostics. Historical raw MCP calls could hang or affect focus, so their results are not authoritative for the native v0.5.0 GUI path. See [historical findings](codex-computer-use-external-harness.md#historical-findings).

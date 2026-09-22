@@ -42,4 +42,4 @@ jobs:
             console.log(resolve(dirname(manifest), JSON.parse(readFileSync(manifest, "utf8")).bin.pi));
           ')
           node "$cli" --no-context-files --no-skills --no-prompt-templates --no-themes --no-extensions \
-            -e ./extensions/codex-computer-use.ts --list-models '__no_such_model__'
+            -e ./extensions/macuse.ts --list-models '__no_such_model__'

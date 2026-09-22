@@ -1,87 +1,66 @@
-# Cursor MCP setup for Codex Computer Use
+# MCP setup
 
-Source: Local `macuse` app-server-backed MCP wrapper
-Created: May 22, 2026
-Installed-version baseline: August 17, 2026, ChatGPT 26.810.52044 and plugin 1.0.1000717; behavior follows current wrapper source
-Status: Working local example; refresh paths if this repo moves
+The standard MCP server shares macuse's native runtime, guards, selected-text insertion, and auxiliary recording/history tools. Use it for Cursor or another MCP-capable client. See [local requirements](codex-computer-use-local-install.md) first.
 
-## Config
+## Configure the client
 
-Use the app-server-backed wrapper, not raw `SkyComputerUseClient mcp`:
+Generate configuration from the installed checkout:
+
+```bash
+node tools/macuse-config.mjs cursor --pretty
+node tools/macuse-config.mjs claude-desktop --pretty
+```
+
+Both emit the standard `mcpServers` shape. The generator supports `--out`, `--server`, and `--cwd`; its default server name is `macuse`. A path-adjusted example:
 
 ```json
 {
   "mcpServers": {
-    "macuse-codex-computer-use": {
+    "macuse": {
       "command": "node",
-      "args": [
-        "/Users/yourname/Projects/AI/macuse/tools/codex-computer-use-appserver-mcp.mjs"
-      ],
+      "args": ["/Users/yourname/Projects/macuse/tools/macuse-mcp.mjs"],
       "env": {
-        "CODEX_CU_MCP_CWD": "/Users/yourname/Projects/AI/macuse"
+        "MACUSE_CWD": "/Users/yourname/Projects/macuse"
       }
     }
   }
 }
 ```
 
-A copy is stored at:
+Use the actual absolute checkout path and a Node executable available to the client. Restart the MCP process after changing code or dependencies. Starting a server exposes tools; it does not start recording.
 
-```text
-configs/cursor-mcp.example.json
+## Use the tools
+
+The server exposes eleven tools: `macuse`, `macuse_insert_text`, `macuse_reset`, and the eight `event_stream_*` / `computer_history_*` tools listed in the [safety policy](codex-computer-use-safety-policy.md). `macuse_tools` is Pi-only and is not an MCP tool.
+
+Call `macuse` with:
+
+```json
+{ "code": "await cua.getState()" }
 ```
 
-Generate a path-correct config for the current checkout:
+Then bind the chosen app:
 
-```bash
-node tools/macuse-config.mjs cursor --pretty
-node tools/macuse-config.mjs cursor --pretty --out configs/cursor-mcp.local.json
+```json
+{ "code": "var app = await cua.getApp(\"Activity Monitor\")", "apps": ["Activity Monitor"] }
 ```
 
-## Behavior
+Bindings and observations persist for that server process. Read the emitted documentation/state, await every action, and use `await app.getAXState()` or `await app.getAXStateAndScreenshot()` for subsequent observations. These methods emit automatically.
 
-The wrapper:
+Mutations require exact `apps` scope, `allowMutating:true`, and a concrete `safetyNote`, plus a prior same-app observation. Pointer actions additionally require `allowPointer:true`. The server refreshes full state before each action, validates document/target identity, and verifies full-field `setValue` exactly. Native element indexes come from the observed state; there is no additional selector language.
 
-- starts Codex app-server with Computer Use feature flags, sends the current `initialized` notification, and waits for asynchronous MCP startup,
-- creates an ephemeral app-server thread with only `computer-use`, `event-stream`, and `computer-history`, disabling inherited MCP servers/plugins and the `apps` feature while preserving each launcher's working directory, arguments, and `CODEX_HOME`,
-- exposes all 18 tools in the configured Computer Use, Record & Replay, and Computer History families over standard MCP,
-- defaults to `approval: "inherit"`, auto-accepting Computer Use app approvals under macuse's standing app-access policy,
-- routes tool execution through app-server `mcpServer/tool/call`,
-- sanitizes stopped-session sentinels and restarts only its app-server session before retrying read-only app/status/settings calls once,
-- requires `allowMutating:true`, a `safetyNote`, and an immediate `get_app_state` before every Computer Use mutation,
-- requires `allowRecording:true` plus `safetyNote` for Record & Replay starts and Computer History resume,
-- requires `allowPrivacyChange:true`, `safetyNote`, the complete `observation` object with unchanged fields preserved for Computer History settings updates, and
-- requires `allowPointer:true` for pointer `click` / `drag`; macuse never warps the cursor, but upstream input can still interrupt the user.
+Use `macuse_insert_text` for selected-range Unicode insertion into an already-focused, freshly observed field. It preserves unselected text and verifies native readback without keyboard input or clipboard writes. Observe again afterward. Raw `typeText` is ASCII-only; paste is disabled.
 
-Native selected-text editing uses the shared async helper, lazily compiled with installed `xcrun swiftc` and requiring Accessibility access. It replaces `AXSelectedText` in a guarded, already-focused control and verifies exact readback without keyboard events or clipboard writes. Unsupported Unicode fails before mutation; an attempted unverified edit never falls back/replays. ASCII may use upstream typing when native editing is unsupported.
+Tool results contain text/images and `isError`; structured macuse evidence is in MCP `_meta`. Inspect partial `dispatched`/`outcome` evidence. Timeout/abort resets JavaScript and awaits settlement, but a GUI effect may already have happened. Never automatically replay an uncertain action. `macuse_reset({})` clears bindings/observations without undoing GUI state.
 
-This standalone wrapper is not the Pi sequence executor: do not assume Pi waits, summaries, or full structured failure-evidence parity. A timeout does not cancel an upstream action; inspect current state and never replay a mutation automatically. Restart the MCP process after code/native-helper changes.
+## Scope and diagnostics
 
-## Tool use rules
+Primary GUI calls use installed `@oai/cua-repl`, computer-only and Sky-only in the normal vendor sandbox. Only recording/history calls start the separate app-server, with existing auth and `CODEX_HOME`. macuse adds no separate evaluator or module-loader tool, and enables no browser/audio or Messages service.
 
-1. Every mutation requires `allowMutating:true` and a `safetyNote`; the wrapper immediately refreshes `get_app_state` before dispatch. Use `expectedTitle` / `expectedUrl` to guard the intended document; inspect a fresh snapshot if the guard fails.
-2. Prefer `perform_secondary_action` with `action: "Press"`, `press_key`,
-   `set_value`, `select_text`, or element-targeted `scroll` over pointer tools.
-3. Pointer `click` and `drag` require `allowPointer: true`.
-4. App approval defaults to `approval: "inherit"`. Use `approval: "ask"` only
-   when a client should surface MCP elicitation prompts, or `approval: "deny"`
-   for denial-path tests.
-5. Use `event_stream_status`, `computer_history_status`, and `computer_history_get_settings` only when activity/artifact/privacy metadata is relevant. Record & Replay starts and Computer History resume require explicit user intent, `allowRecording:true`, and `safetyNote`; settings changes require fresh exact approval, `allowPrivacyChange:true`, the complete `observation` object with unchanged fields preserved.
-6. Stop before purchases, sends, deletes, account/privacy changes, installs, or ambiguous wrong-window actions unless the user gives fresh exact approval. Hand off credential/authentication changes, browser/security warning bypasses, consequential financial transactions, and high-impact sensitive-domain decisions to the user.
-
-## Validation
+Recording starts/history resume and settings replacement retain their explicit approval flags and safety notes. Read-only status/settings calls can expose private metadata. Flags do not create permission.
 
 ```bash
 node tools/validate-macuse.mjs mcp
 ```
 
-This validates:
-
-- wrapper syntax,
-- MCP initialize,
-- `tools/list` with all 18 expected tools and upstream-matching auxiliary annotations,
-- MCP elicitation proxy behavior when upstream emits an app-approval prompt,
-- `get_app_state` for Activity Monitor,
-- safe `event_stream_status` routing without starting recording,
-- mutation, safety-note, pointer, recording-start, and privacy-change guards, and
-- default-inherit app approval behavior.
+Review [validation scopes](demo-and-doctor.md) before running live checks. macOS permissions apply to the responsible client launcher; a working terminal session does not prove that Cursor has the same grants.

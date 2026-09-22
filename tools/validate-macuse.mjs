@@ -1,1203 +1,138 @@
 #!/usr/bin/env node
+import assert from 'node:assert/strict';
+import { parseArgs } from 'node:util';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { DEFAULT_BUNDLED_COMPUTER_USE_CLIENT, DEFAULT_COMPUTER_USE_CLIENT_CWD, MCP_SERVERS, frontmostApp, mcpServerConfigs, mcpServerForTool, mousePosition, parseJsonOutput, VERSION } from './macuse-utils.mjs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { HOST_ONLY_TOOL_ARG_KEYS, UPSTREAM_TOOL_ARG_KEYS } from '../extensions/codex-computer-use-modules/upstream-tool-args.mjs';
+import { fileURLToPath } from 'node:url';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { MacuseSession } from '../lib/macuse-session.mjs';
+import { tools } from '../lib/tools.mjs';
+import { VERSION } from './macuse-utils.mjs';
 
-const DEFAULT_APP = 'Activity Monitor';
-const DEFAULT_TIMEOUT_MS = 90_000;
-const validationChecks = [];
-let jsonOutput = false;
-let activeOpts = null;
-
-function recordCheck(status, name, detail = '') {
-  validationChecks.push({ status, name, detail });
-}
-
-function help() {
-  process.stdout.write(`macuse validation ${VERSION}\n\nUsage:\n  node tools/validate-macuse.mjs extension [options]\n  node tools/validate-macuse.mjs quick [options]\n  node tools/validate-macuse.mjs read-only [options]\n  node tools/validate-macuse.mjs mutating [options]\n  node tools/validate-macuse.mjs focus [options]\n  node tools/validate-macuse.mjs mcp [options]\n\nModes:\n  extension\n      Run syntax, extension behavior, and guard smokes without Codex Computer Use.\n\n  quick\n      Syntax-check bridge scripts, smoke-load the pi extension, verify the pi\n      extension reuses one persistent app-server thread, run direct raw-MCP\n      discovery, and verify Codex app-server can discover Computer Use.\n\n  read-only\n      Run quick plus safe read-only probes: app-server list_apps and get_app_state.\n      The direct raw-MCP Finder deny probe is diagnostic-only and warns instead\n      of failing because SkyComputerUseClient mcp is unreliable outside Codex.\n\n  mutating\n      Run read-only plus an Activity Monitor real-app mutation smoke: refresh\n      before an Escape key action, switch tabs, and restore the original tab\n      in finally. No mutation runs unless the initial selection is known.\n\n  focus\n      Run mutating plus the extension sequence background-focus check.\n      Target-app activation during an operation fails; attribution is unknown.\n\n  mcp\n      Smoke-test the Cursor/standard-MCP wrapper: initialize, tools/list,\n      approval elicitation, get_app_state, and pointer guard behavior.\n\nOptions:\n  --app <name|bundle|path>       App for read-only get_app_state. Default: ${DEFAULT_APP}\n  --tool-timeout-ms <ms>         Tool timeout for app-server probes. Default: ${DEFAULT_TIMEOUT_MS}\n  --verbose                      Print child stdout/stderr.\n  --json                         Print a machine-readable validation summary.\n  -h, --help                     Show this help.\n\nSafety:\n  quick/read-only do not click, type, drag, scroll, press keys, set values, or\n  mutate GUI state. get_app_state may launch or foreground the target app and\n  can reveal visible app contents. mutating changes only Activity Monitor's\n  tab selection, then restores the known original selection. mutating/focus\n  skip focus-stealing raw-MCP diagnostics. Focus/cursor samples never warp input.\n\nExamples:\n  node tools/validate-macuse.mjs extension\n  node tools/validate-macuse.mjs quick\n  node tools/validate-macuse.mjs read-only\n  node tools/validate-macuse.mjs mutating\n  node tools/validate-macuse.mjs focus\n  node tools/validate-macuse.mjs mcp\n  node tools/validate-macuse.mjs read-only --app \"Activity Monitor\" --tool-timeout-ms 120000\n`);
-}
-function parse(argv) {
-  if (argv.includes('-h') || argv.includes('--help')) return { help: true };
-  const mode = argv.shift() || 'quick';
-  if (!['extension', 'quick', 'read-only', 'mutating', 'focus', 'mcp'].includes(mode)) throw new Error(`unknown mode: ${mode}`);
-  const opts = { mode, app: DEFAULT_APP, toolTimeoutMs: DEFAULT_TIMEOUT_MS, verbose: false, json: false };
-  for (let i = 0; i < argv.length; i += 1) {
-    const token = argv[i];
-    const next = () => {
-      i += 1;
-      if (i >= argv.length) throw new Error(`${token} requires a value`);
-      return argv[i];
-    };
-    if (token === '--app') opts.app = next();
-    else if (token === '--tool-timeout-ms') {
-      const n = Number(next());
-      if (!Number.isInteger(n) || n <= 0) throw new Error('--tool-timeout-ms must be a positive integer');
-      opts.toolTimeoutMs = n;
-    } else if (token === '--verbose') opts.verbose = true;
-    else if (token === '--json') opts.json = true;
-    else throw new Error(`unknown option: ${token}`);
-  }
-  return opts;
-}
-
-function tail(value, max = 4000) {
-  if (!value) return '';
-  return value.length > max ? value.slice(-max) : value;
-}
-
-function run(name, command, args, opts = {}) {
-  const result = spawnSync(command, args, {
-    cwd: process.cwd(),
-    env: { ...process.env, ...(opts.env || {}) },
-    encoding: 'utf8',
-    timeout: opts.timeoutMs || 120_000,
-    maxBuffer: 10 * 1024 * 1024,
-  });
-  const output = [tail(result.stdout), tail(result.stderr)].filter(Boolean).join('\n');
-  const outputTail = output ? `\n--- child output tail ---\n${output}` : '';
-  if (!jsonOutput && (opts.verbose || (result.status !== 0 && !opts.quietOnFailure))) {
-    if (result.stdout) process.stdout.write(result.stdout);
-    if (result.stderr) process.stderr.write(result.stderr);
-  }
-  if (result.error) throw new Error(`${name} failed: ${result.error.message}${outputTail}`);
-  if (result.status !== 0) {
-    throw new Error(`${name} exited ${result.status}${result.signal ? ` signal ${result.signal}` : ''}${outputTail}`);
-  }
-  return result.stdout;
-}
-
-function runCompatibilityContractSmoke() {
-  const configs = mcpServerConfigs();
-  for (const [name, server] of Object.entries(MCP_SERVERS)) {
-    const config = configs[name];
-    if (config.command !== `${server.pluginDir}/bin/computer-use-client-launcher` || config.cwd !== server.pluginDir || JSON.stringify(config.args) !== JSON.stringify(server.args) || !config.env_vars?.includes('CODEX_HOME')) throw new Error(`${name} app-server config does not match the current bundled launcher manifest`);
-    for (const tool of server.tools) if (mcpServerForTool(tool) !== name) throw new Error(`${tool} routes to the wrong MCP server`);
-  }
-  // Transport tests verify the actual handshake, startup faults, and serialized calls.
-  return 'launcher configuration and tool routing match current contracts';
-}
-
-function runRawToolContractSmoke() {
-  const input = [
-    { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'macuse-validation', version: VERSION } } },
-    { jsonrpc: '2.0', method: 'notifications/initialized', params: {} },
-    { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} },
-  ].map((message) => JSON.stringify(message)).join('\n') + '\n';
-  const discovered = {};
-  for (const [server, config] of Object.entries(MCP_SERVERS)) {
-    let tools;
-    let failure = 'no response';
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const result = spawnSync(DEFAULT_BUNDLED_COMPUTER_USE_CLIENT, config.args, { cwd: DEFAULT_COMPUTER_USE_CLIENT_CWD, input, encoding: 'utf8', timeout: 10_000 });
-      if (result.error || result.status !== 0) {
-        failure = result.error?.message || result.stderr || `exit ${result.status}`;
-        continue;
-      }
-      const candidate = result.stdout.split('\n').filter(Boolean).map((line) => JSON.parse(line)).find((message) => message.id === 2)?.result?.tools;
-      const names = Array.isArray(candidate) ? candidate.map((tool) => tool.name).sort() : [];
-      failure = `live=${names.join(',')}`;
-      if (JSON.stringify(names) === JSON.stringify([...config.tools].sort())) {
-        tools = candidate;
-        break;
-      }
-    }
-    if (!tools) throw new Error(`raw ${server} tool inventory changed: ${failure}`);
-    for (const tool of tools) {
-      const actual = Object.keys(tool.inputSchema?.properties ?? {}).sort();
-      const pinned = [...(UPSTREAM_TOOL_ARG_KEYS[tool.name] ?? [])].sort();
-      if (tool.inputSchema?.additionalProperties !== false || JSON.stringify(actual) !== JSON.stringify(pinned)) throw new Error(`raw ${tool.name} argument schema changed: live=${actual.join(',')} pinned=${pinned.join(',')}`);
-    }
-    discovered[server] = tools;
-  }
-  const historyTools = discovered['computer-history'];
-  for (const tool of historyTools) {
-    const readOnly = tool.name === 'computer_history_status' || tool.name === 'computer_history_get_settings';
-    if (tool.annotations?.readOnlyHint !== readOnly || tool.annotations?.destructiveHint !== false || tool.annotations?.idempotentHint !== true || tool.annotations?.openWorldHint !== false) throw new Error(`raw ${tool.name} annotations changed`);
-  }
-  const updateSettings = historyTools.find((tool) => tool.name === 'computer_history_update_settings')?.inputSchema;
-  const observation = updateSettings?.properties?.observation;
-  const required = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist'];
-  const entry = observation?.properties?.allowlist?.items;
-  if (Object.hasOwn(updateSettings?.properties ?? {}, 'showMenuBarIcon') || !required.every((field) => observation?.required?.includes(field)) || !entry?.required?.includes('scope') || !entry?.properties?.urlDomain?.description?.includes('without a scheme or path')) throw new Error('raw computer_history_update_settings schema changed');
-  return 'all 18 live tool argument schemas match the pinned boundary';
-}
-
-function runCliAuxiliaryGuardSmoke() {
-  const invalidObservation = { observation: { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [] } };
-  const invalidUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url' }] } };
-  const schemeUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'https://example.com' }] } };
-  const pathUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'example.com/path' }] } };
-  for (const [tool, args, flag] of [
-    ['event_stream_start', {}, 'allow-recording'],
-    ['computer_history_resume', {}, 'allow-recording'],
-    ['computer_history_update_settings', {}, 'allow-privacy-change'],
-  ]) {
-    const server = tool.startsWith('event_') ? 'event-stream' : 'computer-history';
-    const result = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', 'call', '--server', server, '--tool', tool, '--arguments-json', JSON.stringify(args), '--quiet'], { cwd: process.cwd(), encoding: 'utf8', timeout: 10_000 });
-    if (result.status !== 2 || !result.stdout.includes(flag)) throw new Error(`CLI ${tool} guard did not fail closed before app-server startup`);
-  }
-  const unknownArgument = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', 'call', '--tool', 'click', '--arguments-json', '{"app":"Activity Monitor","x":1,"y":1,"mouseButton":"right"}', '--allow-mutating', '--allow-pointer', '--safety-note', 'Activity Monitor only; reject invalid click arguments before any action.', '--quiet'], { cwd: process.cwd(), encoding: 'utf8', timeout: 10_000 });
-  if (unknownArgument.status !== 2 || !unknownArgument.stdout.includes('Unsupported arguments for click: mouseButton')) throw new Error('CLI accepted an unknown argument before app-server startup');
-  const missingSafetyNote = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', 'call', '--tool', 'type_text', '--arguments-json', '{"app":"Activity Monitor","text":"must not dispatch"}', '--allow-mutating', '--quiet'], { cwd: process.cwd(), encoding: 'utf8', timeout: 10_000 });
-  if (missingSafetyNote.status !== 2 || !missingSafetyNote.stdout.includes('--safety-note')) throw new Error('CLI accepted a GUI mutation without a safety note');
-  const missingPointer = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', 'call', '--tool', 'click', '--arguments-json', '{"app":"Activity Monitor","x":1,"y":1}', '--allow-mutating', '--safety-note', 'Activity Monitor only; do not dispatch pointer actions without explicit authorization.', '--quiet'], { cwd: process.cwd(), encoding: 'utf8', timeout: 10_000 });
-  if (missingPointer.status !== 2 || !missingPointer.stdout.includes('--allow-pointer')) throw new Error('CLI accepted a pointer action without pointer authorization');
-  const nestedApproval = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', 'call', '--tool', 'get_app_state', '--arguments-json', '{"app":"Activity Monitor","approval":"deny"}', '--quiet'], { cwd: process.cwd(), encoding: 'utf8', timeout: 10_000 });
-  if (nestedApproval.status !== 2 || !nestedApproval.stdout.includes('--arguments-json cannot set approval')) throw new Error('CLI silently ignored nested approval');
-  const unguardedSequence = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', 'sequence', '--steps-json', '[{"tool":"event_stream_start","arguments":{}}]', '--allow-mutating', '--quiet'], { cwd: process.cwd(), encoding: 'utf8', timeout: 10_000 });
-  if (unguardedSequence.status !== 2 || !unguardedSequence.stdout.includes('allow-recording')) throw new Error('CLI sequence skipped auxiliary safety guards');
-  for (const [args, failure] of [
-    [invalidObservation, 'an app rule without bundleID'],
-    [invalidUrlObservation, 'a URL rule without urlDomain'],
-    [schemeUrlObservation, 'a URL rule with a scheme'],
-    [pathUrlObservation, 'a URL rule with a path'],
-  ]) {
-    const result = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', 'call', '--server', 'computer-history', '--tool', 'computer_history_update_settings', '--arguments-json', JSON.stringify(args), '--allow-privacy-change', '--safety-note', 'guard test only', '--quiet'], { cwd: process.cwd(), encoding: 'utf8', timeout: 10_000 });
-    if (result.status !== 2 || !result.stdout.includes('scope-specific')) throw new Error(`CLI computer_history_update_settings accepted ${failure}`);
-  }
-  return 'recording/privacy guards fail closed before app-server startup';
-}
-
-function runCliAuxiliaryStatusSmoke() {
-  for (const [label, args] of [
-    ['direct', ['call', '--server', 'event-stream', '--tool', 'event_stream_status', '--arguments-json', '{}', '--quiet']],
-    ['sequence', ['sequence', '--steps-json', '[{"tool":"event_stream_status","arguments":{}}]', '--quiet']],
-  ]) {
-    const result = spawnSync(process.execPath, ['tools/codex-computer-use-appserver.mjs', ...args], { cwd: process.cwd(), encoding: 'utf8', timeout: 120_000 });
-    if (result.status !== 0) throw new Error(`CLI ${label} event_stream_status failed: ${result.stderr || result.stdout}`);
-    const output = parseJsonOutput(`CLI ${label} event_stream_status`, result.stdout);
-    const toolResult = label === 'sequence' ? output.steps?.[0]?.result : output.result;
-    const text = toolResult?.content?.find((block) => block.type === 'text')?.text || '';
-    const inactive = toolResult?.isError ? text.includes('Record & Replay is not enabled') : JSON.parse(text || '{}').isRecording === false;
-    if (!inactive) throw new Error(`CLI ${label} event_stream_status did not prove recording is inactive or unavailable`);
-  }
-  return 'direct and sequence event_stream_status routed without recording';
-}
-
-function runMcpServerSmoke(verbose, schemaOnly = false) {
-  const script = String.raw`
-const { spawn } = require('node:child_process');
-const proc = spawn(process.execPath, ['tools/codex-computer-use-appserver-mcp.mjs'], { cwd: process.cwd(), stdio: ['pipe', 'pipe', 'pipe'] });
-let nextId = 1;
-let buffer = '';
-let sawElicitation = false;
-let stderrTail = '';
-const pending = new Map();
-function failPending(error) {
-  for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(error); }
-  pending.clear();
-}
-proc.on('error', failPending);
-proc.on('exit', (code, signal) => failPending(new Error('MCP wrapper exited code=' + code + ' signal=' + signal + ': ' + stderrTail)));
-function send(message) { proc.stdin.write(JSON.stringify(message) + '\n'); }
-function text(result) { return (result?.content || []).filter((block) => block?.type === 'text').map((block) => block.text || '').join('\n'); }
-function request(method, params = {}, timeoutMs = 120000) {
-  const id = nextId++;
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error(method + ' timed out')); }, timeoutMs);
-    pending.set(id, { resolve, reject, timer });
-    send({ jsonrpc: '2.0', id, method, params });
-  });
-}
-proc.stdout.setEncoding('utf8');
-proc.stdout.on('data', (chunk) => {
-  buffer += chunk;
-  for (;;) {
-    const idx = buffer.indexOf('\n');
-    if (idx === -1) break;
-    const line = buffer.slice(0, idx).trim();
-    buffer = buffer.slice(idx + 1);
-    if (!line) continue;
-    const msg = JSON.parse(line);
-    if (msg.method === 'elicitation/create' && msg.id) {
-      sawElicitation = true;
-      send({ jsonrpc: '2.0', id: msg.id, result: { action: 'decline', content: null } });
-      continue;
-    }
-    if (pending.has(msg.id)) {
-      const p = pending.get(msg.id);
-      clearTimeout(p.timer);
-      pending.delete(msg.id);
-      if (msg.error) p.reject(new Error(msg.error.message));
-      else p.resolve(msg.result);
-    }
-  }
-});
-proc.stderr.on('data', (chunk) => {
-  stderrTail = (stderrTail + chunk).slice(-4000);
-  if (process.env.MACUSE_VALIDATE_VERBOSE) process.stderr.write(chunk);
-});
-(async () => {
-  await request('initialize', { protocolVersion: '2025-06-18', capabilities: { elicitation: { form: {} } }, clientInfo: { name: 'validate-macuse', version: '0' } }, 5000);
-  send({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
-  const listed = await request('tools/list', {}, 5000);
-  const names = listed.tools.map((tool) => tool.name);
-  for (const expected of ['list_apps', 'get_app_state', 'perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag', 'event_stream_start', 'event_stream_status', 'event_stream_stop', 'computer_history_pause', 'computer_history_resume', 'computer_history_status', 'computer_history_get_settings', 'computer_history_update_settings']) {
-    if (!names.includes(expected)) throw new Error('missing MCP tool: ' + expected);
-  }
-  if (names.length !== 18) throw new Error('expected exactly 18 MCP tools, saw ' + names.length);
-  const upstreamKeys = JSON.parse(process.env.MACUSE_UPSTREAM_TOOL_ARG_KEYS);
-  const hostOnlyKeys = new Set(JSON.parse(process.env.MACUSE_HOST_ONLY_TOOL_ARG_KEYS));
-  for (const tool of listed.tools) {
-    const supportedKeys = new Set([...(upstreamKeys[tool.name] || []), ...hostOnlyKeys]);
-    const unsupportedKeys = Object.keys(tool.inputSchema?.properties || {}).filter((key) => !supportedKeys.has(key));
-    if (unsupportedKeys.length) throw new Error(tool.name + ' MCP schema keys are missing from the upstream boundary: ' + unsupportedKeys.join(','));
-  }
-  for (const name of ['perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag']) {
-    const required = listed.tools.find((tool) => tool.name === name)?.inputSchema?.required || [];
-    if (!required.includes('allowMutating') || !required.includes('safetyNote')) throw new Error(name + ' MCP schema does not require mutation authorization');
-  }
-  const updateSettingsSchema = listed.tools.find((tool) => tool.name === 'computer_history_update_settings')?.inputSchema;
-  const settingsSchema = updateSettingsSchema?.properties?.observation;
-  const requiredSettings = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist'];
-  if (Object.hasOwn(updateSettingsSchema?.properties ?? {}, 'showMenuBarIcon')) throw new Error('computer_history_update_settings exposes removed upstream showMenuBarIcon');
-  if (!requiredSettings.every((field) => settingsSchema?.required?.includes(field))) throw new Error('computer_history_update_settings schema does not require all observation fields');
-  if (!settingsSchema?.properties?.allowlist?.items?.properties?.urlDomain?.description?.includes('without a scheme or path')) throw new Error('computer_history_update_settings schema omits URL domain guidance');
-  const annotationExpectations = {
-    event_stream_start: [false, false], event_stream_status: [true, true], event_stream_stop: [false, true],
-    computer_history_pause: [false, true],
-    computer_history_resume: [false, true], computer_history_status: [true, true], computer_history_get_settings: [true, true],
-    computer_history_update_settings: [false, true],
-  };
-  for (const [name, [readOnly, idempotent]] of Object.entries(annotationExpectations)) {
-    const annotations = listed.tools.find((tool) => tool.name === name)?.annotations;
-    if (annotations?.readOnlyHint !== readOnly || annotations?.destructiveHint !== false || annotations?.idempotentHint !== idempotent || annotations?.openWorldHint !== false) throw new Error(name + ' annotations do not match upstream');
-  }
-  if (process.env.MACUSE_MCP_SCHEMA_ONLY !== '1') {
-  const [activityState, eventStatus] = await Promise.all([
-    request('tools/call', { name: 'get_app_state', arguments: { app: 'Activity Monitor' } }, 120000),
-    request('tools/call', { name: 'event_stream_status', arguments: {} }, 120000),
-  ]);
-  if (!text(activityState).includes('Activity Monitor')) throw new Error('parallel MCP Activity Monitor get_app_state did not expose app content');
-  const eventStatusText = text(eventStatus);
-  const eventInactive = eventStatus.isError ? eventStatusText.includes('Record & Replay is not enabled') : JSON.parse(eventStatusText).isRecording === false;
-  if (!eventInactive) throw new Error('parallel MCP event_stream_status did not prove recording is inactive or unavailable');
-  const finder = await request('tools/call', { name: 'get_app_state', arguments: { app: 'Finder', approval: 'ask' } }, 120000);
-  if (sawElicitation && finder.isError !== true) throw new Error('MCP elicitation proxy observed a prompt but did not preserve the decline result');
-  sawElicitation = false;
-  const finderInherit = await request('tools/call', { name: 'get_app_state', arguments: { app: 'Finder' } }, 120000);
-  if (finderInherit.isError === true) throw new Error('MCP default inherit did not auto-accept Finder app approval');
-  }
-  for (const [name, toolArgs, expected] of [
-    ['type_text', { app: 'Activity Monitor', text: 'must not dispatch' }, /allowMutating/],
-    ['click', { app: 'Activity Monitor', elementDescription: 'CPU' }, /allowMutating/],
-    ['click', { app: 'Activity Monitor', elementDescription: 'CPU', allowMutating: true, safetyNote: 'Activity Monitor only; do not dispatch without pointer authorization.' }, /allowPointer/],
-  ]) {
-    const guarded = await request('tools/call', { name, arguments: toolArgs }, 5000);
-    if (guarded?.isError !== true || !expected.test(text(guarded))) throw new Error(name + ' MCP mutation guard did not return a structured failure');
-  }
-  const invalidObservation = { observation: { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [] } };
-  const invalidUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url' }] } };
-  const schemeUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'https://example.com' }] } };
-  const pathUrlObservation = { observation: { ...invalidObservation.observation, allowlist: [{ scope: 'url', urlDomain: 'example.com/path' }] } };
-  for (const [name, toolArgs, expected] of [
-    ['click', { app: 'Activity Monitor', x: 1, y: 1, mouseButton: 'right', allowPointer: true, allowMutating: true, safetyNote: 'Activity Monitor only; reject invalid click arguments before any action.' }, /Unsupported arguments for click: mouseButton/],
-    ['event_stream_start', {}, /allowRecording/],
-    ['computer_history_resume', { allowRecording: true }, /safetyNote/],
-    ['computer_history_update_settings', {}, /allowPrivacyChange/],
-    ['computer_history_update_settings', { allowPrivacyChange: true, safetyNote: 'test guard only' }, /all Computer History settings fields/],
-    ['computer_history_update_settings', { ...invalidObservation, allowPrivacyChange: true, safetyNote: 'test guard only' }, /scope-specific/],
-    ['computer_history_update_settings', { ...invalidUrlObservation, allowPrivacyChange: true, safetyNote: 'test guard only' }, /scope-specific/],
-    ['computer_history_update_settings', { ...schemeUrlObservation, allowPrivacyChange: true, safetyNote: 'test guard only' }, /scope-specific/],
-    ['computer_history_update_settings', { ...pathUrlObservation, allowPrivacyChange: true, safetyNote: 'test guard only' }, /scope-specific/],
-  ]) {
-    const guarded = await request('tools/call', { name, arguments: toolArgs }, 5000);
-    if (guarded?.isError !== true || !expected.test(text(guarded))) throw new Error(name + ' guard did not return a structured failure');
-  }
-  console.log(names.join(','));
-})().then(() => { proc.kill('SIGTERM'); }).catch((error) => { proc.kill('SIGTERM'); console.error(error.stack || error.message); process.exitCode = 1; });
-`;
-  const stdout = run('appserver MCP wrapper smoke', process.execPath, ['-e', script], {
-    env: {
-      MACUSE_VALIDATE_VERBOSE: verbose ? '1' : '',
-      MACUSE_MCP_SCHEMA_ONLY: schemaOnly ? '1' : '',
-      MACUSE_UPSTREAM_TOOL_ARG_KEYS: JSON.stringify(UPSTREAM_TOOL_ARG_KEYS),
-      MACUSE_HOST_ONLY_TOOL_ARG_KEYS: JSON.stringify([...HOST_ONLY_TOOL_ARG_KEYS]),
-    },
-    timeoutMs: 240_000,
-    verbose,
-  });
-  return stdout.trim();
-}
-
-function runMcpLifecycleSmoke(verbose) {
-  const dir = mkdtempSync(join(tmpdir(), 'macuse-mcp-lifecycle-'));
-  const fakeCodex = join(dir, 'fake-codex.cjs');
-  const statePath = join(dir, 'generation');
-  const inventories = Object.fromEntries(Object.entries(MCP_SERVERS).map(([name, server]) => [name, server.tools]));
-  writeFileSync(fakeCodex, `#!/usr/bin/env node
-const { appendFileSync, readFileSync, writeFileSync } = require('node:fs');
-const statePath = process.env.MACUSE_FAKE_STATE;
-let generation = 1;
-try { generation = Number(readFileSync(statePath, 'utf8')) + 1; } catch {}
-writeFileSync(statePath, String(generation));
-appendFileSync(statePath + '.pids', String(process.pid) + '\\n');
-const inventories = ${JSON.stringify(inventories)};
-const ignoreAllSignals = process.env.MACUSE_FAKE_IGNORE_ALL_SIGTERM === '1';
-const staleExitDelayMs = Number(process.env.MACUSE_FAKE_STALE_EXIT_DELAY_MS || 0);
-const noteSignal = () => appendFileSync(statePath + '.sigterm', String(process.pid) + '\\n');
-if (ignoreAllSignals) process.on('SIGTERM', noteSignal);
-else if (generation === 1 && staleExitDelayMs > 0) process.on('SIGTERM', () => { noteSignal(); setTimeout(() => process.exit(0), staleExitDelayMs); });
-let buffer = '';
-function send(message) { process.stdout.write(JSON.stringify(message) + '\\n'); }
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', (chunk) => {
-  buffer += chunk;
-  for (;;) {
-    const index = buffer.indexOf('\\n');
-    if (index === -1) break;
-    const line = buffer.slice(0, index).trim();
-    buffer = buffer.slice(index + 1);
-    if (!line) continue;
-    const message = JSON.parse(line);
-    if (!Object.hasOwn(message, 'id')) continue;
-    if (message.method === 'initialize') send({ jsonrpc: '2.0', id: message.id, result: { capabilities: {}, serverInfo: { name: 'fake', version: '1' } } });
-    else if (message.method === 'config/read') send({ jsonrpc: '2.0', id: message.id, result: { config: { mcp_servers: { unrelated: { command: '/must/not/run', enabled: true } }, plugins: { 'unrelated@example': { enabled: true } } } } });
-    else if (message.method === 'thread/start') {
-      const config = message.params.config;
-      if (config?.mcp_servers?.unrelated?.enabled !== false || config?.plugins?.['unrelated@example']?.enabled !== false || config?.features?.apps !== false) {
-        send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'thread startup did not isolate inherited integrations' } });
-      } else send({ jsonrpc: '2.0', id: message.id, result: { thread: { id: 'fake-' + generation } } });
-    }
-    else if (message.method === 'mcpServerStatus/list') send({ jsonrpc: '2.0', id: message.id, result: { data: Object.entries(inventories).map(([name, tools]) => ({ name, tools: Object.fromEntries(tools.map((tool) => [tool, {}])) })) } });
-    else if (message.method === 'mcpServer/tool/call' && generation === 1 && process.env.MACUSE_FAKE_FAIL_FIRST_CALL === '1') send({ jsonrpc: '2.0', id: message.id, error: { code: -32000, message: 'Transport closed' } });
-    else if (message.method === 'mcpServer/tool/call') {
-      const reply = { jsonrpc: '2.0', id: message.id, result: { content: [{ type: 'text', text: 'App=/System/Applications/Activity Monitor.app (bundleID com.apple.ActivityMonitor, pid 123)\\nWindow: "Activity Monitor", App: Activity Monitor.\\n0 standard window Activity Monitor\\n\\t1 radio button Description: CPU, Value: 1' }], isError: false } };
-      const delay = generation > 1 ? Number(process.env.MACUSE_FAKE_SECOND_CALL_DELAY_MS || 0) : 0;
-      if (delay > 0) setTimeout(() => send(reply), delay);
-      else send(reply);
-    }
-    else send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'not implemented' } });
-  }
-});
-process.stdin.on('end', () => { if (!ignoreAllSignals) process.exit(0); });
-`);
-  chmodSync(fakeCodex, 0o755);
-  const driver = String.raw`
-const { spawn } = require('node:child_process');
-const fs = require('node:fs');
-// The lifecycle suite owns fake transports AND a fake native observation boundary.
-const nativeURL = require('node:url').pathToFileURL(require('node:path').resolve('tools/macos-native.mjs')).href;
-const nativeFixture = 'import { MacOSNative } from ' + JSON.stringify(nativeURL) + ';' +
-  'const snapshot = { frontmost: null, focusedWindow: null };' +
-  'MacOSNative.prototype.beginObservation = async () => ({ id: "fixture", before: snapshot });' +
-  'MacOSNative.prototype.endObservation = async () => ({ before: snapshot, after: snapshot, transitions: [], coverage: { applicationActivation: false, focusedWindow: {}, truncated: false, inputAttribution: false } });' +
-  'MacOSNative.prototype.snapshot = async () => snapshot;' +
-  'MacOSNative.prototype.inspectApp = MacOSNative.prototype.replaceSelectedText = async () => { throw new Error("Native desktop access forbidden in lifecycle fixture"); };' +
-  'MacOSNative.prototype.stop = async () => {};';
-const proc = spawn(process.execPath, ['--import', 'data:text/javascript,' + encodeURIComponent(nativeFixture), 'tools/codex-computer-use-appserver-mcp.mjs'], { cwd: process.cwd(), env: { ...process.env, CODEX_BIN: process.env.MACUSE_FAKE_CODEX, CODEX_CU_MCP_CWD: process.env.MACUSE_FAKE_CWD, MACUSE_FAKE_STATE: process.env.MACUSE_FAKE_STATE }, stdio: ['pipe', 'pipe', 'pipe'] });
-let nextId = 1;
-let buffer = '';
-const pending = new Map();
-let resolveExit;
-const exited = new Promise((resolve) => { resolveExit = resolve; });
-function send(message) { proc.stdin.write(JSON.stringify(message) + '\n'); }
-function request(method, params = {}, timeoutMs = 15000) {
-  const id = nextId++;
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => { pending.delete(id); reject(new Error(method + ' timed out')); }, timeoutMs);
-    pending.set(id, { resolve, reject, timer });
-    send({ jsonrpc: '2.0', id, method, params });
-  });
-}
-function waitForExit(timeoutMs = 5000) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('wrapper shutdown timed out')), timeoutMs);
-    exited.then((value) => { clearTimeout(timer); resolve(value); });
-  });
-}
-function assertChildrenStopped() {
-  const pids = fs.readFileSync(process.env.MACUSE_FAKE_STATE + '.pids', 'utf8').trim().split('\n').filter(Boolean).map(Number);
-  for (const pid of pids) {
-    let alive = true;
-    try { process.kill(pid, 0); } catch { alive = false; }
-    if (alive) throw new Error('wrapper left fake app-server child alive: ' + pid);
-  }
-}
-proc.stdout.setEncoding('utf8');
-proc.stdout.on('data', (chunk) => {
-  buffer += chunk;
-  for (;;) {
-    const index = buffer.indexOf('\n');
-    if (index === -1) break;
-    const line = buffer.slice(0, index).trim();
-    buffer = buffer.slice(index + 1);
-    if (!line) continue;
-    const message = JSON.parse(line);
-    const entry = pending.get(message.id);
-    if (!entry) continue;
-    clearTimeout(entry.timer);
-    pending.delete(message.id);
-    if (message.error) entry.reject(new Error(message.error.message));
-    else entry.resolve(message.result);
-  }
-});
-proc.on('exit', (code, signal) => {
-  for (const entry of pending.values()) { clearTimeout(entry.timer); entry.reject(new Error('wrapper exited code=' + code + ' signal=' + signal)); }
-  pending.clear();
-  resolveExit({ code, signal });
-});
-(async () => {
-  await request('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'lifecycle-test', version: '0' } }, 5000);
-  if (process.env.MACUSE_FAKE_MODE === 'spawn-error') {
-    const failure = await request('tools/call', { name: 'event_stream_status', arguments: {} }, 5000);
-    const message = (failure.content || []).filter(block => block.type === 'text').map(block => block.text).join('\n');
-    if (failure.isError !== true || !/ENOENT|spawn/i.test(message)) throw new Error('spawn failure did not return a structured MCP tool error: ' + message);
-    const listed = await request('tools/list', {}, 5000);
-    if (listed.tools?.length !== 18) throw new Error('wrapper did not survive spawn failure');
-  } else if (process.env.MACUSE_FAKE_MODE === 'overlap-shutdown') {
-    const call = request('tools/call', { name: 'get_app_state', arguments: { app: 'Activity Monitor' } }, 15000).catch(() => null);
-    const marker = process.env.MACUSE_FAKE_STATE + '.sigterm';
-    const deadline = Date.now() + 5000;
-    while (!fs.existsSync(marker) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
-    if (!fs.existsSync(marker)) throw new Error('recovery stop did not reach the fake child');
-    proc.kill('SIGTERM');
-    await waitForExit();
-    await call;
-    assertChildrenStopped();
-    console.log(process.env.MACUSE_FAKE_MODE);
-    return;
-  } else {
-    const result = await request('tools/call', { name: 'get_app_state', arguments: { app: 'Activity Monitor' } }, 15000);
-    const text = (result.content || []).map((block) => block.text || '').join('\n');
-    if (!text.includes('Activity Monitor')) throw new Error('fake app-server did not return expected output');
-    if (process.env.MACUSE_FAKE_MODE === 'stale-exit-recovery' && Number(require('node:fs').readFileSync(process.env.MACUSE_FAKE_STATE, 'utf8')) < 2) throw new Error('fake app-server was not restarted');
-  }
-  proc.kill('SIGTERM');
-  await waitForExit();
-  if (process.env.MACUSE_FAKE_MODE === 'shutdown') assertChildrenStopped();
-  console.log(process.env.MACUSE_FAKE_MODE);
-})().catch((error) => { proc.kill('SIGKILL'); console.error(error.stack || error.message); process.exitCode = 1; });
-`;
-  try {
-    const spawnFailure = run('MCP spawn failure smoke', process.execPath, ['-e', driver], { env: { MACUSE_FAKE_CODEX: fakeCodex, MACUSE_FAKE_CWD: join(dir, 'missing-cwd'), MACUSE_FAKE_STATE: statePath, MACUSE_FAKE_MODE: 'spawn-error' }, timeoutMs: 30_000, verbose });
-    rmSync(statePath, { force: true });
-    rmSync(statePath + '.pids', { force: true });
-    const recovery = run('MCP stale-exit recovery smoke', process.execPath, ['-e', driver], { env: { MACUSE_FAKE_CODEX: fakeCodex, MACUSE_FAKE_CWD: process.cwd(), MACUSE_FAKE_STATE: statePath, MACUSE_FAKE_MODE: 'stale-exit-recovery', MACUSE_FAKE_FAIL_FIRST_CALL: '1', MACUSE_FAKE_STALE_EXIT_DELAY_MS: '100', MACUSE_FAKE_SECOND_CALL_DELAY_MS: '250', MACUSE_MCP_TEST_STOP_FORCE_MS: '1000', MACUSE_MCP_TEST_STOP_GIVE_UP_MS: '25' }, timeoutMs: 30_000, verbose });
-    rmSync(statePath, { force: true });
-    rmSync(statePath + '.pids', { force: true });
-    const shutdown = run('MCP awaited shutdown smoke', process.execPath, ['-e', driver], { env: { MACUSE_FAKE_CODEX: fakeCodex, MACUSE_FAKE_CWD: process.cwd(), MACUSE_FAKE_STATE: statePath, MACUSE_FAKE_MODE: 'shutdown', MACUSE_FAKE_IGNORE_ALL_SIGTERM: '1', MACUSE_MCP_TEST_STOP_FORCE_MS: '50', MACUSE_MCP_TEST_STOP_GIVE_UP_MS: '500' }, timeoutMs: 30_000, verbose });
-    rmSync(statePath, { force: true });
-    rmSync(statePath + '.pids', { force: true });
-    rmSync(statePath + '.sigterm', { force: true });
-    const overlap = run('MCP overlapping recovery/shutdown smoke', process.execPath, ['-e', driver], { env: { MACUSE_FAKE_CODEX: fakeCodex, MACUSE_FAKE_CWD: process.cwd(), MACUSE_FAKE_STATE: statePath, MACUSE_FAKE_MODE: 'overlap-shutdown', MACUSE_FAKE_FAIL_FIRST_CALL: '1', MACUSE_FAKE_IGNORE_ALL_SIGTERM: '1', MACUSE_MCP_TEST_STOP_FORCE_MS: '50', MACUSE_MCP_TEST_STOP_GIVE_UP_MS: '500' }, timeoutMs: 30_000, verbose });
-    return `${spawnFailure.trim()}, ${recovery.trim()}, ${shutdown.trim()}, ${overlap.trim()}`;
-  } finally {
-    // A failed wrapper test must not strand its deliberately signal-resistant fakes.
-    if (existsSync(statePath + '.pids')) {
-      for (const pid of readFileSync(statePath + '.pids', 'utf8').trim().split('\n').map(Number).filter(pid => Number.isInteger(pid) && pid > 1)) {
-        const command = spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8' }).stdout || '';
-        if (command.includes(fakeCodex)) { try { process.kill(pid, 'SIGKILL'); } catch {} }
-      }
-    }
-    rmSync(dir, { recursive: true, force: true });
-  }
-}
-
-function runPiExtensionSmoke(verbose) {
-  const script = String.raw`
-const { createJiti } = require('jiti');
-const jiti = createJiti(process.cwd() + '/validate-extension.js', { interopDefault: true });
-const mod = jiti('./extensions/codex-computer-use.ts');
-const { HOST_ONLY_TOOL_ARG_KEYS, UPSTREAM_TOOL_ARG_KEYS } = jiti('./extensions/codex-computer-use-modules/upstream-tool-args.mjs');
-const factory = mod.default || mod;
-const tools = [];
-const handlers = new Map();
-const messages = [];
-const branchEntries = [];
-const sessionContext = { sessionManager: { getBranch() { return [...branchEntries]; } } };
-const excludedTools = new Set(['drag']);
-let activeTools = [];
-factory({
-  registerTool(def) { tools.push(def); activeTools.push(def.name); },
-  registerCommand() {},
-  on(name, handler) { handlers.set(name, handler); },
-  getActiveTools() { return [...activeTools]; },
-  setActiveTools(names) { activeTools = names.filter((name) => !excludedTools.has(name)); },
-  sendMessage(message) { messages.push(message); branchEntries.push({ type: 'custom_message', customType: message.customType, content: message.content, display: message.display }); },
-});
-const expectedTools = [
-  'list_apps', 'get_app_state', 'perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag',
-  'event_stream_start', 'event_stream_status', 'event_stream_stop',
-  'computer_history_pause', 'computer_history_resume', 'computer_history_status', 'computer_history_get_settings', 'computer_history_update_settings',
-  'macuse_sequence', 'macuse_tools', 'macuse_restart',
-];
-const names = tools.map((tool) => tool.name);
-if (JSON.stringify([...names].sort()) !== JSON.stringify([...expectedTools].sort())) throw new Error('extension tools do not match full surface: ' + names.join(','));
-if (tools.some((tool) => tool.executionMode !== 'sequential')) throw new Error('all extension tools must serialize the shared app-server thread and element cache');
-if (tools.some((tool) => tool.parameters?.additionalProperties !== false)) throw new Error('all public extension tool schemas must reject unknown top-level fields');
-for (const tool of tools) {
-  const upstreamKeys = UPSTREAM_TOOL_ARG_KEYS[tool.name];
-  if (!upstreamKeys) continue;
-  const supportedKeys = new Set([...upstreamKeys, ...HOST_ONLY_TOOL_ARG_KEYS]);
-  const unsupportedKeys = Object.keys(tool.parameters?.properties || {}).filter((key) => !supportedKeys.has(key));
-  if (unsupportedKeys.length) throw new Error(tool.name + ' schema keys are missing from the upstream boundary: ' + unsupportedKeys.join(','));
-}
-const sequenceStepSchema = tools.find((tool) => tool.name === 'macuse_sequence')?.parameters?.properties?.steps?.items;
-if (sequenceStepSchema?.additionalProperties !== true) throw new Error('macuse_sequence step schema must remain permissive for runtime-normalized step fields');
-if (tools.some((tool) => tool.name === 'macuse')) throw new Error('obsolete composite macuse tool is still registered');
-const historySettings = tools.find((tool) => tool.name === 'computer_history_update_settings')?.parameters;
-const historyObservation = historySettings?.properties?.observation;
-const requiredSettings = ['defaultApplicationBehavior', 'defaultURLBehavior', 'allowlist', 'blocklist'];
-if (Object.hasOwn(historySettings?.properties ?? {}, 'showMenuBarIcon')) throw new Error('Computer History schema exposes removed upstream showMenuBarIcon');
-if (!requiredSettings.every((field) => historyObservation?.required?.includes(field))) throw new Error('Computer History schema does not require all observation fields');
-if (!historyObservation?.properties?.allowlist?.items?.properties?.urlDomain?.description?.includes('without scheme or path')) throw new Error('Computer History schema omits URL domain guidance');
-for (const name of ['perform_secondary_action', 'press_key', 'type_text', 'set_value', 'select_text', 'scroll', 'click', 'drag']) {
-  const required = tools.find((tool) => tool.name === name)?.parameters?.required || [];
-  if (!required.includes('allowMutating') || !required.includes('safetyNote')) throw new Error(name + ' schema does not require mutation authorization');
-}
-(async () => {
-  const signal = new AbortController().signal;
-  const byName = new Map(tools.map((tool) => [tool.name, tool]));
-  await handlers.get('session_start')({ reason: 'startup' }, sessionContext);
-  const initialMacuseTools = activeTools.filter((name) => names.includes(name)).sort();
-  const expectedInitialTools = ['get_app_state', 'list_apps', 'macuse_sequence', 'macuse_tools'].sort();
-  if (JSON.stringify(initialMacuseTools) !== JSON.stringify(expectedInitialTools)) throw new Error('initial macuse tools are not lazy: ' + initialMacuseTools.join(','));
-  const loaded = await byName.get('macuse_tools').execute('load', { tools: ['set_value', 'computer_history_status'] }, signal);
-  if (!activeTools.includes('set_value') || !activeTools.includes('computer_history_status') || !loaded.details.added.includes('set_value')) throw new Error('macuse_tools did not activate exact requested tools');
-  await byName.get('macuse_tools').execute('load-overlap', { tools: ['set_value', 'press_key'] }, signal);
-  if (activeTools.length !== new Set(activeTools).size) throw new Error('macuse_tools duplicated an already active tool');
-  const excluded = await byName.get('macuse_tools').execute('load-excluded', { tools: ['drag'] }, signal);
-  if (!excluded.details.unavailable.includes('drag') || !excluded.content[0].text.includes('Unavailable or excluded: drag')) throw new Error('macuse_tools misreported an excluded tool as enabled');
-  for (const tool of tools.filter((tool) => !expectedInitialTools.includes(tool.name))) {
-    if (tool.promptSnippet || tool.promptGuidelines?.length) throw new Error('inactive tool ' + tool.name + ' changes the system prompt when activated');
-  }
-  for (const reason of ['resume', 'fork', 'reload']) {
-    activeTools = [...names];
-    branchEntries.push({ type: 'message', message: { role: 'toolResult', toolName: 'macuse_tools', details: { added: ['set_value'] } } });
-    await handlers.get('session_start')({ reason }, sessionContext);
-    const resetTools = activeTools.filter((name) => names.includes(name)).sort();
-    if (JSON.stringify(resetTools) !== JSON.stringify(expectedInitialTools)) throw new Error(reason + ' did not reset lazy macuse tools');
-  }
-  if (messages.length !== 3 || messages.some((message) => message.customType !== 'macuse-tools-reset' || message.display !== false || !message.content.includes('Call macuse_tools again'))) throw new Error('session boundary reset note is missing or visible');
-  activeTools = [...names];
-  await handlers.get('session_start')({ reason: 'reload' }, sessionContext);
-  if (messages.length !== 3) throw new Error('repeated boundaries duplicated the reset note without a new activation');
-  branchEntries.push({ type: 'message', message: { role: 'toolResult', toolName: 'macuse_tools', details: { added: ['set_value'] } } });
-  await handlers.get('session_start')({ reason: 'startup' }, sessionContext);
-  if (messages.length !== 4) throw new Error('startup continuation did not correct a stale activation claim');
-  branchEntries.length = 0;
-  await handlers.get('session_start')({ reason: 'new' }, sessionContext);
-  if (messages.length !== 4) throw new Error('empty new sessions should not receive a stale-activation note');
-  const invalidObservation = { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [] };
-  const invalidUrlObservation = { ...invalidObservation, allowlist: [{ scope: 'url' }] };
-  const schemeUrlObservation = { ...invalidObservation, allowlist: [{ scope: 'url', urlDomain: 'https://example.com' }] };
-  const pathUrlObservation = { ...invalidObservation, allowlist: [{ scope: 'url', urlDomain: 'example.com/path' }] };
-  for (const [name, params, expected] of [
-    ['event_stream_start', {}, /allowRecording/],
-    ['computer_history_resume', { allowRecording: true }, /safetyNote/],
-    ['set_value', { app: 'Activity Monitor', value: 'x' }, /allowMutating/],
-    ['set_value', { app: 'Activity Monitor', value: 'x', allowMutating: true, safetyNote: 'short' }, /safetyNote/],
-    ['click', { app: 'Activity Monitor', x: 1, y: 1, allowMutating: true, safetyNote: 'Activity Monitor test only; do not click any risky controls.' }, /allowPointer/],
-    ['macuse_sequence', { steps: [{ tool: 'click', arguments: { app: 'Activity Monitor', x: 1, y: 1, mouseButton: 'right' } }], allowMutating: true, allowPointerClick: true, safetyNote: 'Activity Monitor test only; reject invalid click arguments before any action.' }, /Unsupported arguments for click: mouseButton/],
-    ['macuse_sequence', { steps: [{ tool: 'get_app_state', arguments: { app: 'Activity Monitor', approval: 'deny' } }] }, /step arguments cannot set approval/],
-    ['computer_history_update_settings', { allowPrivacyChange: true, safetyNote: 'guard test' }, /all Computer History settings fields/],
-    ['computer_history_update_settings', { observation: invalidObservation, allowPrivacyChange: true, safetyNote: 'guard test' }, /scope-specific/],
-    ['computer_history_update_settings', { observation: invalidUrlObservation, allowPrivacyChange: true, safetyNote: 'guard test' }, /scope-specific/],
-    ['computer_history_update_settings', { observation: schemeUrlObservation, allowPrivacyChange: true, safetyNote: 'guard test' }, /scope-specific/],
-    ['computer_history_update_settings', { observation: pathUrlObservation, allowPrivacyChange: true, safetyNote: 'guard test' }, /scope-specific/],
-  ]) {
-    let guarded = false;
-    try { await byName.get(name).execute('guard', params, signal); } catch (error) { guarded = expected.test(error.message || ''); }
-    if (!guarded) throw new Error(name + ' extension guard did not fail closed');
-  }
-  console.log(names.join(','));
-})().catch((error) => { console.error(error.stack || error.message); process.exitCode = 1; });
-`;
-  const nodePath = [
-    '/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules',
-    '/opt/homebrew/lib/node_modules',
-    process.env.NODE_PATH || '',
-  ].filter(Boolean).join(':');
-  const stdout = run('pi extension registration smoke', process.execPath, ['-e', script], {
-    env: { NODE_PATH: nodePath },
-    timeoutMs: 120_000,
-    verbose,
-  });
-  return stdout.trim();
-}
-
-function runListAppsErrorPreservationSmoke(verbose) {
-  const script = String.raw`
-const { createJiti } = require('jiti');
-const jiti = createJiti(process.cwd() + '/validate-list-apps-error.js', { interopDefault: true });
-const { filterAppListContent, listAppsDisplayContent } = jiti('./extensions/codex-computer-use-modules/apps.ts');
-const { filterToolResult } = jiti('./extensions/codex-computer-use-modules/content.ts');
-const { sanitizeRecoverableComputerUseText } = jiti('./extensions/codex-computer-use-modules/computer-use-recovery.ts');
-const { appServerSessionRecoverySummary, filterToolResult: filterCliToolResult, sanitizeRecoverableComputerUseText: sanitizeCliRecoverableComputerUseText, shouldAutoRecoverComputerUse } = jiti('./tools/cu-helpers.mjs');
-const { computerUseDiagnostic } = jiti('./extensions/codex-computer-use-modules/diagnostics.ts');
-const { normalizePressKeyValue, normalizeToolArguments } = jiti('./extensions/codex-computer-use-modules/elements-state.ts');
-const { UPSTREAM_TOOL_ARG_KEYS, pickUpstreamToolArgs } = jiti('./extensions/codex-computer-use-modules/upstream-tool-args.mjs');
-const errorContent = [{ type: 'text', text: 'NSOSStatusErrorDomain Code=-609 connectionInvalid' }];
-if (normalizePressKeyValue(',', ['COMMAND']) !== 'super+comma') throw new Error('Command-comma key normalization failed');
-if (normalizePressKeyValue('Command+,') !== 'super+comma') throw new Error('Command+, key normalization failed');
-const normalizedArgs = normalizeToolArguments({ app: 'CueboxItem24', key: 'Comma', modifiers: ['COMMAND'] });
-if (normalizedArgs.key !== 'super+comma' || 'modifiers' in normalizedArgs) throw new Error('press_key modifiers were not normalized away');
-const expectedUpstreamTools = Object.values(jiti('./tools/macuse-utils.mjs').MCP_SERVERS).flatMap((server) => server.tools).sort();
-if (JSON.stringify(Object.keys(UPSTREAM_TOOL_ARG_KEYS).sort()) !== JSON.stringify(expectedUpstreamTools)) throw new Error('upstream argument boundary does not cover all 18 tools');
-for (const [tool, keys] of Object.entries(UPSTREAM_TOOL_ARG_KEYS)) {
-  const legal = Object.fromEntries(keys.map((key, index) => [key, index]));
-  const picked = pickUpstreamToolArgs(tool, { ...legal, elementId: 'host-only', allowMutating: true });
-  if (JSON.stringify(picked) !== JSON.stringify(legal)) throw new Error(tool + ' forwarded a host-only argument');
-}
-for (const [tool, args, expected] of [
-  ['click', { app: 'Activity Monitor', x: 1, y: 1, mouseButton: 'right' }, /Unsupported arguments for click: mouseButton/],
-  ['constructor', {}, /Unsupported upstream Computer Use tool: constructor/],
-]) {
-  let rejected = false;
-  try { pickUpstreamToolArgs(tool, args); } catch (error) { rejected = expected.test(error.message || ''); }
-  if (!rejected) throw new Error('upstream argument boundary accepted invalid input for ' + tool);
-}
-const stopSentinelResult = { content: [{ type: 'text', text: 'This application session has been explicitly stopped by the user for this turn. Stop your work and send a final message noting they stopped the session and you\'re ready to continue if they want you to. Computer Use can be used again in the next assistant turn.' }] };
-const stopped = filterToolResult(stopSentinelResult);
-const stoppedText = stopped.content[0]?.text || '';
-if (!stopped.isError || stoppedText.includes('Stop your work') || !stoppedText.includes('normal tool error')) throw new Error('app-session stop sentinel was not sanitized into a normal tool error');
-const sanitizedError = sanitizeRecoverableComputerUseText('mcpServer/tool/call failed: This application session has been explicitly stopped by the user for this turn. Stop your work now.');
-if (!sanitizedError.forcedError || sanitizedError.text.includes('Stop your work')) throw new Error('recoverable extension error text sanitizer leaked stop instructions');
-const cliStopped = filterCliToolResult(stopSentinelResult, { maxTextChars: 1000 });
-const cliStoppedText = cliStopped.content[0]?.text || '';
-if (!cliStopped.isError || cliStoppedText.includes('Stop your work') || !cliStoppedText.includes('normal tool error')) throw new Error('CLI helper app-session stop sentinel was not sanitized into a normal tool error');
-const sanitizedCliError = sanitizeCliRecoverableComputerUseText('mcpServer/tool/call failed: This application session has been explicitly stopped by the user for this turn. Stop your work now.');
-if (!sanitizedCliError.forcedError || sanitizedCliError.text.includes('Stop your work')) throw new Error('recoverable CLI error text sanitizer leaked stop instructions');
-const displayed = listAppsDisplayContent({ content: errorContent, isError: true }, { filter: 'nope', maxTextChars: 1000 });
-if (displayed[0].text.includes('No apps matched')) throw new Error('list_apps error was masked as empty filter result');
-const filtered = filterAppListContent(errorContent, { filter: 'nope', maxTextChars: 1000 });
-if (!filtered[0].text.includes('No apps matched')) throw new Error('normal list_apps filtering stopped summarizing empty filters');
-const accessDeniedState = { content: [{ type: 'text', text: 'Visible page text: Access Denied connectionInvalid' }], isError: false };
-if (computerUseDiagnostic(accessDeniedState, 'get_app_state', { app: 'Browser' })) throw new Error('non-error app text produced a TCC diagnostic');
-const tccError = { content: errorContent, isError: true };
-if (!computerUseDiagnostic(tccError, 'list_apps', {})) throw new Error('TCC list_apps error did not produce a diagnostic');
-const keyErrorDiagnostic = computerUseDiagnostic({ content: [{ type: 'text', text: 'Computer Use server error -10005: keyNotFound(",")' }], isError: true }, 'press_key', { app: 'CueboxItem24' });
-if (!keyErrorDiagnostic?.includes('press_key') || keyErrorDiagnostic.includes('timed out')) throw new Error('keyNotFound diagnostic was not key-specific');
-const noWindowDiagnostic = computerUseDiagnostic({ content: [{ type: 'text', text: 'Computer Use server error -10005: noWindowsAvailable' }], isError: true }, 'click', { app: 'CueboxItem24' });
-if (!noWindowDiagnostic?.includes('last window closed') || !noWindowDiagnostic.includes('does not prove') || noWindowDiagnostic.includes('pointer click') || noWindowDiagnostic.includes('timed out')) throw new Error('noWindowsAvailable diagnostic did not preserve unknown close outcome');
-const timeoutDiagnostic = computerUseDiagnostic({ content: [{ type: 'text', text: 'Computer Use server error -10005: timeoutReached' }], isError: true }, 'get_app_state', { app: 'Chrome' });
-if (!timeoutDiagnostic?.includes('timed out')) throw new Error('timeoutReached diagnostic stopped reporting timeouts');
-if (!shouldAutoRecoverComputerUse('get_app_state', 'Transport closed')) throw new Error('read-only recovery classifier missed transport failures');
-if (!shouldAutoRecoverComputerUse('event_stream_status', 'Transport closed')) throw new Error('auxiliary read-only recovery classifier missed transport failures');
-if (!shouldAutoRecoverComputerUse('computer_history_status', 'Transport closed')) throw new Error('Computer History status recovery classifier missed transport failures');
-if (!shouldAutoRecoverComputerUse('computer_history_get_settings', 'Transport closed')) throw new Error('Computer History settings recovery classifier missed transport failures');
-if (shouldAutoRecoverComputerUse('event_stream_start', 'Transport closed')) throw new Error('recording start recovery classifier allowed auto-recovery');
-if (shouldAutoRecoverComputerUse('computer_history_resume', 'Transport closed')) throw new Error('recording resume recovery classifier allowed auto-recovery');
-if (shouldAutoRecoverComputerUse('click', 'Transport closed')) throw new Error('mutating recovery classifier allowed auto-recovery');
-const cliRecovery = appServerSessionRecoverySummary('test');
-if (cliRecovery.scope !== 'app-server-session' || cliRecovery.targets.length !== 0) throw new Error('automatic CLI recovery is not scoped to app-server session only');
-console.log('list-apps-error-preserved');
-`;
-  const nodePath = [
-    '/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules',
-    '/opt/homebrew/lib/node_modules',
-    process.env.NODE_PATH || '',
-  ].filter(Boolean).join(':');
-  const stdout = run('list_apps error preservation smoke', process.execPath, ['-e', script], {
-    env: { NODE_PATH: nodePath },
-    timeoutMs: 120_000,
-    verbose,
-  });
-  return stdout.trim();
-}
-
-function runFreshStatePreflightSmoke(verbose) {
-  const script = String.raw`
-const { createJiti } = require('jiti');
-const jiti = createJiti(process.cwd() + '/validate-fresh-state.js', { interopDefault: true });
-const { executeSequence } = jiti('./extensions/codex-computer-use-modules/sequence-runner.ts');
-const { macosNative, stopNativeObserver } = jiti('./extensions/codex-computer-use-modules/macos-focus.ts');
-// Mock the native boundary too: extension mode must never inspect the live desktop.
-const userApp = { pid: 99, name: 'Fixture editor', bundleId: 'fixture.editor', path: '/Fixture.app' };
-const snapshot = { frontmost: userApp, focusedWindow: null };
-let observations = 0;
-macosNative.beginObservation = async () => { observations++; return { id: 'fixture-observation', before: snapshot }; };
-macosNative.endObservation = async () => {
-  observations--;
-  return { before: snapshot, after: snapshot, transitions: [
-    { kind: 'activation', at: 1, app: { pid: 123, name: 'Activity Monitor', bundleId: 'com.apple.ActivityMonitor', path: '/System/Applications/Activity Monitor.app' } },
-    { kind: 'activation', at: 2, app: userApp },
-  ], coverage: { applicationActivation: true, focusedWindow: {}, truncated: false, inputAttribution: false } };
+const checked = result => {
+  assert.equal(result.isError, false, result.content.filter(p => p.type === 'text').map(p => p.text).join('\n'));
+  return result;
 };
-macosNative.inspectApp = async () => { throw new Error('Unexpected native inspection in mocked preflight test'); };
-macosNative.snapshot = async () => snapshot;
-const calls = [];
-const client = {
-  async callTool(tool, args) {
-    calls.push({ tool, args });
-    const text = tool === 'get_app_state' ? 'Computer Use state (CUA App Version: 1001067)\n<app_state>\nApp=/System/Applications/Activity Monitor.app (bundleID com.apple.ActivityMonitor, pid 123)\nWindow: "Activity Monitor", App: Activity Monitor.\n0 standard window Activity Monitor\n\t1 radio button Description: CPU, Value: 1\n</app_state>' : 'Pressed Escape';
-    return { result: { content: [{ type: 'text', text }], isError: false }, durationMs: 1, acceptedElicitations: 0, elicitationCount: 0 };
-  },
-  status() { return { threadId: 'test-thread', stderrTail: '', computerUseRecoveryEvents: [] }; },
+const selectedTab = observation => {
+  const selected = observation?.elements.filter(e => e.role === 'radio button' && e.value === '1' && ['CPU', 'Memory', 'Energy', 'Disk', 'Network'].includes(e.description ?? e.name));
+  return selected?.length === 1 ? selected[0].description ?? selected[0].name : undefined;
 };
-(async () => {
-  const result = await executeSequence({
-    app: 'Activity Monitor',
-    steps: [{ tool: 'press_key', arguments: { key: 'Escape' }, expectVisibleText: ['CPU'] }],
-    allowMutating: true,
-    safetyNote: 'Activity Monitor only; press Escape and stop without other changes.',
-    detail: 'minimal',
-  }, new AbortController().signal, undefined, () => client, new Map());
-  if (result.details.computerUse.failed) throw new Error('fresh-state sequence failed');
-  if (calls.map((call) => call.tool).join(',') !== 'get_app_state,press_key,get_app_state') throw new Error('non-element mutation did not refresh before dispatch and read back its asserted outcome');
-  if (result.details.computerUse.implicitRefreshes !== 1) throw new Error('fresh-state preflight was not reported');
-  const focus = result.details.computerUse.focus;
-  if (!focus?.changed || !focus.observationAvailable || focus.observedChanges !== 2 || focus.before?.[0]?.bundleId !== focus.after?.[0]?.bundleId || focus.coverage?.inputAttribution !== false) throw new Error('transient activation was missed or falsely attributed despite identical before/after snapshots');
-  if (observations !== 0) throw new Error('successful sequence leaked a focus observation');
-  for (const [tool, toolArgs, options, expected] of [
-    ['event_stream_start', {}, {}, /allowRecording/],
-    ['computer_history_resume', {}, {}, /allowRecording/],
-    ['computer_history_update_settings', { observation: { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [], blocklist: [] } }, {}, /allowPrivacyChange/],
-    ['computer_history_update_settings', { observation: { defaultApplicationBehavior: 'observe', defaultURLBehavior: 'observe', allowlist: [{ scope: 'app' }], blocklist: [] } }, { allowPrivacyChange: true }, /all Computer History settings fields/],
-  ]) {
-    calls.length = 0;
-    let message = '';
-    try {
-      await executeSequence({ steps: [{ tool, arguments: toolArgs }], allowMutating: true, safetyNote: 'Test auxiliary guard only; do not dispatch without the dedicated authorization.', ...options }, new AbortController().signal, undefined, () => client, new Map());
-    } catch (error) { message = error.message || String(error); }
-    if (!expected.test(message) || calls.length !== 0) throw new Error(tool + ' sequence guard did not fail closed before dispatch: ' + message);
-  }
-  calls.length = 0;
-  const authorizedRecording = await executeSequence({ steps: [{ tool: 'event_stream_start', arguments: {} }], allowMutating: true, allowRecording: true, safetyNote: 'Test fake Record and Replay start only; stop after the mocked dispatch.' }, new AbortController().signal, undefined, () => client, new Map());
-  if (authorizedRecording.details.computerUse.failed || calls.map((call) => call.tool).join(',') !== 'event_stream_start') throw new Error('authorized sequenced recording did not reach the routed fake client');
-  const blockedCalls = [];
-  const failingClient = {
-    async callTool(tool) {
-      blockedCalls.push(tool);
-      if (tool !== 'get_app_state') throw new Error('mutation dispatched after failed preflight');
-      return { result: { content: [{ type: 'text', text: 'state unavailable' }], isError: true }, durationMs: 1, acceptedElicitations: 0, elicitationCount: 0 };
-    },
-    status: client.status,
-  };
-  const failed = await executeSequence({ app: 'Activity Monitor', steps: [{ tool: 'press_key', arguments: { key: 'Escape' } }], allowMutating: true, safetyNote: 'Activity Monitor only; block dispatch when fresh state is unavailable.', detail: 'minimal' }, new AbortController().signal, undefined, () => failingClient, new Map());
-  const failure = failed.details.computerUse;
-  if (blockedCalls.join(',') !== 'get_app_state') throw new Error('failed fresh-state preflight did not block mutation dispatch');
-  if (!failure.isError || !/Fresh app-state preflight failed/.test(failure.failed?.message || '') || failure.failed?.dispatched !== false || failure.resumeFromStepIndex !== 0) throw new Error('preflight failure lost structured error/dispatch/resume evidence');
-  if (observations !== 0) throw new Error('failed sequence leaked a focus observation');
-  calls.length = 0;
-  let stateReads = 0;
-  const readbackFailureClient = { ...client, async callTool(tool, args) {
-    if (tool === 'get_app_state' && ++stateReads === 2) {
-      calls.push({ tool, args });
-      return { result: { content: [{ type: 'text', text: 'readback unavailable' }], isError: true }, durationMs: 1, acceptedElicitations: 0, elicitationCount: 0 };
-    }
-    return client.callTool(tool, args);
-  } };
-  const unverified = await executeSequence({ app: 'Activity Monitor', steps: [{ tool: 'press_key', arguments: { key: 'Escape' }, expectVisibleText: ['CPU'] }], allowMutating: true, safetyNote: 'Fixture only; require readback and never replay a dispatched action.' }, undefined, undefined, () => readbackFailureClient, new Map());
-  const unknown = unverified.details.computerUse;
-  if (!unknown.isError || !/post-action state is unavailable/.test(unknown.failed?.message || '') || unknown.failed?.dispatched !== true || unknown.resumeFromStepIndex !== null || calls.map(call => call.tool).join(',') !== 'get_app_state,press_key,get_app_state') throw new Error('failed readback lost dispatch evidence or replayed the action');
-  const handlers = new Map();
-  const extension = jiti('./extensions/codex-computer-use.ts');
-  (extension.default || extension)({ registerTool() {}, registerCommand() {}, on(name, handler) { handlers.set(name, handler); } });
-  const patch = await handlers.get('tool_result')({ toolName: 'macuse_sequence', details: unverified.details, content: unverified.content, isError: false });
-  if (patch?.isError !== true) throw new Error('structured sequence failure did not become a Pi tool error');
-  if (observations !== 0) throw new Error('readback failure leaked a focus observation');
-  console.log('fresh-state-preflight, structured failures, readback, transient activation');
-})().catch((error) => { console.error(error.stack || error.message); process.exitCode = 1; }).finally(() => stopNativeObserver());
-`;
-  const nodePath = [
-    '/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules',
-    '/opt/homebrew/lib/node_modules',
-    process.env.NODE_PATH || '',
-  ].filter(Boolean).join(':');
-  return run('fresh state preflight smoke', process.execPath, ['-e', script], { env: { NODE_PATH: nodePath }, timeoutMs: 120_000, verbose }).trim();
-}
 
-function runPiExtensionPersistentSmoke(verbose) {
-  const script = String.raw`
-const { createJiti } = require('jiti');
-const jiti = createJiti(process.cwd() + '/validate-extension-persistent.js', { interopDefault: true });
-const mod = jiti('./extensions/codex-computer-use.ts');
-const factory = mod.default || mod;
-const tools = new Map();
-const commands = new Map();
-const handlers = new Map();
-factory({
-  registerTool(def) { tools.set(def.name, def); },
-  registerCommand(name, def) { commands.set(name, def); },
-  on(name, handler) { handlers.set(name, handler); },
-});
-(async () => {
-  const signal = new AbortController().signal;
-  if (!commands.has('macuse-stop')) throw new Error('pi extension did not register /macuse-stop');
-  if (!commands.has('macuse-status')) throw new Error('pi extension did not register /macuse-status');
-  const notifications = [];
-  const commandCtx = { hasUI: true, ui: { notify(message, level) { notifications.push({ message, level }); } } };
-  await commands.get('macuse-status').handler('', commandCtx);
-  const lazyStatus = notifications.at(-1)?.message || '';
-  if (!lazyStatus.includes('has not been started')) throw new Error('pi extension /macuse-status started or missed lazy stopped state before any tool call: ' + lazyStatus);
-  const eventStatusTool = tools.get('event_stream_status');
-  const sequenceTool = tools.get('macuse_sequence');
-  const listApps = tools.get('list_apps');
-  const getAppState = tools.get('get_app_state');
-  if (!eventStatusTool || !sequenceTool || !listApps || !getAppState) throw new Error('missing direct extension tools: ' + [...tools.keys()].join(','));
-  const eventStatus = await eventStatusTool.execute('event-status', { toolTimeoutMs: 90000 }, signal, () => {});
-  const eventStatusText = eventStatus.content[0]?.text || '';
-  const eventInactive = eventStatus.details.computerUse.isError ? eventStatusText.includes('Record & Replay is not enabled') : JSON.parse(eventStatusText).isRecording === false;
-  if (!eventInactive) throw new Error('pi event_stream_status did not prove recording is inactive or unavailable');
-  const sequencedEventStatus = await sequenceTool.execute('event-status-sequence', { steps: [{ tool: 'event_stream_status', arguments: {} }], detail: 'minimal', toolTimeoutMs: 90000 }, signal, () => {});
-  const sequencedStatus = sequencedEventStatus.details.computerUse;
-  const unavailable = eventStatus.details.computerUse.isError && eventStatusText.includes('Record & Replay is not enabled');
-  if (unavailable) {
-    if (sequencedStatus.failed?.index !== 0 || sequencedStatus.steps?.[0]?.isError !== true || !/Record & Replay is not enabled/.test(sequencedStatus.failed?.message || '')) throw new Error('pi sequence did not preserve the unavailable Record & Replay status as a structured error');
-  } else if (sequencedStatus.failed || sequencedStatus.steps?.[0]?.isError !== false) throw new Error('pi sequence did not route event_stream_status to Record & Replay');
-  const running = await listApps.execute('running', { runningOnly: true, maxTextChars: 5000, toolTimeoutMs: 90000 }, signal, () => {});
-  if (!running.content[0].text.includes('running')) throw new Error('pi extension runningOnly list_apps returned no running apps');
-  const nonRunningLines = running.content[0].text.split('\n').filter((line) => line.trim() && !line.includes('running'));
-  if (nonRunningLines.length > 0) throw new Error('pi extension runningOnly list_apps kept non-running lines: ' + nonRunningLines.slice(0, 3).join(' | '));
-  const state = await getAppState.execute('state', { app: 'Activity Monitor', maxTextChars: 500, toolTimeoutMs: 90000 }, signal, () => {});
-  const firstThread = eventStatus.details.computerUse.threadId;
-  const secondThread = state.details.computerUse.threadId;
-  if (!firstThread || firstThread !== secondThread) throw new Error('pi extension did not reuse its app-server thread across MCP families');
-  if (state.details.computerUse.isError) throw new Error('pi extension get_app_state returned isError for Activity Monitor');
-  await commands.get('macuse-status').handler('', commandCtx);
-  const runningStatus = notifications.at(-1)?.message || '';
-  if (!runningStatus.includes('running') || !/pid=\d+/.test(runningStatus) || !/watchdog=\d+/.test(runningStatus)) throw new Error('pi extension /macuse-status did not report pid/watchdog while running: ' + runningStatus);
-  await commands.get('macuse-stop').handler('', commandCtx);
-  await commands.get('macuse-status').handler('', commandCtx);
-  const stoppedStatus = notifications.at(-1)?.message || '';
-  if (!stoppedStatus.includes('stopped')) throw new Error('pi extension /macuse-stop did not stop app-server: ' + stoppedStatus);
-  if (handlers.has('session_shutdown')) await handlers.get('session_shutdown')({ reason: 'test' }, {});
-  console.log(firstThread);
-})().catch(async (error) => {
-  try { if (handlers.has('session_shutdown')) await handlers.get('session_shutdown')({ reason: 'test' }, {}); } catch {}
-  console.error(error.stack || error.message);
-  process.exitCode = 1;
-});
-`;
-  const nodePath = [
-    '/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules',
-    '/opt/homebrew/lib/node_modules',
-    process.env.NODE_PATH || '',
-  ].filter(Boolean).join(':');
-  const stdout = run('pi extension persistent app-server smoke', process.execPath, ['-e', script], {
-    env: { NODE_PATH: nodePath },
-    timeoutMs: 240_000,
-    verbose,
-  });
-  return stdout.trim();
-}
-
-function runPiExtensionActualAppSmoke(verbose, strictFocus, fixtureMode = '') {
-  const script = String.raw`
-const { createJiti } = require('jiti');
-const jiti = createJiti(process.cwd() + '/validate-extension-actual-app.js', { interopDefault: true });
-const mod = jiti('./extensions/codex-computer-use.ts');
-const factory = mod.default || mod;
-const tools = new Map();
-const handlers = new Map();
-factory({
-  registerTool(def) { tools.set(def.name, def); },
-  registerCommand() {},
-  on(name, handler) { handlers.set(name, handler); },
-});
-// Exercise this exact live-smoke cleanup flow offline, not a separate copy.
-const fixtureMode = process.env.MACUSE_VALIDATE_ACTUAL_FIXTURE;
-if (fixtureMode) {
-  const original = fixtureMode === 'initial-memory' ? 'Memory' : fixtureMode === 'unknown-selection' ? null : 'Disk';
-  let selected = original;
-  let mutationCount = 0;
-  let switchCount = 0;
-  let restoredCount = 0;
-  const user = { bundleId: 'fixture.editor' };
-  for (const name of ['get_app_state', 'press_key', 'perform_secondary_action', 'macuse_sequence']) {
-    const definition = tools.get(name);
-    definition.execute = async (id, params) => {
-      for (const key of Object.keys(params)) if (!Object.hasOwn(definition.parameters.properties, key)) throw new Error('smoke supplied unsupported ' + name + ' argument: ' + key);
-      const mutation = name === 'press_key' || name === 'perform_secondary_action';
-      if (mutation) mutationCount++;
-      if (name === 'perform_secondary_action') {
-        selected = params.elementDescription;
-        if (id === 'restore-original-tab') restoredCount++;
-        else switchCount++;
-      }
-      const elements = ['CPU', 'Memory', 'Energy', 'Disk', 'Network'].map(description => ({ role: 'radio button', description, value: description === selected ? '1' : '0' }));
-      const transitions = fixtureMode === 'transient-activation' && id === 'switch-tab' ? [
-        { kind: 'activation', app: { bundleId: 'com.apple.ActivityMonitor' } }, { kind: 'activation', app: user },
-      ] : [];
-      const failed = fixtureMode === 'action-failure' && id === 'switch-tab' ? { message: 'fixture failure after tab mutation', dispatched: true } : null;
-      return { content: [{ type: 'text', text: 'fixture state' }], details: { computerUse: {
-        failed, isError: Boolean(failed), defaultApp: 'Activity Monitor', implicitRefreshes: mutation ? 1 : 0,
-        elements, steps: [{ elements }], focus: { before: [user], after: [user], transitions,
-          observationAvailable: fixtureMode !== 'missing-coverage',
-          coverage: { applicationActivation: fixtureMode !== 'missing-coverage', truncated: false, inputAttribution: false } },
-      } } };
-    };
-  }
-  handlers.set('session_shutdown', async () => {
-    if (selected !== original) throw new Error('fixture original selection was not restored');
-    if (fixtureMode === 'unknown-selection' || fixtureMode === 'missing-coverage') {
-      if (mutationCount !== 0) throw new Error('fixture mutated without known selection/coverage');
-    } else if (switchCount !== 1 || restoredCount !== 1) throw new Error('fixture did not switch once and restore exactly once');
-    process.stderr.write('fixture cleanup verified\n');
-  });
-}
-(async () => {
-  const signal = new AbortController().signal;
-  const strictFocus = process.env.MACUSE_VALIDATE_STRICT_FOCUS === '1';
-  const getAppState = tools.get('get_app_state');
-  const pressKey = tools.get('press_key');
-  const secondaryAction = tools.get('perform_secondary_action');
-  const sequenceTool = tools.get('macuse_sequence');
-  if (!getAppState || !pressKey || !secondaryAction || !sequenceTool) throw new Error('missing direct/sequence extension tools: ' + [...tools.keys()].join(','));
-  const safetyNote = 'Validate Activity Monitor only: Escape and tab selection, restoring the captured original tab; never press Stop, Inspector, Actions, or terminate processes.';
-  const readOptions = { app: 'Activity Monitor', detail: 'minimal', targetScope: 'main', maxTextChars: 12000, toolTimeoutMs: 120000 };
-  const common = { ...readOptions, allowMutating: true, safetyNote, requireStateChange: true };
-  const tabNames = new Set(['CPU', 'Memory', 'Energy', 'Disk', 'Network']);
-  const tabName = element => element.description || element.name;
-  const tabs = elements => (elements || []).filter(element => element.role === 'radio button' && tabNames.has(tabName(element)));
-  const selectedTab = elements => {
-    const selected = tabs(elements).filter(element => element.value === '1');
-    return selected.length === 1 ? tabName(selected[0]) : null;
+export async function activityMonitorCheck(session, { strictFocus = false, timeoutMs = 90000 } = {}) {
+  const app = 'Activity Monitor', results = [], failures = [];
+  let original, attempted = false;
+  const call = async code => {
+    const result = await session.callTool('macuse', { code, apps: [app], allowMutating: true, safetyNote: 'Activity Monitor only: select a tab and restore its original selection; never Stop, Inspector, Actions, or terminate processes.', timeoutMs });
+    results.push(result);
+    return checked(result);
   };
-  const failures = [];
-  const focusWarnings = [];
-  const focusFailures = [];
-  const isTarget = app => app.bundleId === 'com.apple.ActivityMonitor';
-  const checkFocus = (label, result) => {
-    const focus = result.details.computerUse.focus;
-    if (!focus?.observationAvailable || !focus.coverage?.applicationActivation || focus.coverage?.truncated || !Array.isArray(focus.transitions) || !focus.before?.length || !focus.after?.length) {
-      (strictFocus ? focusFailures : focusWarnings).push(label + ': native in-operation activation coverage unavailable/incomplete; focus isolation unproven');
-      return;
-    }
-    const activations = focus.transitions.filter(event => event.kind === 'activation');
-    const targetActivated = activations.some(event => isTarget(event.app)) || (!focus.before.some(isTarget) && focus.after.some(isTarget));
-    if (targetActivated) (strictFocus ? focusFailures : focusWarnings).push(label + ': target activation observed during operation (including transient activation); attribution unknown');
-    if (focus.before.some(isTarget)) (strictFocus ? focusFailures : focusWarnings).push(label + ': target was already frontmost; background isolation unproven');
-    if (activations.some(event => !isTarget(event.app))) focusWarnings.push(label + ': other application activation observed; attribution unknown, not assumed user-driven');
+  const read = () => call('await activity.getAXState()');
+  const tab = name => {
+    const matches = session.runtime.getObservation(app)?.elements.filter(e => e.role === 'radio button' && (e.description ?? e.name) === name);
+    assert.equal(matches?.length, 1, `Expected one ${name} tab`);
+    return matches[0];
   };
-  const checkResult = (label, result) => {
-    checkFocus(label, result);
-    const d = result.details.computerUse;
-    if (d.failed || d.isError) throw new Error(label + ' failed: ' + (d.failed?.message || 'upstream error'));
-    return d;
+  const press = async name => {
+    const target = tab(name);
+    return call(`await activity.performSecondaryAction(${Number(target.index)}, "Press"); await activity.getAXState()`);
   };
-  let originalTab = null;
-  let mutationAttempted = false;
+  const checkFocus = result => {
+    const f = result.details.macuse.focus;
+    assert.ok(f?.observationAvailable && f.coverage.applicationActivation && !f.coverage.truncated && f.before?.frontmost && f.after?.frontmost, 'Native activation coverage unavailable; background behavior is unproven');
+    const target = a => a?.bundleId === 'com.apple.ActivityMonitor';
+    assert.equal(target(f.before.frontmost), false, 'Activity Monitor is already frontmost; background behavior is unproven');
+    assert.equal(target(f.after.frontmost) || f.transitions.some(e => e.kind === 'activation' && target(e.app)), false, 'Activity Monitor activation observed; attribution unknown');
+  };
   try {
-    const before = await getAppState.execute('before', readOptions, signal, () => {});
-    const initial = checkResult('initial read', before);
-    originalTab = selectedTab(initial.elements);
-    if (!originalTab) throw new Error('initial Activity Monitor selection is unknown/ambiguous; no mutation performed');
-    const alternateTab = originalTab === 'Memory' ? 'CPU' : 'Memory';
-    if (!tabs(initial.elements).some(element => tabName(element) === alternateTab)) throw new Error('alternate tab unavailable; no mutation performed');
-    if (strictFocus && focusFailures.length) throw new Error(focusFailures.join('; ') + '; no mutation performed');
-    mutationAttempted = true; // Even a rejected/unknown action may have changed state.
-    const escape = await pressKey.execute('fresh-state-escape', { ...common, key: 'Escape', requireStateChange: false }, signal, () => {});
-    const escapeDetails = checkResult('Escape', escape);
-    if (escapeDetails.implicitRefreshes < 1) throw new Error('Escape omitted fresh-state preflight');
-    const escaped = await getAppState.execute('escape-readback', readOptions, signal, () => {});
-    if (selectedTab(checkResult('Escape readback', escaped).elements) !== originalTab) throw new Error('Escape unexpectedly changed the selected tab');
-    const switched = await secondaryAction.execute('switch-tab', { ...common, elementDescription: alternateTab, action: 'Press' }, signal, () => {});
-    const switchedDetails = checkResult('tab switch', switched);
-    if (selectedTab(switchedDetails.steps?.[0]?.elements) !== alternateTab) throw new Error('direct tab action did not select the alternate tab');
-    if (switchedDetails.defaultApp !== 'Activity Monitor') throw new Error('direct action omitted target-app metadata');
-  } catch (error) {
-    failures.push(error);
-  } finally {
-    // Restore the actual original selection even after a failed assertion/action.
-    // Never guess CPU, and never mutate when the initial selection was unknown.
-    if (originalTab && mutationAttempted) {
+    const first = await call('var activity = await cua.getApp("Activity Monitor")');
+    original = selectedTab(session.runtime.getObservation(app));
+    assert.ok(original, 'Original Activity Monitor tab is unknown; no mutation performed');
+    if (strictFocus) checkFocus(first);
+    const alternate = original === 'Memory' ? 'CPU' : 'Memory';
+    tab(alternate);
+    attempted = true;
+    await press(alternate);
+    assert.equal(selectedTab(session.runtime.getObservation(app)), alternate);
+  } catch (error) { failures.push(error); }
+  finally {
+    if (original && attempted) {
       try {
-        const current = await getAppState.execute('cleanup-read', readOptions, signal, () => {});
-        const currentDetails = checkResult('cleanup read', current);
-        if (selectedTab(currentDetails.elements) !== originalTab) {
-          const restored = await secondaryAction.execute('restore-original-tab', { ...common, elementDescription: originalTab, action: 'Press', requireStateChange: false }, signal, () => {});
-          checkResult('restore original tab', restored);
-        }
-        const final = await sequenceTool.execute('final-sequence-read', {
-          ...readOptions, steps: [{ label: 'original-tab-state', tool: 'get_app_state', arguments: {}, expectVisibleText: [originalTab] }],
-        }, signal, () => {});
-        const finalDetails = checkResult('final sequence read', final);
-        if (selectedTab(finalDetails.steps?.[0]?.elements) !== originalTab) throw new Error('final sequence read did not confirm the original tab');
-      } catch (error) { failures.push(new Error('Activity Monitor cleanup failed: ' + error.message)); }
+        await read();
+        if (selectedTab(session.runtime.getObservation(app)) !== original) await press(original);
+        assert.equal(selectedTab(session.runtime.getObservation(app)), original, 'Original tab was not restored');
+      } catch (error) { failures.push(new Error(`Activity Monitor cleanup failed: ${error.message}`)); }
     }
-    try { if (handlers.has('session_shutdown')) await handlers.get('session_shutdown')({ reason: 'test' }, {}); }
-    catch (error) { failures.push(error); }
   }
-  failures.push(...focusFailures.map(message => new Error(message)));
-  if (failures.length) throw new AggregateError(failures, failures.map(error => error.message).join('; '));
-  console.log(JSON.stringify({ summary: 'Activity Monitor direct tools and sequence readback; original tab restored; activation attribution unknown', focusWarnings }));
-})().catch(async (error) => {
-  try { if (handlers.has('session_shutdown')) await handlers.get('session_shutdown')({ reason: 'test' }, {}); } catch {}
-  console.error(error.stack || error.message);
-  process.exitCode = 1;
-});
-`;
-  const nodePath = [
-    '/opt/homebrew/lib/node_modules/@earendil-works/pi-coding-agent/node_modules',
-    '/opt/homebrew/lib/node_modules',
-    process.env.NODE_PATH || '',
-  ].filter(Boolean).join(':');
-  const stdout = run('pi extension actual-app smoke', process.execPath, ['-e', script], {
-    env: { NODE_PATH: nodePath, MACUSE_VALIDATE_VERBOSE: verbose ? '1' : '', MACUSE_VALIDATE_STRICT_FOCUS: strictFocus ? '1' : '', MACUSE_VALIDATE_ACTUAL_FIXTURE: fixtureMode },
-    quietOnFailure: Boolean(fixtureMode),
-    timeoutMs: fixtureMode ? 30_000 : 900_000,
-    verbose,
-  });
-  return parseJsonOutput('Activity Monitor smoke', stdout);
+  if (strictFocus) for (const result of results) { try { checkFocus(result); } catch (error) { failures.push(error); } }
+  if (failures.length) throw new AggregateError(failures, failures.map(e => e.message).join('; '));
+  return { originalTab: original, restored: true, inputAttribution: 'unknown', operations: results.map(r => r.details.macuse) };
 }
 
-function runActualAppCleanupFixtures(verbose) {
-  for (const mode of ['initial-disk', 'initial-memory']) runPiExtensionActualAppSmoke(verbose, true, mode);
-  for (const [mode, expected] of [
-    ['unknown-selection', /initial Activity Monitor selection is unknown/],
-    ['action-failure', /fixture failure after tab mutation/],
-    ['transient-activation', /target activation observed during operation/],
-    ['missing-coverage', /activation coverage unavailable/],
-  ]) {
-    let rejected = false;
-    try { runPiExtensionActualAppSmoke(verbose, true, mode); }
-    catch (error) { rejected = expected.test(error.message) && error.message.includes('fixture cleanup verified') && !error.message.includes('fixture did not') && !error.message.includes('fixture mutated') && !error.message.includes('fixture original selection was not restored'); }
-    if (!rejected) throw new Error('Activity Monitor smoke fixture did not safely fail and clean up: ' + mode);
-  }
-  return 'original Disk/Memory restored; unknown selection/coverage blocks mutation; action failure/transient activation still restores original';
-}
-
-function requireOk(name, json) {
-  if (!json || json.ok !== true) throw new Error(`${name} did not return ok: true`);
-}
-
-function printPass(name, detail = '') {
-  recordCheck('pass', name, detail);
-  if (!jsonOutput) process.stdout.write(`PASS ${name}${detail ? ` — ${detail}` : ''}\n`);
-}
-
-function printWarn(name, detail = '') {
-  recordCheck('warn', name, detail);
-  if (!jsonOutput) process.stdout.write(`WARN ${name}${detail ? ` — ${detail}` : ''}\n`);
-}
-
-function writeJsonSummary(opts, ok, error = null) {
-  const counts = {
-    pass: validationChecks.filter((check) => check.status === 'pass').length,
-    warn: validationChecks.filter((check) => check.status === 'warn').length,
-    fail: error ? 1 : 0,
-  };
-  const checks = error ? [...validationChecks, { status: 'fail', name: 'validation failure', detail: error.message || String(error) }] : validationChecks;
-  process.stdout.write(`${JSON.stringify({ ok, mode: opts?.mode ?? null, generatedAt: new Date().toISOString(), counts, checks, artifacts: {} }, null, 2)}\n`);
+async function mcpCheck({ live = false, timeoutMs = 90000 } = {}) {
+  const transport = new StdioClientTransport({ command: process.execPath, args: [fileURLToPath(new URL('./macuse-mcp.mjs', import.meta.url))], stderr: 'pipe' });
+  const client = new Client({ name: 'macuse-validation', version: VERSION });
+  try {
+    await client.connect(transport);
+    const listed = await client.listTools();
+    assert.deepEqual(listed.tools.map(t => t.name).sort(), tools.map(t => t.name).sort());
+    for (const [name, args] of [['macuse_insert_text', { app: 'must-not-launch', text: 'must-not-insert' }], ['event_stream_start', {}], ['computer_history_update_settings', {}]]) {
+      const result = await client.callTool({ name, arguments: args });
+      assert.equal(result.isError, true);
+      assert.equal(result._meta.macuse.dispatched, false);
+    }
+    if (live) checked(await client.callTool({ name: 'macuse', arguments: { code: 'await cua.getState()', timeoutMs, trackFocus: false } }, undefined, { timeout: timeoutMs + 10000 }));
+    return { tools: listed.tools.length, live };
+  } finally { await client.close(); }
 }
 
 async function main() {
-  const opts = parse(process.argv.slice(2));
-  activeOpts = opts;
-  jsonOutput = Boolean(opts.json);
-  if (opts.help) {
-    help();
-    return;
-  }
-  // A regressed guard must fail, not start a live Computer Use app-server.
-  // Lifecycle drivers explicitly replace this with their own disposable fake.
-  if (opts.mode === 'extension') process.env.CODEX_BIN = join(tmpdir(), `macuse-validation-no-live-codex-${process.pid}`);
-  const focusBefore = opts.mode === 'focus' ? { frontmost: frontmostApp(), mouse: mousePosition() } : null;
-  if (!existsSync('tools/probe-codex-computer-use-mcp.mjs')) throw new Error('missing tools/probe-codex-computer-use-mcp.mjs');
-  if (!existsSync('tools/codex-computer-use-appserver.mjs')) throw new Error('missing tools/codex-computer-use-appserver.mjs');
-
-  run('node --check probe', process.execPath, ['--check', 'tools/probe-codex-computer-use-mcp.mjs'], { verbose: opts.verbose });
-  printPass('node --check tools/probe-codex-computer-use-mcp.mjs');
-
-  run('node --check appserver', process.execPath, ['--check', 'tools/codex-computer-use-appserver.mjs'], { verbose: opts.verbose });
-  printPass('node --check tools/codex-computer-use-appserver.mjs');
-
-  run('node --check appserver MCP wrapper', process.execPath, ['--check', 'tools/codex-computer-use-appserver-mcp.mjs'], { verbose: opts.verbose });
-  printPass('node --check tools/codex-computer-use-appserver-mcp.mjs');
-
-  const piSmoke = runPiExtensionSmoke(opts.verbose);
-  printPass('pi extension load smoke', piSmoke);
-
-  const listAppsErrorSmoke = runListAppsErrorPreservationSmoke(opts.verbose);
-  printPass('list_apps error preservation smoke', listAppsErrorSmoke);
-  printPass('fresh-state preflight smoke', runFreshStatePreflightSmoke(opts.verbose));
-  printPass('actual-app smoke cleanup/focus fixtures (no GUI)', runActualAppCleanupFixtures(opts.verbose));
-
-  printPass('current launch/protocol/routing contracts', runCompatibilityContractSmoke());
-  printPass('CLI auxiliary safety guards', runCliAuxiliaryGuardSmoke());
-
-  const mcpSchemaSmoke = runMcpServerSmoke(opts.verbose, true);
-  printPass('app-server MCP schema boundary smoke', `${mcpSchemaSmoke.split(',').length} tools`);
-  if (opts.mode === 'extension' || opts.mode === 'mcp') printPass('app-server MCP lifecycle faults', runMcpLifecycleSmoke(opts.verbose));
-
-  if (opts.mode === 'extension') {
-    if (jsonOutput) writeJsonSummary(opts, true);
-    else process.stdout.write('OK extension validation complete.\n');
-    return;
-  }
-
-  printPass('CLI auxiliary status routing', runCliAuxiliaryStatusSmoke());
-
-  const piPersistentSmoke = runPiExtensionPersistentSmoke(opts.verbose);
-  printPass('pi extension persistent app-server smoke', `thread=${piPersistentSmoke}`);
-
-  if (['focus', 'mutating', 'mcp'].includes(opts.mode)) {
-    printWarn('direct raw-MCP discover', 'skipped in app-control/MCP modes because the raw diagnostic client can steal native frontmost focus; app-server status remains authoritative');
-  } else {
-    const directDiscover = run('direct raw-MCP discover', process.execPath, ['tools/probe-codex-computer-use-mcp.mjs', 'discover'], { timeoutMs: 120_000, verbose: opts.verbose });
-    if (!directDiscover.includes('Tools (10):') || !directDiscover.includes('list_apps')) throw new Error('direct discover did not show expected tools');
-    printPass('direct raw-MCP discover', 'expected tool family found');
-    printPass('direct raw tool argument contracts', runRawToolContractSmoke());
-  }
-
-  const status = parseJsonOutput('app-server status', run('app-server status', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'status', '--quiet'], { timeoutMs: 180_000, verbose: opts.verbose }));
-  requireOk('app-server status', status);
-  const expectedInventories = { 'computer-use': 10, 'event-stream': 3, 'computer-history': 5 };
-  for (const [name, count] of Object.entries(expectedInventories)) {
-    const inventory = status.inventories?.[name] ?? status.status?.servers?.find((server) => server.name === name);
-    if (!inventory?.toolNames || inventory.toolNames.length !== count) throw new Error(`app-server status expected ${count} ${name} tools, saw ${inventory?.toolNames?.length ?? 0}`);
-  }
-  printPass('app-server status', 'all 18 tools across computer-use=10, event-stream=3, computer-history=5');
-
-  if (opts.mode === 'read-only' || opts.mode === 'mutating' || opts.mode === 'focus') {
-    if (opts.mode !== 'read-only') {
-      printWarn('direct raw-MCP deny', 'skipped in mutating/focus modes because the raw diagnostic client can steal native frontmost focus');
+  const { values, positionals } = parseArgs({ allowPositionals: true, options: { json: { type: 'boolean' }, verbose: { type: 'boolean' }, app: { type: 'string', default: 'Activity Monitor' }, 'tool-timeout-ms': { type: 'string', default: '90000' }, help: { type: 'boolean', short: 'h' } } });
+  const mode = positionals[0] ?? 'quick';
+  if (values.help) { console.log('macuse validation: extension (offline) | quick | read-only | mutating | focus | mcp\nmutating/focus select an Activity Monitor tab and restore the captured original in finally. No recording/privacy changes.'); return; }
+  assert.ok(['extension', 'quick', 'read-only', 'mutating', 'focus', 'mcp'].includes(mode), `Unknown mode: ${mode}`);
+  const timeoutMs = Number(values['tool-timeout-ms']);
+  assert.ok(Number.isInteger(timeoutMs) && timeoutMs >= 1000 && timeoutMs <= 300000, 'Invalid timeout');
+  const checks = [];
+  const check = async (name, run) => {
+    const detail = await run();
+    checks.push({ name, status: 'pass', detail });
+    if (!values.json) console.log(`PASS ${name}`);
+  };
+  const session = new MacuseSession();
+  try {
+    if (mode === 'extension') {
+      await check('Pi extension contract (no desktop)', () => {
+        const result = spawnSync(process.execPath, ['--test', 'tools/tests/pi-extension.test.mjs'], { encoding: 'utf8', env: { ...process.env, PI_OFFLINE: '1' }, timeout: 60000 });
+        assert.equal(result.status, 0, result.stderr + result.stdout);
+        return 'Registration, lifecycle, partial error flags, scoped original-image restoration';
+      });
+      await check('MCP schemas and pre-dispatch refusal', () => mcpCheck());
     } else {
-      try {
-        const directDeny = run('direct raw-MCP deny', process.execPath, ['tools/probe-codex-computer-use-mcp.mjs', 'deny', '--app', 'Finder'], { timeoutMs: 120_000, verbose: opts.verbose, quietOnFailure: true });
-        if (!directDeny.includes('"isError": true') && !directDeny.includes('approval denied')) throw new Error('direct deny did not return expected denial');
-        printPass('direct raw-MCP deny', 'Finder denial path returned');
-      } catch (error) {
-        printWarn('direct raw-MCP deny', `raw SkyComputerUseClient denial probe is non-blocking; app-server bridge remains authoritative. ${error.message || String(error)}`);
+      await check('Native persistent JavaScript', async () => {
+        checked(await session.callTool('macuse', { code: 'var macuseProbe = 41; nodeRepl.write(macuseProbe)', trackFocus: false, timeoutMs }));
+        const result = checked(await session.callTool('macuse', { code: 'nodeRepl.write(macuseProbe + 1)', trackFocus: false, timeoutMs }));
+        assert.match(result.content.map(p => p.text ?? '').join('\n'), /42/);
+        return session.status();
+      });
+      await check('Native computer-only inventory', async () => checked(await session.callTool('macuse', { code: 'var inventory = await cua.getState(); if (inventory.browsers.length) throw new Error("Unexpected browser surface")', trackFocus: false, timeoutMs })).details);
+      if (mode === 'read-only') {
+        await check('Native app state and image', async () => {
+          checked(await session.callTool('macuse', { code: `var inspected = await cua.getApp(${JSON.stringify(values.app)})`, apps: [values.app], timeoutMs }));
+          const result = checked(await session.callTool('macuse', { code: 'await inspected.getAXStateAndScreenshot()', apps: [values.app], timeoutMs }));
+          assert.ok(result.content.some(p => p.type === 'image'), 'No screenshot returned');
+          assert.ok(session.runtime.getObservation(values.app)?.title, 'No parsed window title');
+          return result.details;
+        });
       }
+      if (['mutating', 'focus'].includes(mode)) await check('Activity Monitor tab restoration', () => activityMonitorCheck(session, { strictFocus: mode === 'focus', timeoutMs }));
+      if (mode === 'mcp') await check('MCP live native runtime', () => mcpCheck({ live: true, timeoutMs }));
     }
-
-    const list = parseJsonOutput('app-server list-apps', run('app-server list-apps', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'list-apps', '--quiet', '--tool-timeout-ms', String(opts.toolTimeoutMs), '--max-text-chars', '1000'], { timeoutMs: opts.toolTimeoutMs + 30_000, verbose: opts.verbose }));
-    requireOk('app-server list-apps', list);
-    if (list.result?.isError) throw new Error('app-server list-apps returned isError');
-    printPass('app-server list_apps', `${list.result?.content?.[0]?.text?.length || 0} text chars`);
-
-    const state = parseJsonOutput('app-server get-state', run('app-server get-state', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'get-state', '--app', opts.app, '--quiet', '--tool-timeout-ms', String(opts.toolTimeoutMs), '--max-text-chars', '1000'], { timeoutMs: opts.toolTimeoutMs + 30_000, verbose: opts.verbose }));
-    requireOk('app-server get-state', state);
-    if (state.result?.isError) throw new Error('app-server get-state returned isError');
-    printPass('app-server get_app_state', `${opts.app}; omittedImages=${state.result?.omittedImages ?? 0}`);
-  }
-
-  if (opts.mode === 'mutating' || opts.mode === 'focus') {
-    const actualAppSmoke = runPiExtensionActualAppSmoke(opts.verbose, opts.mode === 'focus');
-    printPass('pi extension Activity Monitor mutation smoke', actualAppSmoke.summary);
-    for (const warning of actualAppSmoke.focusWarnings) printWarn('native in-operation observation', warning);
-  }
-
-  if (opts.mode === 'mcp') {
-    const mcpSmoke = runMcpServerSmoke(opts.verbose);
-    printPass('app-server MCP wrapper smoke', mcpSmoke.split(',').length + ' tools');
-  }
-
-  if (opts.mode === 'focus') {
-    const focusAfter = { frontmost: frontmostApp(), mouse: mousePosition() };
-    const beforeBundle = focusBefore?.frontmost?.bundleId || 'unknown';
-    const afterBundle = focusAfter.frontmost?.bundleId || 'unknown';
-    const beforeMouse = focusBefore?.mouse ? `${focusBefore.mouse.x},${focusBefore.mouse.y}` : 'unknown';
-    const afterMouse = focusAfter.mouse ? `${focusAfter.mouse.x},${focusAfter.mouse.y}` : 'unknown';
-    if (beforeBundle !== 'unknown' && beforeBundle === afterBundle) printPass('whole-run frontmost endpoint samples match', 'Endpoint equality alone does not exclude transient focus changes.');
-    else printWarn('whole-run native frontmost drift/unknown', 'Endpoint samples differ or are unavailable; attribution unknown. Per-operation checks use native activation events.');
-    if (beforeMouse !== 'unknown' && beforeMouse === afterMouse) printPass('whole-run cursor endpoint samples match', 'Read-only sampling; not proof of no intervening movement.');
-    else printWarn('whole-run cursor sampling', 'Endpoints differ or are unavailable; attribution unknown. No cursor restoration or warping is performed.');
-  }
-
-  if (jsonOutput) writeJsonSummary(opts, true);
-  else process.stdout.write(`OK ${opts.mode} validation complete.\n`);
+  } catch (error) { checks.push({ name: 'Validation failure', status: 'fail', detail: error.message }); }
+  finally { await session.stop(); }
+  const ok = checks.every(c => c.status === 'pass');
+  const report = { ok, mode, generatedAt: new Date().toISOString(), counts: { pass: checks.filter(c => c.status === 'pass').length, warn: 0, fail: checks.filter(c => c.status === 'fail').length }, checks };
+  if (values.json) console.log(JSON.stringify(report, null, 2));
+  else if (!ok) console.error(checks.at(-1).detail);
+  if (!ok) process.exitCode = 1;
 }
-
-main().catch((error) => {
-  if (jsonOutput) writeJsonSummary(activeOpts, false, error);
-  else process.stderr.write(`FAIL ${error.message || String(error)}\n`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) main().catch(error => { console.error(error); process.exitCode = 1; });

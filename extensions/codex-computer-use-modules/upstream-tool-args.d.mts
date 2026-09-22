@@ -1,4 +1,0 @@
-export const UPSTREAM_TOOL_ARG_KEYS: Readonly<Record<string, readonly string[]>>;
-export const HOST_ONLY_TOOL_ARG_KEYS: readonly string[];
-export function validateToolArguments(tool: string, args: Record<string, unknown>): void;
-export function pickUpstreamToolArgs<T>(tool: string, args: Record<string, T>): Record<string, T>;

@@ -23,7 +23,7 @@ async function executable() {
 				let stderr = "";
 				compiler.stderr.on("data", chunk => { stderr = (stderr + chunk).slice(-8000); });
 				compiler.once("error", reject);
-				compiler.once("exit", code => code === 0 ? resolve() : reject(new Error(`Native helper compilation failed: ${stderr}`)));
+				compiler.once("exit", code => code === 0 ? resolve() : reject(new Error(`Native helper compilation failed: ${stderr}. Ensure xcrun swiftc is available from your Xcode or Command Line Tools installation.`)));
 			});
 			await rename(temporary, binary);
 		} finally { await rm(temporary, { force: true }); }
@@ -43,7 +43,7 @@ export function nativeWindowClosed(before, after) {
 
 export function nativeTextUnavailableReason(state) {
 	if (!state) return "Native inspection returned no app state.";
-	if (state.accessibilityTrusted === false) return "Native Accessibility access is unavailable (accessibilityTrusted=false).";
+	if (state.accessibilityTrusted === false) return "Native Accessibility access is unavailable (accessibilityTrusted=false). Enable Accessibility for the parent host in System Settings > Privacy & Security > Accessibility, then restart it.";
 	if (!state.focusedWindow || !state.focusedElement) return state.windowsError
 		? `Native window inspection failed (AX error ${state.windowsError}); focused text insertion capability is unknown.`
 		: "Native inspection found no focused window/control; text insertion capability is unknown.";
@@ -56,33 +56,36 @@ export function nativeTextUnavailableReason(state) {
 export class MacOSNative {
 	#child;
 	#starting;
+	#stopping;
 	#pending = new Map();
 	#nextId = 0;
 
 	async #start() {
+		if (this.#stopping) await this.#stopping;
 		if (this.#child) return this.#child;
 		if (!this.#starting) this.#starting = (async () => {
 			const child = spawn(await executable(), [], { stdio: ["pipe", "pipe", "pipe"] });
 			let stderr = "";
 			child.stderr.on("data", chunk => { stderr = (stderr + chunk).slice(-4000); });
-			const fail = (error, exited = false) => {
+			const fail = (error, closed = false) => {
 				if (this.#child !== child) return;
-				if (exited || !child.pid) this.#child = undefined;
-				else child.kill(); // Keep the handle so stop() can still wait for actual exit.
-				for (const pending of this.#pending.values()) { clearTimeout(pending.timer); pending.reject(error); }
-				this.#pending.clear();
+				if (!closed && child.pid) {
+					for (const pending of this.#pending.values()) pending.failure ??= error;
+					void this.stop();
+					return;
+				}
+				this.#child = undefined;
+				for (const pending of this.#pending.values()) pending.reject(pending.failure ?? error);
 			};
 			child.once("error", fail);
-			child.once("exit", (code, signal) => fail(new Error(`Native helper stopped (${signal ?? code})${stderr ? `: ${stderr}` : ""}. An outstanding edit may already have applied; do not replay.`), true));
+			child.once("close", (code, signal) => fail(new Error(`Native helper stopped (${signal ?? code})${stderr ? `: ${stderr}` : ""}. An outstanding edit may already have applied; do not replay.`), true));
 			child.stdin.on("error", fail);
 			createInterface({ input: child.stdout }).on("line", line => {
 				let message;
 				try { message = JSON.parse(line); } catch { return; }
 				const pending = this.#pending.get(message.id);
-				if (!pending) return;
-				this.#pending.delete(message.id);
-				clearTimeout(pending.timer);
-				if (message.result?.error) pending.reject(new Error(message.result.error));
+				if (!pending || pending.failure) return;
+				if (message.result?.error) pending.reject(Object.assign(new Error(message.result.error), { dispatched: false }));
 				else pending.resolve(message.result);
 			});
 			this.#child = child;
@@ -91,35 +94,62 @@ export class MacOSNative {
 		return this.#starting;
 	}
 
-	async #request(method, args = {}) {
-		const child = await this.#start();
+	async #request(method, args = {}, { signal } = {}) {
+		let child;
+		try {
+			signal?.throwIfAborted();
+			child = await this.#start();
+			signal?.throwIfAborted();
+		} catch (error) { throw Object.assign(new Error(String(error?.message ?? error)), { dispatched: false }); }
 		const id = ++this.#nextId;
 		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => {
+			let dispatched = false;
+			const finish = (error, result) => {
 				this.#pending.delete(id);
-				reject(new Error(`Native ${method} timed out; its outcome is unknown. Do not replay an edit.`));
-				// Prevent queued commands on a stuck helper from applying later.
-				child.kill();
-			}, 15_000);
-			this.#pending.set(id, { resolve, reject, timer });
-			child.stdin.write(`${JSON.stringify({ id, method, ...args })}\n`);
+				clearTimeout(timer);
+				signal?.removeEventListener("abort", aborted);
+				if (error) reject(Object.assign(new Error(String(error.message ?? error)), { dispatched: error.dispatched ?? dispatched }));
+				else resolve(result);
+			};
+			const cancel = reason => {
+				pending.failure = new Error(`Native ${method} ${reason}; ${dispatched ? "its edit outcome is unknown. Do not replay." : "no edit was dispatched."}`);
+				// Reject only after the owned process has exited; cancellation cannot undo an AX write.
+				void this.stop();
+			};
+			const aborted = () => cancel("aborted");
+			const timer = setTimeout(() => cancel("timed out"), 15_000);
+			const pending = { resolve: result => finish(null, result), reject: error => finish(error) };
+			this.#pending.set(id, pending);
+			signal?.addEventListener("abort", aborted, { once: true });
+			dispatched = method === "replaceSelectedText";
+			child.stdin.write(`${JSON.stringify({ id, method, ...args })}\n`, error => {
+				if (error && this.#pending.has(id)) { pending.failure = error; void this.stop(); }
+			});
 		});
 	}
 
-	snapshot() { return this.#request("snapshot"); }
-	beginObservation(pids = []) { return this.#request("beginObservation", { pids }); }
-	endObservation(id) { return this.#request("endObservation", { observationId: id }); }
-	inspectApp(pid) { return this.#request("inspectApp", { pid }); }
-	replaceSelectedText(args) { return this.#request("replaceSelectedText", args); }
+	snapshot(options) { return this.#request("snapshot", {}, options); }
+	resolveApp(identifier, options) { return this.#request("resolveApp", { identifier }, options); }
+	beginObservation(pids = [], options) { return this.#request("beginObservation", { pids }, options); }
+	endObservation(id, options) { return this.#request("endObservation", { observationId: id }, options); }
+	inspectApp(pid, options) { return this.#request("inspectApp", { pid }, options); }
+	replaceSelectedText(args, options) {
+		if (typeof args.text !== "string" || !args.text.isWellFormed()) {
+			return Promise.reject(Object.assign(new Error("Text must be a well-formed Unicode string; no edit was dispatched."), { dispatched: false }));
+		}
+		return this.#request("replaceSelectedText", args, options);
+	}
 
 	async stop() {
 		if (this.#starting) await this.#starting.catch(() => {});
+		if (this.#stopping) return this.#stopping;
 		const child = this.#child;
 		if (!child) return;
-		await new Promise(resolve => {
-			const timer = setTimeout(() => child.kill(), 1000);
-			child.once("exit", () => { clearTimeout(timer); resolve(); });
-			child.stdin.end();
-		});
+		this.#stopping = new Promise(resolve => {
+			const timer = setTimeout(() => child.kill("SIGKILL"), 1000);
+			child.once("close", () => { clearTimeout(timer); resolve(); });
+			child.kill();
+		}).finally(() => { this.#stopping = undefined; });
+		return this.#stopping;
 	}
 }
