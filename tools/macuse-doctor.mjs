@@ -2,277 +2,59 @@
 import { existsSync, realpathSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import {
-  DEFAULT_CHATGPT_RESOURCES,
-  DEFAULT_CODEX_BIN,
-  DEFAULT_COMPUTER_USE_APP,
-  DEFAULT_COMPUTER_USE_PLUGIN_DIR,
-  MCP_SERVERS,
-  REPO_ROOT,
-  VERSION,
-  commandLine,
-  ensureDir,
-  fileExists,
-  frontmostApp,
-  isExecutable,
-  markdownTable,
-  parseJsonOutput,
-  readJsonFile,
-  runCommand,
-  writeJsonFile,
-} from './macuse-utils.mjs';
+import { parseArgs } from 'node:util';
+import { REPO_ROOT, VERSION, ensureDir, markdownTable, parseJsonOutput, runCommand, writeJsonFile } from './macuse-utils.mjs';
 
-function help() {
-  process.stdout.write(`macuse doctor ${VERSION}\n\nUsage:\n  node tools/macuse-doctor.mjs [options]\n\nOptions:\n  --out <dir>              Write doctor.json and doctor.md to a directory.\n  --json                   Print JSON to stdout instead of Markdown.\n  --full                   Also run focus and MCP wrapper mutation smokes.\n  --app <app>              Read-only get_app_state target. Default: Activity Monitor.\n  --codex <path>           Codex app-server binary. Default: ${DEFAULT_CODEX_BIN}\n  --tool-timeout-ms <ms>   Tool timeout for live checks. Default: 90000.\n  -h, --help               Show this help.\n\nExamples:\n  node tools/macuse-doctor.mjs\n  node tools/macuse-doctor.mjs --out .scratch/doctor --full\n  node tools/macuse-doctor.mjs --json --full\n`);
+function commandCheck(name, command, args, options = {}) {
+  const result = runCommand(name, command, args, options);
+  return { result, check: { name, status: result.ok ? 'pass' : 'fail', summary: result.ok ? result.stdout.trim().slice(0, 500) : (result.error || result.stderr || result.stdout || `exit ${result.status}`).trim().slice(0, 500), durationMs: result.durationMs } };
 }
 
-function parse(argv) {
-  if (argv.includes('-h') || argv.includes('--help')) return { help: true };
-  const opts = { out: null, json: false, full: false, app: 'Activity Monitor', codex: process.env.CODEX_BIN || DEFAULT_CODEX_BIN, toolTimeoutMs: 90_000 };
-  for (let i = 0; i < argv.length; i += 1) {
-    const token = argv[i];
-    const next = () => {
-      i += 1;
-      if (i >= argv.length) throw new Error(`${token} requires a value`);
-      return argv[i];
-    };
-    if (token === '--out') opts.out = resolve(next());
-    else if (token === '--json') opts.json = true;
-    else if (token === '--full') opts.full = true;
-    else if (token === '--app') opts.app = next();
-    else if (token === '--codex') opts.codex = next();
-    else if (token === '--tool-timeout-ms') {
-      const n = Number(next());
-      if (!Number.isInteger(n) || n <= 0) throw new Error('--tool-timeout-ms must be a positive integer');
-      opts.toolTimeoutMs = n;
-    } else throw new Error(`unknown option: ${token}`);
-  }
-  return opts;
-}
-
-function checkStatus(ok, warn = false) {
-  if (ok) return 'pass';
-  return warn ? 'warn' : 'fail';
-}
-
-function addCheck(checks, check) {
-  checks.push({
-    status: check.status,
-    name: check.name,
-    summary: check.summary,
-    details: check.details ?? null,
-    command: check.command ?? null,
-    durationMs: check.durationMs ?? null,
-  });
-}
-
-function commandCheck(name, command, args, opts = {}) {
-  const result = runCommand(name, command, args, opts);
-  return {
-    result,
-    check: {
-      status: checkStatus(result.ok, opts.warn),
-      name,
-      summary: result.ok ? 'ok' : (result.error || result.stderr || result.stdout || `exit ${result.status}`).trim().slice(0, 500),
-      command: commandLine(command, args),
-      durationMs: result.durationMs,
-      details: opts.keepOutput ? { stdout: result.stdout.slice(0, 4000), stderr: result.stderr.slice(0, 4000) } : null,
-    },
-  };
-}
-
-// Read-only requirements probe: no permission request, activation, app-server, or settings changes.
+// Read-only: no permission request, activation, or settings changes.
 export function nativeRequirementChecks() {
   if (process.platform !== 'darwin') return [{ status: 'fail', name: 'Native Accessibility helper', summary: 'Native Accessibility requires macOS.' }];
-  const compiler = commandCheck('Native helper Swift compiler', '/usr/bin/xcrun', ['--find', 'swiftc'], { timeoutMs: 10_000 });
+  const compiler = commandCheck('Native helper Swift compiler', '/usr/bin/xcrun', ['--find', 'swiftc'], { timeoutMs: 10000 });
   const checks = [{ ...compiler.check, summary: compiler.result.ok ? `swiftc: ${compiler.result.stdout.trim()}` : `Native helper compiler unavailable: ${compiler.check.summary}` }];
-  if (!compiler.result.ok) {
-    checks.push({ status: 'warn', name: 'Native helper Accessibility trust', summary: 'Unknown: compiler unavailable; native helper trust was not checked.' });
-    return checks;
-  }
+  if (!compiler.result.ok) return [...checks, { status: 'warn', name: 'Native helper Accessibility trust', summary: 'Unknown: compiler unavailable; native helper trust was not checked.' }];
   const probe = `import { MacOSNative } from ${JSON.stringify(new URL('./macos-native.mjs', import.meta.url).href)};
 const native = new MacOSNative();
 try { const state = await native.inspectApp(process.pid); console.log(JSON.stringify({ accessibilityTrusted: state.accessibilityTrusted })); }
 finally { await native.stop(); }`;
-  const trust = commandCheck('Native helper Accessibility trust', process.execPath, ['--input-type=module', '-e', probe], { timeoutMs: 60_000 });
+  const trust = commandCheck('Native helper Accessibility trust', process.execPath, ['--input-type=module', '-e', probe], { timeoutMs: 60000 });
   if (!trust.result.ok) checks.push({ ...trust.check, summary: `Native helper unavailable; Accessibility trust unknown: ${trust.check.summary}` });
   else {
     let trusted;
-    try { trusted = parseJsonOutput('native helper trust', trust.result.stdout).accessibilityTrusted; } catch { /* Unknown is not denial or trust. */ }
+    try { trusted = parseJsonOutput('native helper trust', trust.result.stdout).accessibilityTrusted; } catch { /* Unknown remains unknown. */ }
     checks.push({ ...trust.check, status: trusted === true ? 'pass' : 'fail', summary: trusted === true
-      ? 'accessibilityTrusted=true for the native helper under this doctor host. Other Pi/CLI/MCP launchers may have different grants.'
-      : trusted === false ? 'accessibilityTrusted=false: native AX inspection and verified text insertion are unavailable under this host. No permission prompt was requested.'
-        : 'Native helper returned no Accessibility trust result; trust is unknown.' });
+      ? 'accessibilityTrusted=true under this launcher. Other Pi/CLI/MCP hosts may have different grants.'
+      : trusted === false ? 'accessibilityTrusted=false: AX inspection/insertion unavailable. No permission prompt was requested.' : 'Native helper trust is unknown.' });
   }
   return checks;
 }
 
-function configuredToolNamesFromStatus(statusJson) {
-  if (statusJson?.inventories) return Object.values(statusJson.inventories).flatMap((server) => server.toolNames || []);
-  return (statusJson?.status?.servers || []).filter((server) => MCP_SERVERS[server.name]).flatMap((server) => server.toolNames || []);
-}
-
-function renderMarkdown(report) {
-  const rows = report.checks.map((check) => [
-    check.status === 'pass' ? '✅ pass' : check.status === 'warn' ? '⚠️ warn' : '❌ fail',
-    check.name,
-    check.summary,
-  ]);
-  const failed = report.checks.filter((check) => check.status === 'fail');
-  const warned = report.checks.filter((check) => check.status === 'warn');
-  return `# macuse doctor report\n\nGenerated: ${report.generatedAt}\nMode: ${report.full ? 'full' : 'standard'}\nRepo: ${report.repoRoot}\n\n## Verdict\n\n${report.ok ? '✅ macuse is ready.' : '❌ macuse needs attention.'}\n\n- Failed checks: ${failed.length}\n- Warnings: ${warned.length}\n- Configured tools found: ${report.configuredTools.length}\n\n## Checks\n\n${markdownTable(['Status', 'Check', 'Summary'], rows)}\n\n## Tool surface\n\n${report.configuredTools.length ? report.configuredTools.map((tool) => `- ${tool}`).join('\n') : 'No configured tools were discovered.'}\n\n## Recommended next commands\n\n\`\`\`bash\nnode tools/validate-macuse.mjs quick\nnode tools/validate-macuse.mjs mutating\nnode tools/validate-macuse.mjs focus\nnode tools/validate-macuse.mjs mcp\n\`\`\`\n`;
-}
-
 async function main() {
-  const opts = parse(process.argv.slice(2));
-  if (opts.help) {
-    help();
-    return;
+  const { values } = parseArgs({ options: { out: { type: 'string' }, json: { type: 'boolean' }, full: { type: 'boolean' }, app: { type: 'string', default: 'Activity Monitor' }, 'tool-timeout-ms': { type: 'string', default: '90000' }, help: { type: 'boolean', short: 'h' } } });
+  if (values.help) { console.log(`macuse doctor ${VERSION}\n\n--out <dir> --json --app <name> --tool-timeout-ms <ms>\nDefault checks are read-only. --full also switches/restores Activity Monitor tabs and checks the MCP wrapper.\nNo installs, privacy changes, recording starts, or permission prompts.`); return; }
+  const checks = nativeRequirementChecks();
+  const validation = commandCheck('Native runtime and app observation', process.execPath, ['tools/validate-macuse.mjs', 'read-only', '--json', '--app', values.app, '--tool-timeout-ms', values['tool-timeout-ms']], { timeoutMs: 300000 });
+  checks.push({ ...validation.check, summary: validation.result.ok ? 'Persistent native JavaScript, computer-only inventory, app state and screenshot passed.' : validation.check.summary });
+  let runtime;
+  if (validation.result.ok) runtime = parseJsonOutput('runtime validation', validation.result.stdout);
+  // Optional recording/history services never gate ordinary Computer Use readiness.
+  const auxiliary = commandCheck('Recording/history status', process.execPath, ['tools/macuse.mjs', 'call', 'computer_history_status', '{}'], { timeoutMs: 120000 });
+  checks.push({ ...auxiliary.check, status: auxiliary.result.ok ? 'pass' : 'warn', summary: auxiliary.result.ok ? 'Read-only Computer History status returned through its separate authenticated transport.' : `Auxiliary service unavailable: ${auxiliary.check.summary}` });
+  if (values.full) for (const mode of ['focus', 'mcp']) {
+    const check = commandCheck(`${mode} validation`, process.execPath, ['tools/validate-macuse.mjs', mode, '--json'], { timeoutMs: 420000 });
+    checks.push({ ...check.check, summary: check.result.ok ? 'Passed; see command output for scoped evidence.' : check.check.summary });
   }
-
-  const checks = [];
-  const started = Date.now();
-  const report = {
-    ok: false,
-    generatedAt: new Date().toISOString(),
-    repoRoot: REPO_ROOT,
-    full: opts.full,
-    codexBin: opts.codex,
-    computerUsePluginDir: DEFAULT_COMPUTER_USE_PLUGIN_DIR,
-    computerUsePlugins: {},
-    computerUseApp: DEFAULT_COMPUTER_USE_APP,
-    computerUseTools: [],
-    configuredTools: [],
-    checks,
-  };
-
-  addCheck(checks, { status: 'pass', name: 'repo root', summary: REPO_ROOT });
-  addCheck(checks, { status: checkStatus(isExecutable(opts.codex)), name: 'Codex app-server binary', summary: opts.codex });
-  addCheck(checks, { status: checkStatus(fileExists(DEFAULT_COMPUTER_USE_APP), true), name: 'Computer Use app bundle', summary: DEFAULT_COMPUTER_USE_APP });
-  addCheck(checks, { status: checkStatus(fileExists(DEFAULT_COMPUTER_USE_PLUGIN_DIR), true), name: 'Computer Use plugin cache', summary: DEFAULT_COMPUTER_USE_PLUGIN_DIR });
-
-  const pluginVersions = new Set();
-  for (const [serverName, server] of Object.entries(MCP_SERVERS)) {
-    const pluginJsonPath = resolve(server.pluginDir, '.codex-plugin/plugin.json');
-    const mcpJsonPath = resolve(server.pluginDir, '.mcp.json');
-    const launcherPath = resolve(server.pluginDir, 'bin/computer-use-client-launcher');
-    if (!existsSync(pluginJsonPath) || !existsSync(mcpJsonPath)) {
-      addCheck(checks, { status: 'fail', name: `${serverName} plugin`, summary: `missing current plugin metadata under ${server.pluginDir}` });
-      continue;
-    }
-    const plugin = readJsonFile(pluginJsonPath);
-    const mcp = readJsonFile(mcpJsonPath)?.mcpServers?.[serverName];
-    const manifestMatches = mcp?.command === './bin/computer-use-client-launcher'
-      && JSON.stringify(mcp?.args) === JSON.stringify(server.args)
-      && mcp?.cwd === '.'
-      && Array.isArray(mcp?.env_vars)
-      && mcp.env_vars.includes('CODEX_HOME');
-    report.computerUsePlugins[serverName] = { name: plugin.name, version: plugin.version, description: plugin.description, pluginDir: server.pluginDir };
-    if (plugin.version) pluginVersions.add(plugin.version);
-    addCheck(checks, {
-      status: manifestMatches && isExecutable(launcherPath) ? 'pass' : 'fail',
-      name: `${serverName} plugin`,
-      summary: manifestMatches && isExecutable(launcherPath) ? `${plugin.name} ${plugin.version}; launcher manifest matches` : `launcher or .mcp.json mismatch under ${server.pluginDir}`,
-    });
+  const report = { ok: checks.every(c => c.status !== 'fail'), version: VERSION, generatedAt: new Date().toISOString(), repoRoot: REPO_ROOT, full: Boolean(values.full), checks, runtime };
+  const markdown = `# macuse doctor\n\n${report.ok ? 'Checks passed.' : 'Attention required.'} These checks do not certify every app or guarantee uninterrupted input.\n\n${markdownTable(['Status', 'Check', 'Result'], checks.map(c => [c.status, c.name, c.summary]))}\n`;
+  if (values.out) {
+    ensureDir(values.out);
+    writeJsonFile(resolve(values.out, 'doctor.json'), report);
+    writeFileSync(resolve(values.out, 'doctor.md'), markdown);
   }
-  addCheck(checks, {
-    status: pluginVersions.size === 1 ? 'pass' : 'fail',
-    name: 'Computer Use plugin version parity',
-    summary: pluginVersions.size ? [...pluginVersions].join(', ') : 'no plugin versions found',
-  });
-
-  for (const [name, plist] of [
-    ['ChatGPT app version', resolve(DEFAULT_CHATGPT_RESOURCES, '../Info.plist')],
-    ['Computer Use client version', resolve(DEFAULT_COMPUTER_USE_APP, 'Contents/SharedSupport/SkyComputerUseClient.app/Contents/Info.plist')],
-  ]) {
-    const version = commandCheck(name, '/usr/libexec/PlistBuddy', ['-c', 'Print :CFBundleShortVersionString', '-c', 'Print :CFBundleVersion', plist], { warn: true });
-    addCheck(checks, { ...version.check, summary: version.result.ok ? version.result.stdout.trim().split('\n').join(' build ') : version.check.summary });
-  }
-
-  const nodeVersion = commandCheck('Node version', process.execPath, ['--version']);
-  addCheck(checks, { ...nodeVersion.check, summary: nodeVersion.result.stdout.trim() || nodeVersion.check.summary });
-
-  for (const check of nativeRequirementChecks()) addCheck(checks, check);
-
-  const codexVersion = commandCheck('Codex version', opts.codex, ['--version'], { warn: true });
-  addCheck(checks, { ...codexVersion.check, summary: codexVersion.result.stdout.trim() || codexVersion.result.stderr.trim() || codexVersion.check.summary });
-
-  const frontmost = frontmostApp();
-  report.frontmostApp = frontmost;
-  addCheck(checks, {
-    status: frontmost?.bundleId && !['com.apple.loginwindow', 'com.apple.ScreenSaver.Engine'].includes(frontmost.bundleId) ? 'pass' : 'warn',
-    name: 'console frontmost app',
-    summary: frontmost?.bundleId ? `${frontmost.name || '<unknown>'} (${frontmost.bundleId})` : 'no frontmost app detected; console may be locked, asleep, or outside the active WindowServer session',
-    details: frontmost,
-  });
-
-  for (const script of ['tools/probe-codex-computer-use-mcp.mjs', 'tools/codex-computer-use-appserver.mjs', 'tools/codex-computer-use-appserver-mcp.mjs', 'tools/validate-macuse.mjs', 'tools/macuse-utils.mjs', 'tools/macuse-config.mjs', 'tools/macuse-doctor.mjs', 'tools/macuse-repair.mjs', 'tools/macuse-demo.mjs']) {
-    const syntax = commandCheck(`syntax ${script}`, process.execPath, ['--check', script]);
-    addCheck(checks, syntax.check);
-  }
-
-  const statusRun = commandCheck('app-server status', process.execPath, ['tools/codex-computer-use-appserver.mjs', 'status', '--quiet', '--codex', opts.codex], { timeoutMs: opts.toolTimeoutMs + 30_000, warn: true });
-  if (statusRun.result.ok) {
-    try {
-      const json = parseJsonOutput('app-server status', statusRun.result.stdout);
-      const names = configuredToolNamesFromStatus(json).sort();
-      report.configuredTools = names;
-      report.computerUseTools = json.computerUse?.toolNames || [];
-      const expected = Object.values(MCP_SERVERS).flatMap((server) => server.tools);
-      const missing = expected.filter((tool) => !names.includes(tool));
-      addCheck(checks, {
-        status: missing.length ? 'fail' : 'pass',
-        name: 'Configured app-server tool surface',
-        summary: missing.length ? `missing ${missing.join(', ')}` : `${names.length} expected tools`,
-        command: statusRun.check.command,
-        durationMs: statusRun.result.durationMs,
-      });
-    } catch (error) {
-      addCheck(checks, { status: 'fail', name: 'Configured app-server tool surface', summary: error.message, command: statusRun.check.command, durationMs: statusRun.result.durationMs });
-    }
-  } else {
-    addCheck(checks, statusRun.check);
-  }
-
-  const validation = commandCheck('validation read-only smoke', process.execPath, ['tools/validate-macuse.mjs', 'read-only', '--json', '--app', opts.app, '--tool-timeout-ms', String(opts.toolTimeoutMs)], { timeoutMs: opts.toolTimeoutMs * 5, keepOutput: true, env: { CODEX_BIN: opts.codex } });
-  if (validation.result.ok) {
-    const json = parseJsonOutput('validation read-only smoke', validation.result.stdout);
-    addCheck(checks, {
-      ...validation.check,
-      status: json.ok ? 'pass' : 'fail',
-      summary: json.ok ? `${json.counts?.pass ?? 0} validation checks passed` : (json.checks?.find((check) => check.status === 'fail')?.detail || 'validation failed'),
-      details: json,
-    });
-  } else {
-    addCheck(checks, validation.check);
-  }
-
-  const config = commandCheck('config generator', process.execPath, ['tools/macuse-config.mjs', 'cursor', '--pretty']);
-  addCheck(checks, { ...config.check, summary: config.result.ok && config.result.stdout.includes('macuse-codex-computer-use') ? 'generated Cursor MCP config' : config.check.summary });
-
-  if (opts.full) {
-    const focus = commandCheck('focus validation', process.execPath, ['tools/validate-macuse.mjs', 'focus'], { timeoutMs: 420_000, keepOutput: true, env: { CODEX_BIN: opts.codex } });
-    addCheck(checks, focus.check);
-    const mcp = commandCheck('MCP wrapper validation', process.execPath, ['tools/validate-macuse.mjs', 'mcp'], { timeoutMs: 420_000, keepOutput: true, env: { CODEX_BIN: opts.codex } });
-    addCheck(checks, mcp.check);
-  }
-
-  report.durationMs = Date.now() - started;
-  report.ok = checks.every((check) => check.status !== 'fail');
-
-  if (opts.out) {
-    ensureDir(opts.out);
-    writeJsonFile(resolve(opts.out, 'doctor.json'), report);
-    writeFileSync(resolve(opts.out, 'doctor.md'), renderMarkdown(report));
-  }
-
-  if (opts.json) process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
-  else process.stdout.write(renderMarkdown(report));
-
+  console.log(values.json ? JSON.stringify(report, null, 2) : markdown);
   if (!report.ok) process.exitCode = 1;
 }
-
-if (process.argv[1] && existsSync(process.argv[1]) && pathToFileURL(realpathSync(process.argv[1])).href === import.meta.url) main().catch((error) => {
-  process.stderr.write(`FAIL ${error.message || String(error)}\n`);
-  process.exitCode = 1;
-});
+if (process.argv[1] && existsSync(process.argv[1]) && pathToFileURL(realpathSync(process.argv[1])).href === import.meta.url) main().catch(error => { console.error(error.message); process.exitCode = 1; });

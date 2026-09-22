@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.0 — Experimental prerelease
+
+- Replace the app-server GUI bridge and JSON sequence language with persistent JavaScript through installed `@oai/cua-repl`, computer-only and Sky-only in the normal vendor sandbox. Primary GUI control has no app-server dependency.
+- Share `macuse`, `macuse_insert_text`, and `macuse_reset` across Pi, CLI, and MCP. Pi's fourth default tool, `macuse_tools`, enables only the eight preserved recording/history tools; MCP exposes all eleven tools directly.
+- Keep full-snapshot per-action guards, exact app scope, stale-target checks, and exact field verification. Native selected-text insertion preserves unselected content without keyboard/clipboard fallback; raw typing is ASCII-only and paste is disabled.
+- Interrupt timed-out/aborted JavaScript with vendor reset and await settlement, preserving partial action evidence. Reset does not undo UI effects or authorize replay.
+- Preserve native focus observations and exact-path screenshot artifacts without cursor warping or universal isolation claims. Restore original macuse screenshot bytes for matching retained Astra outputs only when Pi resized them, respecting filtering/compaction and other models.
+- Support latest stable official Pi and `fitchmultz/pi` 0.87.0 through shared public APIs. No host patches or current settings edits are required.
+- Keep recording/history in a separate lazy app-server with existing authentication, scoped plugin launchers, and explicit recording/privacy gates.
+- **Breaking migration:** use `extensions/macuse.ts`, `tools/macuse.mjs`, and `tools/macuse-mcp.mjs`; regenerate MCP config for server `macuse` and `MACUSE_CWD`. Removed GUI tools, `macuse_sequence`, `macuse_restart`, selector aliases, and old entrypoints have no compatibility shims. Restart the full Pi/CLI/MCP process after updating.
+- Distribute as an experimental Git-installed Pi package via GitHub prerelease, with `private: true` preventing npm publication. Install with `pi install git:github.com/fitchmultz/macuse@v0.5.0`.
+
 ## 0.4.1 - 2026-09-17
 
 - Remove cursor warping; observe application activation and focused-window events without claiming input isolation.

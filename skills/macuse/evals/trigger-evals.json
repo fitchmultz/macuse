@@ -2,41 +2,51 @@
   {
     "query": "Use macuse to inspect Activity Monitor without stealing focus.",
     "should_trigger": true,
-    "reason": "Directly asks to use macuse for local macOS app inspection."
+    "reason": "Native macOS inspection with explicit macuse routing; report focus limits honestly."
   },
   {
-    "query": "Dogfood the Computer Use extension on Finder and report pain points.",
+    "query": "Dogfood Computer Use on Finder and report pain points.",
     "should_trigger": true,
-    "reason": "Requests macuse/Computer Use dogfood against native macOS apps."
+    "reason": "Native app QA through the Computer Use interface."
   },
   {
-    "query": "Use macuse_sequence to filter Activity Monitor search and restore it.",
+    "query": "Use macuse JavaScript to switch Activity Monitor tabs and restore the original tab.",
     "should_trigger": true,
-    "reason": "Names macuse sequence use and asks for safe local app control."
+    "reason": "Guarded native app actions with persistent code and restoration."
   },
   {
-    "query": "Call get_app_state through macuse on Calendar and summarize visible controls.",
+    "query": "Inspect Calendar with cua.getApp and summarize its visible controls.",
     "should_trigger": true,
-    "reason": "Names a macuse read-only action for native app state inspection."
+    "reason": "Native app state inspection through the installed cua API."
+  },
+  {
+    "query": "Insert Unicode at the current TextEdit selection with macuse_insert_text.",
+    "should_trigger": true,
+    "reason": "Guarded selected-range native text insertion."
+  },
+  {
+    "query": "Use macuse to check Computer History settings without changing them.",
+    "should_trigger": true,
+    "reason": "Requested auxiliary status/settings workflow."
   },
   {
     "query": "Open this website and fill the signup form in the browser DOM.",
     "should_trigger": false,
-    "reason": "Ordinary web-page automation should use browser tooling, not macuse native app control."
+    "reason": "Ordinary web-page automation belongs to browser tooling."
   },
   {
-    "query": "Change the pi extension lifecycle code and update package metadata.",
+    "query": "Change the Pi extension lifecycle code and package metadata.",
     "should_trigger": false,
-    "reason": "Generic pi extension development should use the pi extension development workflow, not the macuse usage skill."
+    "reason": "Generic extension development is outside this tool-use skill."
   },
   {
     "query": "Probe raw SkyComputerUseClient MCP and compare protocol messages.",
     "should_trigger": false,
-    "reason": "Raw MCP protocol investigation is outside the macuse tool-use workflow."
+    "reason": "Raw protocol research is separate from macuse app operation."
   },
   {
     "query": "Use Peekaboo to inspect Finder's toolbar.",
     "should_trigger": false,
-    "reason": "Explicitly requests Peekaboo rather than macuse/Codex Computer Use."
+    "reason": "Explicitly chooses another native automation tool."
   }
 ]

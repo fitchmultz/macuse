@@ -1,8 +1,8 @@
 {
   "name": "macuse",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "private": true,
-  "description": "External harness and pi extension for reusing OpenAI Codex Computer Use from non-Codex agents.",
+  "description": "Guarded native macOS Computer Use with persistent JavaScript for Pi and MCP clients.",
   "type": "module",
   "author": "Mitch Fultz (https://github.com/fitchmultz)",
   "license": "MIT",
@@ -19,6 +19,7 @@
   ],
   "files": [
     "extensions",
+    "lib",
     "tools",
     "configs",
     "docs",
@@ -28,6 +29,8 @@
     "skills"
   ],
   "bin": {
+    "macuse": "tools/macuse.mjs",
+    "macuse-mcp": "tools/macuse-mcp.mjs",
     "macuse-doctor": "tools/macuse-doctor.mjs",
     "macuse-repair": "tools/macuse-repair.mjs",
     "macuse-demo": "tools/macuse-demo.mjs",
@@ -35,7 +38,7 @@
   },
   "pi": {
     "extensions": [
-      "./extensions/codex-computer-use.ts"
+      "./extensions/macuse.ts"
     ],
     "skills": [
       "./skills"
@@ -53,7 +56,7 @@
     "validate:mutating": "node tools/validate-macuse.mjs mutating",
     "validate:focus": "node tools/validate-macuse.mjs focus",
     "validate:mcp": "node tools/validate-macuse.mjs mcp",
-    "check:compat": "npm run typecheck && npm test && node tools/validate-macuse.mjs extension && npm run pack:check",
+    "check:compat": "npm run typecheck && npm test && node tools/validate-macuse.mjs extension && node tools/validate-pi-host.mjs && npm run pack:check",
     "typecheck": "tsc --noEmit",
     "test": "node --test tools/tests/*.test.mjs",
     "ci": "tsc --noEmit && npm test && node tools/validate-macuse.mjs quick",
@@ -85,5 +88,8 @@
     "typebox": {
       "optional": true
     }
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0"
   }
 }

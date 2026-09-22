@@ -34,6 +34,16 @@ func appInfo(_ app: NSRunningApplication) -> [String: Any] {
     return ["pid": app.processIdentifier, "name": app.localizedName ?? "<unknown>",
             "bundleId": app.bundleIdentifier ?? null as Any, "path": app.bundleURL?.path ?? null as Any]
 }
+func resolveApp(_ identifier: String) -> [String: Any] {
+    let matches = NSWorkspace.shared.runningApplications.filter {
+        !$0.isTerminated && ($0.bundleIdentifier == identifier || $0.bundleURL?.path == identifier || $0.localizedName == identifier)
+    }
+    guard matches.count == 1 else {
+        return ["error": matches.isEmpty ? "No running app exactly matches \(identifier). Open the intended app yourself, then observe it."
+            : "Ambiguous running app \(identifier). Use an exact bundle ID or app path identifying one running process."]
+    }
+    return appInfo(matches[0])
+}
 func snapshot(detailsFor targets: Set<pid_t>? = nil) -> [String: Any] {
     guard let app = NSWorkspace.shared.frontmostApplication else { return ["frontmost": null, "focusedWindow": null] }
     let window = AXIsProcessTrusted() ? elementAX(appAX(app.processIdentifier), kAXFocusedWindowAttribute) : nil
@@ -61,6 +71,10 @@ func inspect(_ pid: pid_t) -> [String: Any] {
         result["focusedWindow"] = windowInfo(window)
         result["focusedElement"] = ["token": token(element), "role": readAX(element, kAXRoleAttribute) as? String ?? null as Any,
             "identifier": readAX(element, kAXIdentifierAttribute) as? String ?? null as Any,
+            "roleDescription": readAX(element, kAXRoleDescriptionAttribute) as? String ?? null as Any,
+            "title": readAX(element, kAXTitleAttribute) as? String ?? null as Any,
+            "description": readAX(element, kAXDescriptionAttribute) as? String ?? null as Any,
+            "value": readAX(element, kAXValueAttribute) as? String ?? null as Any,
             "selectedTextSettable": error == .success && settable.boolValue, "selectedTextError": error.rawValue]
     } else if let window = elementAX(app, kAXFocusedWindowAttribute) { result["focusedWindow"] = windowInfo(window) }
     return result
@@ -90,6 +104,9 @@ func replaceText(_ request: [String: Any], _ pid: pid_t) -> [String: Any] {
           let selected = readAX(element, kAXSelectedTextAttribute) as? String,
           let rawRange = readAX(element, kAXSelectedTextRangeAttribute), CFGetTypeID(rawRange) == AXValueGetTypeID() else {
         return textResult("unsupported", "Cannot verify exact selection replacement")
+    }
+    if let expectedValue = expected["value"] as? String, !original.utf16.elementsEqual(expectedValue.utf16) {
+        return textResult("guard_failed", "Focused field value changed before insertion")
     }
     if let ranges = readAX(element, kAXSelectedTextRangesAttribute) as? [Any], ranges.count != 1 {
         return textResult("unsupported", "Multiple selections are not supported")
@@ -170,6 +187,11 @@ let workspaceObserver = NSWorkspace.shared.notificationCenter.addObserver(forNam
 func handle(_ request: [String: Any]) -> [String: Any] {
     switch request["method"] as? String {
     case "snapshot": return snapshot()
+    case "resolveApp":
+        guard let identifier = request["identifier"] as? String, !identifier.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return ["error": "An exact running app name, bundle ID or path is required"]
+        }
+        return resolveApp(identifier)
     case "beginObservation":
         let id = UUID().uuidString
         let targets = Set((request["pids"] as? [pid_t] ?? []).filter { $0 > 0 })
