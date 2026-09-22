@@ -28,7 +28,6 @@ function png(width, height) {
   return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', header), chunk('IDAT', deflateSync(Buffer.alloc((width * 4 + 1) * height))), chunk('IEND', Buffer.alloc(0))]).toString('base64');
 }
 const content = [{ type: 'text', text: 'Controlled synthetic image' }, { type: 'image', mimeType: 'image/png', data: png(4000, 3000) }];
-const tool = tools.find(t => t.name === 'macuse');
 const details = { macuse: { isError: true, originalContent: content, actions: [{ dispatched: true, outcome: 'unknown' }] } };
 const call = { type: 'toolCall', name: 'macuse', id: 'call_image|fc_image', arguments: { code: 'synthetic fixture only' } };
 const catalog = JSON.parse(await readFile(join(ai, 'dist/providers/data/openai.json'), 'utf8'));
@@ -59,13 +58,14 @@ for (const api of ['openai-responses', 'openai-codex-responses']) {
   const current = { ...model, api, provider: api === 'openai-responses' ? 'openai' : 'openai-codex' };
   runner.getModel = () => current;
   const send = async messages => {
-    const response = await adapter.streamSimple(current, normalizeContext({ systemPrompt: 'Offline test', tools: [tool], messages: convertToLlm(messages) }), { apiKey: api === 'openai-responses' ? 'offline-only' : fakeJwt, transport: 'sse', maxRetries: 0, fetch: fakeFetch, reasoning: 'low', onPayload: payload => runner.emitBeforeProviderRequest(payload) }).result();
+    const response = await adapter.streamSimple(current, normalizeContext({ systemPrompt: 'Offline test', tools: tools.filter(t => ['macuse', 'macuse_insert_text', 'macuse_reset', 'macuse_tools'].includes(t.name)), messages: convertToLlm(messages) }), { apiKey: api === 'openai-responses' ? 'offline-only' : fakeJwt, transport: 'sse', maxRetries: 0, fetch: fakeFetch, reasoning: 'low', onPayload: payload => runner.emitBeforeProviderRequest(payload) }).result();
     assert.equal(response.stopReason, 'stop', response.errorMessage);
     return requests.at(-1);
   };
   const messages = sm.buildSessionContext().messages;
   const payload = await send(messages);
-  assert.equal(payload.tools[0].strict, true);
+  assert.ok(payload.tools.every(tool => tool.strict === true));
+  assert.equal(JSON.stringify(payload.tools).includes('uniqueItems'), false, 'OpenAI rejects uniqueItems in strict tool schemas');
   const output = payload.input.find(item => item.type === 'function_call_output');
   assert.equal(output.output.find(p => p.type === 'input_image').image_url, `data:image/png;base64,${content[1].data}`);
   assert.equal(output.output.find(p => p.type === 'input_image').detail, 'auto');

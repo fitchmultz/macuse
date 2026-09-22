@@ -40,7 +40,7 @@ export default function macuse(pi: ExtensionAPI) {
     label: 'macuse Tools',
     description: 'Enable recording/history tools until the next session boundary. Starts no recording or service by itself.',
     promptSnippet: 'Enable macuse Record & Replay or Computer History tools',
-    parameters: Type.Object({ tools: Type.Array(StringEnum(auxiliaryNames), { minItems: 1, uniqueItems: true }) }, { additionalProperties: false }),
+    parameters: Type.Object({ tools: Type.Array(StringEnum(auxiliaryNames), { minItems: 1 }) }, { additionalProperties: false }),
     constrainedSampling: { type: 'json_schema', strict: 'prefer' },
     executionMode: 'sequential',
     async execute(_id, params) {
