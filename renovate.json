@@ -1,4 +1,15 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["github>fitchmultz/.github:pi-extensions"]
+  "extends": ["github>fitchmultz/.github:pi-extensions"],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github\\/workflows\\/ci\\.yml$/"],
+      "matchStrings": ["FORK_REF: (?<currentDigest>[a-f0-9]{40})"],
+      "currentValueTemplate": "main",
+      "depNameTemplate": "fitchmultz/pi",
+      "packageNameTemplate": "https://github.com/fitchmultz/pi",
+      "datasourceTemplate": "git-refs"
+    }
+  ]
 }
