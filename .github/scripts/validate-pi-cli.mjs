@@ -16,10 +16,12 @@ try {
   const observer = join(directory, 'observe.ts');
   const observation = join(directory, 'observation.json');
   cpSync(fileURLToPath(new URL('./ci-observer.ts', import.meta.url)), observer);
+  const env = { ...process.env, PI_TELEMETRY: '0', MACUSE_CI_OBSERVATION: observation };
+  delete env.PI_PACKAGE_DIR;
   const result = spawnSync(process.execPath, [join(root, manifest.bin.pi), '--offline', '--mode', 'rpc', '-ne', '-ns', '-np', '-nc',
     '--no-themes', '--no-approve', '--no-session', '-e', extension, '-e', observer], {
     cwd: directory,
-    env: { ...process.env, PI_OFFLINE: '1', PI_TELEMETRY: '0', MACUSE_CI_OBSERVATION: observation },
+    env,
     encoding: 'utf8',
     input: `${JSON.stringify({ id: 'macuse-ci', type: 'prompt', message: '/macuse-ci-probe' })}\n`,
     timeout: 45_000,
