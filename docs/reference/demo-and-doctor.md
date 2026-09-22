@@ -36,6 +36,12 @@ node tools/validate-pi-host.mjs /absolute/path/to/pi-coding-agent
 
 For mutating/focus checks, no action should run unless Activity Monitor's original tab is known. Restore that exact tab and verify it after the test; never force CPU as cleanup. Do not terminate processes or modify unrelated Activity Monitor controls. A kernel reset may interrupt cleanup, so inspect the final result and restore only from known evidence. Raw-MCP diagnostics are kept separate from non-interruption checks.
 
+## GitHub Actions
+
+[CI](../../.github/workflows/ci.yml) runs the offline contract on Node 22.19 in Linux. A separate macOS job tests the Swift helper and probes both the installed official Pi release and a reviewed fork commit, including real Pi CLI extension loading. The fork build hydrates its model data from public catalogs. The jobs have four- and six-minute execution limits and upload no artifacts or caches.
+
+Hosted CI does not use the installed ChatGPT runtime or prove macOS privacy permissions. Run the live checks locally when those behaviors change.
+
 ## Doctor
 
 ```bash

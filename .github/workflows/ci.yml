@@ -1,45 +1,73 @@
-name: Linux headless portability
+name: CI
 
 on:
   pull_request:
+    branches: [main]
   push:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  # Native macOS qualification is in shared compatibility. This retains the
-  # distinct non-desktop Linux portability gate, not a Linux Computer Use claim.
-  validate:
+  contracts:
+    name: Offline contracts (Linux)
     runs-on: ubuntu-latest
+    timeout-minutes: 4
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 24
-          cache: npm
+          node-version: 22.19.0
+          package-manager-cache: false
       - run: npm ci --ignore-scripts
       - run: npm run check:compat
         env:
           PI_OFFLINE: '1'
-          PI_COMPAT_HOST: official
-      - name: Linux native CLI startup (not desktop qualification)
-        env:
-          PI_OFFLINE: '1'
+
+  native-hosts:
+    name: Native and Pi hosts (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 6
+    env:
+      FORK_REF: 870f4f667bb0135f2d9d935c087dc45b6e48ff74
+      PI_TELEMETRY: '0'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: fitchmultz/pi
+          ref: ${{ env.FORK_REF }}
+          path: fork
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+          package-manager-cache: false
+      - run: node --test tools/tests/macos-focus.test.mjs
+      - run: npm ci --ignore-scripts
+      - name: Official Pi host and CLI
         run: |
-          cli=$(node --input-type=module -e '
-            import { findPackageJSON } from "node:module";
-            import { readFileSync } from "node:fs";
-            import { dirname, resolve } from "node:path";
-            const manifest = findPackageJSON("@earendil-works/pi-coding-agent", import.meta.url);
-            console.log(resolve(dirname(manifest), JSON.parse(readFileSync(manifest, "utf8")).bin.pi));
-          ')
-          node "$cli" --no-context-files --no-skills --no-prompt-templates --no-themes --no-extensions \
-            -e ./extensions/macuse.ts --list-models '__no_such_model__'
+          node tools/validate-pi-host.mjs
+          node .github/scripts/validate-pi-cli.mjs
+      - name: Build the pinned fork
+        working-directory: fork
+        run: |
+          test "$(git rev-parse HEAD)" = "$FORK_REF"
+          npm ci --ignore-scripts
+          npm run hydrate:model-data
+          PI_OFFLINE=1 npm run build:offline
+          git diff --exit-code
+      - name: Fork Pi host and CLI
+        run: |
+          node tools/validate-pi-host.mjs "$GITHUB_WORKSPACE/fork/packages/coding-agent"
+          node .github/scripts/validate-pi-cli.mjs "$GITHUB_WORKSPACE/fork/packages/coding-agent"
