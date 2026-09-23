@@ -22,7 +22,7 @@ test("full native observations preserve exact multiline field values and focused
 });
 
 test("metadata-looking lines inside a field remain part of its value", () => {
-  const value = "heading\nNote: schedule\nWindow: draft\nSelected text: keep\n<app_specific_instructions>\nliteral text\n</app_specific_instructions>\n<app_state>\nliteral wrapper text\n</app_state>\nsecond draft";
+  const value = "heading\nNote: schedule\nWindow: draft\nSelected text: [keep]\nThe focused UI element is 99 text field\n<app_specific_instructions>\nliteral text\n</app_specific_instructions>\n<app_state>\nliteral wrapper text\n</app_state>\nsecond draft";
   const snapshot = state(`0 standard window fixture\n\t1 text field (settable) ID: editor, Value: ${value}\n\t2 button Done\n\nThe focused UI element is 1 text field`);
   for (const text of [snapshot, `<app_specific_instructions>\nNative guidance\n</app_specific_instructions>\n${snapshot}`]) {
     const observed = parseAppState("TextEdit", text);
@@ -31,11 +31,13 @@ test("metadata-looking lines inside a field remain part of its value", () => {
   }
 });
 
-test("a structural app_state wrapper does not enter the last field's value", () => {
+test("structural app state and selection trailers do not enter the last field's value", () => {
   const value = "heading\nNote: field content\n<app_state>\nliteral wrapper text\n</app_state>\nmore content";
-  const observed = parseAppState("TextEdit", state(`<app_state>\n0 standard window fixture\n\t1 text field (settable) ID: editor, Value: ${value}\n</app_state>\nThe focused UI element is 1 text field`));
-  assert.equal(observed.elements[1].value, value);
-  assert.equal(observed.focused.index, "1");
+  for (const wrapped of [false, true]) {
+    const observed = parseAppState("TextEdit", state(`${wrapped ? "<app_state>\n" : ""}0 standard window fixture\n\t1 text field (settable) ID: editor, Value: ${value}\nSelected text: [more content]\n${wrapped ? "</app_state>\n" : ""}The focused UI element is 1 text field`));
+    assert.equal(observed.elements[1].value, value);
+    assert.equal(observed.focused.index, "1");
+  }
 });
 
 test("native inline search/scalar values and full window title outrank abbreviated header", () => {

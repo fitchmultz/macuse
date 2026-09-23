@@ -106,7 +106,7 @@ test("preflight detects an external edit after a metadata-looking field line", a
 });
 
 test("setValue readback excludes a structural wrapper after the last field", async () => {
-  const wrapped = value => `Window: "Draft", App: App.\n<app_state>\n0 standard window Draft, URL: file:///tmp/draft\n\t1 text field (settable) ID: editor, Value: ${value}\n</app_state>\nThe focused UI element is 1 text field`;
+  const wrapped = value => `Window: "Draft", App: App.\n<app_state>\n0 standard window Draft, URL: file:///tmp/draft\n\t1 text field (settable) ID: editor, Value: ${value}\nSelected text: [${value}]\n</app_state>\nThe focused UI element is 1 text field`;
   const f = fixture({ states: [wrapped("old"), wrapped("old"), wrapped("new")] });
   await f.observe();
   await f.guard(request("set_value", { element_index: 1, value: "new" }));
