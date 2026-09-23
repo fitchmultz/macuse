@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MacuseSession } from '../../lib/macuse-session.mjs';
+import { CuaRuntime } from '../../lib/cua-runtime.mjs';
 import { activityMonitorCheck } from '../validate-macuse.mjs';
 
 const result = () => ({ content: [{ type: 'text', text: 'Observed' }], isError: false, details: { macuse: {} } });
@@ -116,6 +117,45 @@ test('new calls wait through an in-progress kernel reset', async () => {
   await Promise.all([reset, next]);
   assert.deepEqual(f.events, ['reset', 'code']);
   await f.session.stop();
+});
+
+for (const interruption of ['abort', 'timeout', 'reset']) test(`${interruption} cancels pending session calls while allowing fresh work`, async t => {
+  const f = fixture(), started = Promise.withResolvers(), held = Promise.withResolvers();
+  const calls = [];
+  f.session.runtime = new CuaRuntime({ connect: async () => ({
+    callTool: async request => {
+      if (request.name === 'js_reset') {
+        held.resolve({ content: [], isError: true });
+        return { content: [] };
+      }
+      const code = request.arguments.code;
+      calls.push(code);
+      if (code === 'held') { started.resolve(); return held.promise; }
+      return { content: [], _meta: { macuse: { runId: request._meta.macuse.runId, actions: [], observations: [] } } };
+    },
+    close: async () => {},
+  }) });
+  t.after(() => f.session.stop());
+  const call = (code, options) => f.session.callTool('macuse', { code, trackFocus: false, timeoutMs: 1000 }, options);
+  const controller = new AbortController();
+  const first = call('held', { signal: controller.signal });
+  await started.promise;
+  const queued = call('must-not-run');
+  let reset, duringReset;
+  if (interruption === 'abort') controller.abort();
+  if (interruption === 'reset') {
+    reset = f.session.reset();
+    duringReset = call('during-reset');
+  }
+  const interrupted = await first;
+  assert.equal(interrupted.isError, true);
+  assert.equal(interrupted.details.macuse.kernelReset, true);
+  assert.equal((await queued).details.macuse.dispatched, false);
+  assert.equal(calls.includes('must-not-run'), false);
+  await reset;
+  if (duringReset) assert.equal((await duringReset).isError, false);
+  assert.equal((await call('fresh')).isError, false);
+  assert.deepEqual(calls, interruption === 'reset' ? ['held', 'during-reset', 'fresh'] : ['held', 'fresh']);
 });
 
 test('missing native focus coverage remains explicit without blocking a read-only result', async () => {
