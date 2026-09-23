@@ -137,6 +137,22 @@ test("a reused Delete button ID cannot override a changed row", async () => {
   assert.equal(f.calls.some(c => c.method === "perform_secondary_action"), false);
 });
 
+test("an unlabeled group item's filename sibling anchors Delete", async () => {
+  const files = name => `Window: "Files", App: App.\n0 standard window Files\n\t1 group\n\t\t2 text ${name}\n\t\t3 button Delete, ID: delete`;
+  const f = fixture({ states: [files("draft.txt"), files("important.txt")] });
+  await f.observe();
+  await assert.rejects(f.guard(request("perform_secondary_action", { element_index: 3, action: "Press" })), /changed/);
+  assert.equal(f.calls.some(c => c.method === "perform_secondary_action"), false);
+});
+
+test("a filename nested inside Delete cannot move with a reused button ID", async () => {
+  const files = name => `Window: "Files", App: App.\n0 standard window Files\n\t1 row\n\t\t2 button Delete, ID: delete\n\t\t\t3 text ${name}`;
+  const f = fixture({ states: [files("draft.txt"), files("important.txt")] });
+  await f.observe();
+  await assert.rejects(f.guard(request("perform_secondary_action", { element_index: 2, action: "Press" })), /changed/);
+  assert.equal(f.calls.some(c => c.method === "perform_secondary_action"), false);
+});
+
 test("scroll position changes outside the row do not block its Delete button", async () => {
   const files = position => `Window: "Files", App: App.\n0 standard window Files\n\t1 scroll area Library, Value: ${position}\n\t\t2 row draft.txt\n\t\t\t3 button Delete`;
   const f = fixture({ states: [files("0"), files("120")] });

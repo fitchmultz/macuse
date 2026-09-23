@@ -11,6 +11,7 @@ export interface AppElement {
   secondaryActions: string[];
   line: string;
   context: string;
+  descendants: string;
 }
 export interface AppObservation {
   app: string;
