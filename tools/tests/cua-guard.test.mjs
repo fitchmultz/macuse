@@ -97,6 +97,14 @@ test("preflight rejects document or field drift and ambiguous target identity", 
   }
 });
 
+test("preflight detects an external edit after a metadata-looking field line", async () => {
+  const f = fixture({ states: [tree({ value: "heading\nNote: schedule\nfirst draft" }), tree({ value: "heading\nNote: schedule\nsecond draft" })] });
+  await f.observe();
+  await assert.rejects(f.guard(request("set_value", { element_index: 1, value: "replacement" })), /Target identity or value changed/);
+  assert.equal(f.calls.some(call => call.method === "set_value"), false);
+  assert.equal(f.actions()[0].dispatched, false);
+});
+
 test("a disappearing row cannot retarget its Delete action to an originally identical button", async () => {
   const files = names => `Window: "Files", App: App.\n0 standard window Files\n${names.map((name, index) =>
     `\t${index * 2 + 1} row ${name}\n\t\t${index * 2 + 2} button Delete`).join("\n")}`;
