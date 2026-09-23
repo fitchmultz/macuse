@@ -5,8 +5,8 @@ import { parseAppState, sameDocument, findSameElement } from "../../lib/app-stat
 const state = tree => `Window: "fixture", App: TextEdit.\n${tree}`;
 
 test("full native observations preserve exact multiline field values and focused identity", () => {
-  const value = "Alpha café 日本語 🙂\n\n123 KB\n42\n<example>literal text</example>\nLast line  ";
-  for (const header of [`ID: editor, Value: ${value}`, `Value: Alpha café 日本語 🙂, ID: editor\n\n123 KB\n42\n<example>literal text</example>\nLast line  `]) {
+  const value = "Alpha café 日本語 🙂\n\n2026 roadmap\n123 KB\n42\n<example>literal text</example>\nLast line  ";
+  for (const header of [`ID: editor, Value: ${value}`, `Value: Alpha café 日本語 🙂, ID: editor\n\n2026 roadmap\n123 KB\n42\n<example>literal text</example>\nLast line  `]) {
     const text = state(`0 standard window fixture, URL: file:///tmp/fixture\n1 text entry area (settable) ${header}\n2 button Done\n\nThe focused UI element is 1 text entry area`);
     const observation = parseAppState("TextEdit", text);
     assert.equal(observation.app, "TextEdit");

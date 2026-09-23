@@ -98,7 +98,7 @@ test("preflight rejects document or field drift and ambiguous target identity", 
 });
 
 test("unique field identity re-resolves its index and exact Unicode setValue readback is required", async () => {
-  const value = "café 漢字 🙂\n  exact trailing whitespace  ";
+  const value = "café 漢字 🙂\n2026 roadmap\n  exact trailing whitespace  ";
   const f = fixture({ states: [tree(), tree({ index: 7 }), tree({ index: 7, value })] });
   await f.observe();
   await f.guard(request("set_value", { element_index: 1, value }));
