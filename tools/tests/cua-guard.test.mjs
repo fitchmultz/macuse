@@ -151,6 +151,15 @@ test("typing cannot retarget to an originally identical field when the focused f
   assert.equal(f.actions()[0].outcome, "not_dispatched");
 });
 
+test("typing cannot retarget when the focused editor moves to another cell", async () => {
+  const files = cell => fileState(`\t1 cell Value: ${cell}\n\t\t2 text field (settable) ID: editor, Value: unchanged\nThe focused UI element is 2 text field`);
+  const f = fixture({ states: [files("draft.txt"), files("important.txt")] });
+  await f.observe();
+  await assert.rejects(f.guard(request("type_text", { text: "private" })), /Focused field changed/);
+  assert.equal(f.calls.some(c => c.method === "type_text"), false);
+  assert.equal(f.actions()[0].outcome, "not_dispatched");
+});
+
 test("unique field identity re-resolves its index and exact Unicode setValue readback is required", async () => {
   const value = "café 漢字 🙂\n2026 roadmap\n2026 text of agreement\n  exact trailing whitespace  ";
   const f = fixture({ states: [tree(), tree({ index: 7 }), tree({ index: 7, value })] });
