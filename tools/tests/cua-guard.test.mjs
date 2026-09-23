@@ -121,6 +121,22 @@ test("an idless Delete button cannot move to another row after a list refresh", 
   assert.equal(unrelated.actions()[0].outcome, "completed");
 });
 
+test("an unlabeled row's filename child anchors its Delete button", async () => {
+  const files = name => `Window: "Files", App: App.\n0 standard window Files\n\t1 row\n\t\t2 text ${name}\n\t\t3 button Delete`;
+  const f = fixture({ states: [files("draft.txt"), files("important.txt")] });
+  await f.observe();
+  await assert.rejects(f.guard(request("perform_secondary_action", { element_index: 3, action: "Press" })), /changed/);
+  assert.equal(f.calls.some(c => c.method === "perform_secondary_action"), false);
+});
+
+test("a reused Delete button ID cannot override a changed row", async () => {
+  const files = name => `Window: "Files", App: App.\n0 standard window Files\n\t1 row ${name}\n\t\t2 button Delete, ID: delete`;
+  const f = fixture({ states: [files("draft.txt"), files("important.txt")] });
+  await f.observe();
+  await assert.rejects(f.guard(request("perform_secondary_action", { element_index: 2, action: "Press" })), /changed/);
+  assert.equal(f.calls.some(c => c.method === "perform_secondary_action"), false);
+});
+
 test("typing cannot retarget to an originally identical field when the focused field disappears", async () => {
   const f = fixture({ states: [tree({ duplicate: true }), tree({ index: 8 })] });
   await f.observe();
@@ -138,6 +154,14 @@ test("unique field identity re-resolves its index and exact Unicode setValue rea
   assert.equal(f.actions()[0].verification, "exact-field-value");
   assert.equal(f.actions()[0].outcome, "completed");
   assert.equal(f.context.meta.macuse.observations[0].elements.find(e => e.id === "editor").value, value);
+});
+
+test("editing a field within a row still verifies its changed value", async () => {
+  const files = value => `Window: "Files", App: App.\n0 standard window Files\n\t1 row draft.txt\n\t\t2 text field (settable) ID: editor, Value: ${value}`;
+  const f = fixture({ states: [files("old"), files("old"), files("new")] });
+  await f.observe();
+  await f.guard(request("set_value", { element_index: 2, value: "new" }));
+  assert.equal(f.actions()[0].verification, "exact-field-value");
 });
 
 test("unrelated text changes cannot verify setValue; caught uncertain action latches this run", async () => {
