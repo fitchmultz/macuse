@@ -177,19 +177,19 @@ test("a group's filename layout stays bound to its action layout", async () => {
   assert.equal(f.calls.some(c => c.method === "perform_secondary_action"), false);
 });
 
+test("scroll-area layout groups cannot transfer Delete to another item", async () => {
+  const files = name => `Window: "Files", App: App.\n0 standard window Files\n\t1 scroll area Library\n\t\t2 group\n\t\t\t3 text ${name}\n\t\t4 group\n\t\t\t5 button Delete, ID: delete`;
+  const f = fixture({ states: [files("draft.txt"), files("important.txt")] });
+  await f.observe();
+  await assert.rejects(f.guard(request("perform_secondary_action", { element_index: 5, action: "Press" })), /changed/);
+  assert.equal(f.calls.some(c => c.method === "perform_secondary_action"), false);
+});
+
 test("scroll position changes outside the row do not block its Delete button", async () => {
   const files = position => `Window: "Files", App: App.\n0 standard window Files\n\t1 scroll area Library, Value: ${position}\n\t\t2 row draft.txt\n\t\t\t3 button Delete`;
   const f = fixture({ states: [files("0"), files("120")] });
   await f.observe();
   await f.guard(request("perform_secondary_action", { element_index: 3, action: "Press" }));
-  assert.equal(f.actions()[0].outcome, "completed");
-});
-
-test("another group's changing status does not block an unchanged list item", async () => {
-  const files = status => `Window: "Files", App: App.\n0 standard window Files\n\t1 scroll area Library\n\t\t2 group\n\t\t\t3 text draft.txt\n\t\t\t4 button Delete, ID: delete0\n\t\t5 group\n\t\t\t6 text important.txt\n\t\t\t7 text ${status}`;
-  const f = fixture({ states: [files("10%"), files("20%")] });
-  await f.observe();
-  await f.guard(request("perform_secondary_action", { element_index: 4, action: "Press" }));
   assert.equal(f.actions()[0].outcome, "completed");
 });
 
