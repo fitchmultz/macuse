@@ -107,82 +107,31 @@ test("a disappearing row cannot retarget its Delete action to an originally iden
   assert.equal(f.actions()[0].outcome, "not_dispatched");
 });
 
-test("an idless Delete button cannot move to another row after a list refresh", async () => {
-  const files = (name, status = "ready") => `Window: "Files", App: App.\n0 standard window Files\n\t1 row ${name}\n\t\t2 button Delete\n\t3 text ${status}`;
-  const press = request("perform_secondary_action", { element_index: 2, action: "Press" });
-  const replaced = fixture({ states: [files("draft.txt"), files("important.txt")] });
-  await replaced.observe();
-  await assert.rejects(replaced.guard(press), /Target identity or value changed/);
-  assert.equal(replaced.calls.some(c => c.method === "perform_secondary_action"), false);
-
-  const unrelated = fixture({ states: [files("draft.txt"), files("draft.txt", "updated")] });
-  await unrelated.observe();
-  await unrelated.guard(press);
-  assert.equal(unrelated.actions()[0].outcome, "completed");
-});
-
-test("an unlabeled row's filename child anchors its Delete button", async () => {
-  const files = name => `Window: "Files", App: App.\n0 standard window Files\n\t1 row\n\t\t2 text ${name}\n\t\t3 button Delete`;
-  const f = fixture({ states: [files("draft.txt"), files("important.txt")] });
+const fileState = body => `Window: "Files", App: App.\n0 standard window Files\n${body}`;
+for (const [scenario, index, body] of [
+  ["an idless row changes", 2, "\t1 row draft.txt\n\t\t2 button Delete\n\t3 text ready"],
+  ["an unlabeled row's filename changes", 3, "\t1 row\n\t\t2 text draft.txt\n\t\t3 button Delete"],
+  ["a button ID is reused for another row", 2, "\t1 row draft.txt\n\t\t2 button Delete, ID: delete"],
+  ["an unlabeled group's filename changes", 3, "\t1 group\n\t\t2 text draft.txt\n\t\t3 button Delete, ID: delete"],
+  ["a group's Value changes items", 2, "\t1 group Value: draft.txt\n\t\t2 button Delete, ID: delete"],
+  ["the filename is nested inside the button", 2, "\t1 row\n\t\t2 button Delete, ID: delete\n\t\t\t3 text draft.txt"],
+  ["a row's filename layout changes", 5, "\t1 row\n\t\t2 group\n\t\t\t3 text draft.txt\n\t\t4 group\n\t\t\t5 button Delete, ID: delete"],
+  ["a group's filename layout changes", 5, "\t1 group\n\t\t2 group\n\t\t\t3 text draft.txt\n\t\t4 group\n\t\t\t5 button Delete, ID: delete"],
+  ["a scroll area's filename layout changes", 5, "\t1 scroll area Library\n\t\t2 group\n\t\t\t3 text draft.txt\n\t\t4 group\n\t\t\t5 button Delete, ID: delete"],
+]) test(`Delete cannot retarget when ${scenario}`, async () => {
+  const before = fileState(body);
+  const f = fixture({ states: [before, before.replace("draft.txt", "important.txt")] });
   await f.observe();
-  await assert.rejects(f.guard(request("perform_secondary_action", { element_index: 3, action: "Press" })), /changed/);
+  await assert.rejects(f.guard(request("perform_secondary_action", { element_index: index, action: "Press" })), /changed/);
   assert.equal(f.calls.some(c => c.method === "perform_secondary_action"), false);
 });
 
-test("a reused Delete button ID cannot override a changed row", async () => {
-  const files = name => `Window: "Files", App: App.\n0 standard window Files\n\t1 row ${name}\n\t\t2 button Delete, ID: delete`;
-  const f = fixture({ states: [files("draft.txt"), files("important.txt")] });
+test("unrelated status outside a row does not block Delete", async () => {
+  const before = fileState("\t1 row draft.txt\n\t\t2 button Delete\n\t3 text ready");
+  const f = fixture({ states: [before, before.replace("text ready", "text updated")] });
   await f.observe();
-  await assert.rejects(f.guard(request("perform_secondary_action", { element_index: 2, action: "Press" })), /changed/);
-  assert.equal(f.calls.some(c => c.method === "perform_secondary_action"), false);
-});
-
-test("an unlabeled group item's filename sibling anchors Delete", async () => {
-  const files = name => `Window: "Files", App: App.\n0 standard window Files\n\t1 group\n\t\t2 text ${name}\n\t\t3 button Delete, ID: delete`;
-  const f = fixture({ states: [files("draft.txt"), files("important.txt")] });
-  await f.observe();
-  await assert.rejects(f.guard(request("perform_secondary_action", { element_index: 3, action: "Press" })), /changed/);
-  assert.equal(f.calls.some(c => c.method === "perform_secondary_action"), false);
-});
-
-test("a group's Value can be its only item identity", async () => {
-  const files = name => `Window: "Files", App: App.\n0 standard window Files\n\t1 group Value: ${name}\n\t\t2 button Delete, ID: delete`;
-  const f = fixture({ states: [files("draft.txt"), files("important.txt")] });
-  await f.observe();
-  await assert.rejects(f.guard(request("perform_secondary_action", { element_index: 2, action: "Press" })), /changed/);
-  assert.equal(f.calls.some(c => c.method === "perform_secondary_action"), false);
-});
-
-test("a filename nested inside Delete cannot move with a reused button ID", async () => {
-  const files = name => `Window: "Files", App: App.\n0 standard window Files\n\t1 row\n\t\t2 button Delete, ID: delete\n\t\t\t3 text ${name}`;
-  const f = fixture({ states: [files("draft.txt"), files("important.txt")] });
-  await f.observe();
-  await assert.rejects(f.guard(request("perform_secondary_action", { element_index: 2, action: "Press" })), /changed/);
-  assert.equal(f.calls.some(c => c.method === "perform_secondary_action"), false);
-});
-
-test("a row's filename group stays bound to its action group", async () => {
-  const files = name => `Window: "Files", App: App.\n0 standard window Files\n\t1 row\n\t\t2 group\n\t\t\t3 text ${name}\n\t\t4 group\n\t\t\t5 button Delete, ID: delete`;
-  const f = fixture({ states: [files("draft.txt"), files("important.txt")] });
-  await f.observe();
-  await assert.rejects(f.guard(request("perform_secondary_action", { element_index: 5, action: "Press" })), /changed/);
-  assert.equal(f.calls.some(c => c.method === "perform_secondary_action"), false);
-});
-
-test("a group's filename layout stays bound to its action layout", async () => {
-  const files = name => `Window: "Files", App: App.\n0 standard window Files\n\t1 group\n\t\t2 group\n\t\t\t3 text ${name}\n\t\t4 group\n\t\t\t5 button Delete, ID: delete`;
-  const f = fixture({ states: [files("draft.txt"), files("important.txt")] });
-  await f.observe();
-  await assert.rejects(f.guard(request("perform_secondary_action", { element_index: 5, action: "Press" })), /changed/);
-  assert.equal(f.calls.some(c => c.method === "perform_secondary_action"), false);
-});
-
-test("scroll-area layout groups cannot transfer Delete to another item", async () => {
-  const files = name => `Window: "Files", App: App.\n0 standard window Files\n\t1 scroll area Library\n\t\t2 group\n\t\t\t3 text ${name}\n\t\t4 group\n\t\t\t5 button Delete, ID: delete`;
-  const f = fixture({ states: [files("draft.txt"), files("important.txt")] });
-  await f.observe();
-  await assert.rejects(f.guard(request("perform_secondary_action", { element_index: 5, action: "Press" })), /changed/);
-  assert.equal(f.calls.some(c => c.method === "perform_secondary_action"), false);
+  await f.guard(request("perform_secondary_action", { element_index: 2, action: "Press" }));
+  assert.equal(f.actions()[0].outcome, "completed");
 });
 
 test("scroll position changes outside the row do not block its Delete button", async () => {
