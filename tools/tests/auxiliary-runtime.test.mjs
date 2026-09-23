@@ -53,7 +53,7 @@ input.on('line', line => {
   else if (m.method === 'thread/start') reply(m.id, { thread: { id: 'fixture-thread' } });
   else if (m.method === 'mcpServerStatus/list') {
     const name = m.params.cursor ? 'computer-history' : 'event-stream';
-    const tools = Object.fromEntries(names.filter(tool => tool.startsWith(name === 'event-stream' ? 'event_stream_' : 'computer_history_')).map(tool => [tool, {}]));
+    const tools = Object.fromEntries(names.filter(tool => tool.startsWith(name === 'event-stream' ? 'event_stream_' : 'computer_history_') && !options.missingTools?.includes(tool)).map(tool => [tool, {}]));
     reply(m.id, { data: options.missingInventory ? [] : [{ name, tools }], nextCursor: name === 'event-stream' ? 'history-page' : null });
   } else if (m.method === 'mcpServer/tool/call') {
     const calls = readFileSync(log, 'utf8').trim().split('\\n').map(JSON.parse).filter(row => row.event === 'tool').length;
@@ -181,7 +181,8 @@ test('lazy authenticated JSONL startup isolates only auxiliary launchers and ret
     assert.deepEqual(config.args, [name, 'mcp']);
     assert.deepEqual(config.env_vars, ['CODEX_HOME']);
   }
-  assert.equal(rows.filter(row => row.method === 'mcpServerStatus/list').length, 2, 'both inventory pages are checked');
+  assert.deepEqual(rows.filter(row => row.method === 'mcpServerStatus/list').map(row => row.params.cursor),
+    names.flatMap(name => name.startsWith('event_stream_') ? [undefined] : [undefined, 'history-page']));
   assert.deepEqual(calls().map(row => row.params.arguments), names.map(name => name === 'computer_history_update_settings' ? { observation: observation() } : {}));
   assert.deepEqual(calls().map(row => row.params.server), names.map(name => name.startsWith('event_stream_') ? 'event-stream' : 'computer-history'));
   await runtime.stop();
@@ -331,14 +332,32 @@ for (const holdStage of ['initialize', 'config/read', 'thread/start', 'mcpServer
   assert.deepEqual(calls(), []);
 });
 
+test('stop and pause remain available when unrelated tools are missing', async t => {
+  for (const tool of ['event_stream_stop', 'computer_history_pause']) {
+    const { runtime, calls } = fixture(t, { missingTools: names.filter(name => name !== tool) });
+    const result = await runtime.callTool(tool, {}, { timeoutMs: 1000 });
+    assert.equal(result.isError, false);
+    assert.deepEqual(calls().map(call => call.params.tool), [tool]);
+  }
+});
+
+test('a reused thread still waits for the requested tool before dispatch', async t => {
+  const { runtime, calls } = fixture(t, { missingTools: ['computer_history_pause'] });
+  assert.equal((await runtime.callTool('event_stream_stop', {}, { timeoutMs: 1000 })).isError, false);
+  const result = await runtime.callTool('computer_history_pause', {}, { timeoutMs: 500 });
+  assert.equal(meta(result).reason, 'timeout');
+  assert.equal(meta(result).dispatched, false);
+  assert.deepEqual(meta(result).missingTools, ['computer-history/computer_history_pause']);
+  assert.deepEqual(calls().map(call => call.params.tool), ['event_stream_stop']);
+});
+
 test('missing inventory or malformed effective config prevents dispatch', async t => {
   for (const options of [{ missingInventory: true }, { badConfig: true }]) {
     const { runtime, calls } = fixture(t, options);
     const result = await runtime.callTool('event_stream_start', recording, { timeoutMs: 500 });
     if (options.missingInventory) {
       assert.match(result.content[0].text, /Missing auxiliary tools: event-stream\/event_stream_start/);
-      assert.match(result.content[0].text, /computer-history\/computer_history_update_settings/);
-      assert.equal(meta(result).missingTools.length, 8);
+      assert.deepEqual(meta(result).missingTools, ['event-stream/event_stream_start']);
     }
     assert.equal(result.isError, true);
     assert.equal(meta(result).dispatched, false);
