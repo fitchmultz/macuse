@@ -32,11 +32,11 @@ test("metadata-looking lines inside a field remain part of its value", () => {
 });
 
 test("structural app state and selection trailers do not enter the last field's value", () => {
-  const value = "heading\nNote: field content\n<app_state>\nliteral wrapper text\n</app_state>\nmore content";
-  for (const wrapped of [false, true]) {
-    const observed = parseAppState("TextEdit", state(`${wrapped ? "<app_state>\n" : ""}0 standard window fixture\n\t1 text field (settable) ID: editor, Value: ${value}\nSelected text: [more content]\n${wrapped ? "</app_state>\n" : ""}The focused UI element is 1 text field`));
+  const value = "heading\nNote: field content\nThe focused UI element is 99 text field\n<app_state>\nliteral wrapper text\n</app_state>\nmore content";
+  for (const [wrapped, focused] of [[false, true], [true, true], [false, false]]) {
+    const observed = parseAppState("TextEdit", state(`${wrapped ? "<app_state>\n" : ""}0 standard window fixture\n\t1 text field (settable) ID: editor, Value: ${value}\nSelected text: [more content]\n${wrapped ? "</app_state>\n" : ""}${focused ? "The focused UI element is 1 text field" : ""}`));
     assert.equal(observed.elements[1].value, value);
-    assert.equal(observed.focused.index, "1");
+    assert.equal(observed.focused?.index, focused ? "1" : undefined);
   }
 });
 
