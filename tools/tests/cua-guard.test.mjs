@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createGuard } from "../../lib/cua-guard-service.mjs";
 
-const tree = ({ title = "fixture", value = "old", index = 1, duplicate = false, focus = index } = {}) => `Window: "fixture", App: App.\n0 standard window ${title}, URL: file:///tmp/fixture\n${index} text field (settable) ID: editor, Value: ${value}\n${duplicate ? "8 text field (settable) ID: editor, Value: old\n" : ""}3 button Save, ID: save, Secondary Actions: Press\n4 text unrelated clock\nThe focused UI element is ${focus} text field`;
+const tree = ({ title = "fixture", value = "old", index = 1, duplicate = false, focus = index } = {}) => `Window: "fixture", App: App.\n0 standard window ${title}, URL: file:///tmp/fixture\n\t${index} text field (settable) ID: editor, Value: ${value}\n${duplicate ? "\t8 text field (settable) ID: editor, Value: old\n" : ""}\t3 button Save, ID: save, Secondary Actions: Press\n\t4 text unrelated clock\nThe focused UI element is ${focus} text field`;
 const gates = { runId: "run-1", apps: ["App"], allowMutating: true, safetyNote: "Change only the isolated fixture field." };
 const request = (method, input) => ({ type: "execute", method, args: input === undefined ? [] : [{ app: "App", ...input }] });
 
@@ -98,7 +98,7 @@ test("preflight rejects document or field drift and ambiguous target identity", 
 });
 
 test("unique field identity re-resolves its index and exact Unicode setValue readback is required", async () => {
-  const value = "café 漢字 🙂\n2026 roadmap\n  exact trailing whitespace  ";
+  const value = "café 漢字 🙂\n2026 roadmap\n2026 text of agreement\n  exact trailing whitespace  ";
   const f = fixture({ states: [tree(), tree({ index: 7 }), tree({ index: 7, value })] });
   await f.observe();
   await f.guard(request("set_value", { element_index: 1, value }));
