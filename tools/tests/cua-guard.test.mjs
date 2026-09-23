@@ -107,6 +107,20 @@ test("a disappearing row cannot retarget its Delete action to an originally iden
   assert.equal(f.actions()[0].outcome, "not_dispatched");
 });
 
+test("an idless Delete button cannot move to another row after a list refresh", async () => {
+  const files = (name, status = "ready") => `Window: "Files", App: App.\n0 standard window Files\n\t1 row ${name}\n\t\t2 button Delete\n\t3 text ${status}`;
+  const press = request("perform_secondary_action", { element_index: 2, action: "Press" });
+  const replaced = fixture({ states: [files("draft.txt"), files("important.txt")] });
+  await replaced.observe();
+  await assert.rejects(replaced.guard(press), /Target identity or value changed/);
+  assert.equal(replaced.calls.some(c => c.method === "perform_secondary_action"), false);
+
+  const unrelated = fixture({ states: [files("draft.txt"), files("draft.txt", "updated")] });
+  await unrelated.observe();
+  await unrelated.guard(press);
+  assert.equal(unrelated.actions()[0].outcome, "completed");
+});
+
 test("typing cannot retarget to an originally identical field when the focused field disappears", async () => {
   const f = fixture({ states: [tree({ duplicate: true }), tree({ index: 8 })] });
   await f.observe();
