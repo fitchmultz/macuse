@@ -97,6 +97,24 @@ test("preflight rejects document or field drift and ambiguous target identity", 
   }
 });
 
+test("a disappearing row cannot retarget its Delete action to an originally identical button", async () => {
+  const files = names => `Window: "Files", App: App.\n0 standard window Files\n${names.map((name, index) =>
+    `\t${index * 2 + 1} row ${name}\n\t\t${index * 2 + 2} button Delete`).join("\n")}`;
+  const f = fixture({ states: [files(["draft.txt", "important.txt"]), files(["important.txt"])] });
+  await f.observe();
+  await assert.rejects(f.guard(request("perform_secondary_action", { element_index: 2, action: "Press" })), /changed/);
+  assert.equal(f.calls.some(c => c.method === "perform_secondary_action"), false);
+  assert.equal(f.actions()[0].outcome, "not_dispatched");
+});
+
+test("typing cannot retarget to an originally identical field when the focused field disappears", async () => {
+  const f = fixture({ states: [tree({ duplicate: true }), tree({ index: 8 })] });
+  await f.observe();
+  await assert.rejects(f.guard(request("type_text", { text: "new" })), /Focused field changed/);
+  assert.equal(f.calls.some(c => c.method === "type_text"), false);
+  assert.equal(f.actions()[0].outcome, "not_dispatched");
+});
+
 test("unique field identity re-resolves its index and exact Unicode setValue readback is required", async () => {
   const value = "café 漢字 🙂\n2026 roadmap\n2026 text of agreement\n  exact trailing whitespace  ";
   const f = fixture({ states: [tree(), tree({ index: 7 }), tree({ index: 7, value })] });
