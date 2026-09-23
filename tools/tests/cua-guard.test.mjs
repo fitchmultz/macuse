@@ -114,6 +114,7 @@ for (const [scenario, index, body] of [
   ["a button ID is reused for another row", 2, "\t1 row draft.txt\n\t\t2 button Delete, ID: delete"],
   ["an unlabeled group's filename changes", 3, "\t1 group\n\t\t2 text draft.txt\n\t\t3 button Delete, ID: delete"],
   ["a group's Value changes items", 2, "\t1 group Value: draft.txt\n\t\t2 button Delete, ID: delete"],
+  ["a cell's Value changes items", 2, "\t1 cell Value: draft.txt\n\t\t2 button Delete, ID: delete"],
   ["the filename is nested inside the button", 2, "\t1 row\n\t\t2 button Delete, ID: delete\n\t\t\t3 text draft.txt"],
   ["a row's filename layout changes", 5, "\t1 row\n\t\t2 group\n\t\t\t3 text draft.txt\n\t\t4 group\n\t\t\t5 button Delete, ID: delete"],
   ["a group's filename layout changes", 5, "\t1 group\n\t\t2 group\n\t\t\t3 text draft.txt\n\t\t4 group\n\t\t\t5 button Delete, ID: delete"],
@@ -167,6 +168,16 @@ test("editing a field within a row still verifies its changed value", async () =
   await f.observe();
   await f.guard(request("set_value", { element_index: 2, value: "new" }));
   assert.equal(f.actions()[0].verification, "exact-field-value");
+});
+
+test("editing a field within a cell verifies its changed value", async () => {
+  const files = (cell, field) => `Window: "Files", App: App.\n0 standard window Files\n\t1 cell Value: ${cell}\n\t\t2 text field (settable) ID: editor, Value: ${field}`;
+  for (const cellAfter of ["old", "new"]) {
+    const f = fixture({ states: [files("old", "old"), files("old", "old"), files(cellAfter, "new")] });
+    await f.observe();
+    await f.guard(request("set_value", { element_index: 2, value: "new" }));
+    assert.equal(f.actions()[0].verification, "exact-field-value");
+  }
 });
 
 test("unrelated text changes cannot verify setValue; caught uncertain action latches this run", async () => {
