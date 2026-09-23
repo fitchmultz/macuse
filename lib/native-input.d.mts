@@ -23,4 +23,4 @@ export type InsertTextResult = {
 		focus?: (NativeObservation & { observationAvailable: true }) | { observationAvailable: false; observationError: string; inputAttribution: false };
 	} };
 };
-export function insertText(native: MacOSNative, input: InsertTextInput, observation: AppObservation | undefined, options?: { signal?: AbortSignal }): Promise<InsertTextResult>;
+export function insertText(native: MacOSNative, input: InsertTextInput, observation: AppObservation | undefined, options: { signal?: AbortSignal; refreshObservation: () => Promise<AppObservation | undefined> }): Promise<InsertTextResult>;

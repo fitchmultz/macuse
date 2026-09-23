@@ -6,7 +6,8 @@ import { syncBuiltinESMExports } from "node:module";
 import { PassThrough, Writable } from "node:stream";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import test from "node:test";
-import { insertText } from "../../lib/native-input.mjs";
+import { insertText as insertTextWithRefresh } from "../../lib/native-input.mjs";
+import { parseAppState } from "../../lib/app-state.mjs";
 import { MacOSNative } from "../macos-native.mjs";
 
 const app = { pid: 4242, name: "TextEdit", bundleId: "com.apple.TextEdit", path: "/System/Applications/TextEdit.app" };
@@ -27,6 +28,9 @@ function fixture(overrides = {}) {
 		endObservation: async () => focus, replaceSelectedText: async () => applied, stop: async () => {}, ...overrides };
 	return { calls, native: Object.fromEntries(Object.entries(methods).map(([name, fn]) => [name, async (...args) => { calls.push({ name, args }); return fn(...args); }])) };
 }
+const insertText = (native, input, observation, options = {}) => insertTextWithRefresh(native, input, observation, {
+	refreshObservation: async () => structuredClone(observation), ...options,
+});
 function noEdit(result, f, pattern) {
 	assert.equal(result.isError, true);
 	assert.equal(result.details.macuse.dispatched, false);
@@ -34,6 +38,24 @@ function noEdit(result, f, pattern) {
 	assert.match(result.content[0].text, pattern);
 	assert.equal(f.calls.some(call => call.name === "replaceSelectedText"), false);
 }
+
+test("a reused editor cannot insert into a changed record despite unchanged native identity and value", async () => {
+	const snapshot = record => parseAppState(app.bundleId, `Window: "Fixture.txt", App: TextEdit.
+0 standard window Fixture.txt, URL: file:///tmp/Fixture.txt
+	1 cell Value: ${record}
+		2 text entry area ID: First Text View, Value: prefix ORIGINAL suffix
+
+The focused UI element is 2 text entry area`);
+	const before = snapshot("draft.txt");
+	const fresh = snapshot("important.txt");
+	assert.equal(before.focused.value, state.focusedElement.value);
+	assert.equal(before.focused.context, fresh.focused.context);
+	assert.notEqual(before.focused.cellValueContext, fresh.focused.cellValueContext);
+	const f = fixture();
+	noEdit(await insertText(f.native, input, before, { refreshObservation: async () => fresh }), f, /Focused field changed/);
+	const reindexed = parseAppState(app.bundleId, before.text.replaceAll('2 text entry area', '9 text entry area'));
+	assert.equal((await insertText(fixture().native, input, before, { refreshObservation: async () => reindexed })).isError, false);
+});
 
 test("selected-range insertion preserves exact Unicode, document tokens, field value and honest focus coverage", async () => {
 	const f = fixture();
@@ -72,7 +94,8 @@ test("no prior focused field refuses before native access rather than editing th
 
 test("CUA display names synthesized from ID/role do not masquerade as native field labels", async () => {
 	for (const name of [observation.focused.id, observation.focused.role]) {
-		const result = await insertText(fixture().native, input, { ...observation, focused: { ...observation.focused, name } });
+		const focused = { ...observation.focused, name };
+		const result = await insertText(fixture().native, input, { ...observation, focused, elements: [focused] });
 		assert.equal(result.isError, false);
 	}
 	const f = fixture({ inspectApp: async () => ({ ...state, focusedElement: { ...state.focusedElement, role: "AXTextField", roleDescription: "search text field" } }) });
@@ -123,7 +146,7 @@ test("changed document, explicit guards, app identity and focused field refuse b
 		noEdit(await insertText(f.native, candidate, observation), f, pattern);
 	}
 	const f = fixture();
-	noEdit(await insertText(f.native, input, { ...observation, focused: { ...observation.focused, name: "Other field" } }), f, /focused field/);
+	noEdit(await insertText(f.native, input, { ...observation, focused: { ...observation.focused, name: "Other field" } }), f, /focused field/i);
 });
 
 test("document URL wins over abbreviated titles, but explicit title guards remain exact", async () => {
