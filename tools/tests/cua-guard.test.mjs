@@ -107,6 +107,41 @@ test("a disappearing row cannot retarget its Delete action to an originally iden
   assert.equal(f.actions()[0].outcome, "not_dispatched");
 });
 
+const fileState = body => `Window: "Files", App: App.\n0 standard window Files\n${body}`;
+for (const [scenario, index, body] of [
+  ["an idless row changes", 2, "\t1 row draft.txt\n\t\t2 button Delete\n\t3 text ready"],
+  ["an unlabeled row's filename changes", 3, "\t1 row\n\t\t2 text draft.txt\n\t\t3 button Delete"],
+  ["a button ID is reused for another row", 2, "\t1 row draft.txt\n\t\t2 button Delete, ID: delete"],
+  ["an unlabeled group's filename changes", 3, "\t1 group\n\t\t2 text draft.txt\n\t\t3 button Delete, ID: delete"],
+  ["a group's Value changes items", 2, "\t1 group Value: draft.txt\n\t\t2 button Delete, ID: delete"],
+  ["the filename is nested inside the button", 2, "\t1 row\n\t\t2 button Delete, ID: delete\n\t\t\t3 text draft.txt"],
+  ["a row's filename layout changes", 5, "\t1 row\n\t\t2 group\n\t\t\t3 text draft.txt\n\t\t4 group\n\t\t\t5 button Delete, ID: delete"],
+  ["a group's filename layout changes", 5, "\t1 group\n\t\t2 group\n\t\t\t3 text draft.txt\n\t\t4 group\n\t\t\t5 button Delete, ID: delete"],
+  ["a scroll area's filename layout changes", 5, "\t1 scroll area Library\n\t\t2 group\n\t\t\t3 text draft.txt\n\t\t4 group\n\t\t\t5 button Delete, ID: delete"],
+]) test(`Delete cannot retarget when ${scenario}`, async () => {
+  const before = fileState(body);
+  const f = fixture({ states: [before, before.replace("draft.txt", "important.txt")] });
+  await f.observe();
+  await assert.rejects(f.guard(request("perform_secondary_action", { element_index: index, action: "Press" })), /changed/);
+  assert.equal(f.calls.some(c => c.method === "perform_secondary_action"), false);
+});
+
+test("unrelated status outside a row does not block Delete", async () => {
+  const before = fileState("\t1 row draft.txt\n\t\t2 button Delete\n\t3 text ready");
+  const f = fixture({ states: [before, before.replace("text ready", "text updated")] });
+  await f.observe();
+  await f.guard(request("perform_secondary_action", { element_index: 2, action: "Press" }));
+  assert.equal(f.actions()[0].outcome, "completed");
+});
+
+test("scroll position changes outside the row do not block its Delete button", async () => {
+  const files = position => `Window: "Files", App: App.\n0 standard window Files\n\t1 scroll area Library, Value: ${position}\n\t\t2 row draft.txt\n\t\t\t3 button Delete`;
+  const f = fixture({ states: [files("0"), files("120")] });
+  await f.observe();
+  await f.guard(request("perform_secondary_action", { element_index: 3, action: "Press" }));
+  assert.equal(f.actions()[0].outcome, "completed");
+});
+
 test("typing cannot retarget to an originally identical field when the focused field disappears", async () => {
   const f = fixture({ states: [tree({ duplicate: true }), tree({ index: 8 })] });
   await f.observe();
@@ -124,6 +159,14 @@ test("unique field identity re-resolves its index and exact Unicode setValue rea
   assert.equal(f.actions()[0].verification, "exact-field-value");
   assert.equal(f.actions()[0].outcome, "completed");
   assert.equal(f.context.meta.macuse.observations[0].elements.find(e => e.id === "editor").value, value);
+});
+
+test("editing a field within a row still verifies its changed value", async () => {
+  const files = value => `Window: "Files", App: App.\n0 standard window Files\n\t1 row draft.txt\n\t\t2 text field (settable) ID: editor, Value: ${value}`;
+  const f = fixture({ states: [files("old"), files("old"), files("new")] });
+  await f.observe();
+  await f.guard(request("set_value", { element_index: 2, value: "new" }));
+  assert.equal(f.actions()[0].verification, "exact-field-value");
 });
 
 test("unrelated text changes cannot verify setValue; caught uncertain action latches this run", async () => {

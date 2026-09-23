@@ -10,6 +10,8 @@ export interface AppElement {
   settable: boolean;
   secondaryActions: string[];
   line: string;
+  context: string;
+  descendants: string;
 }
 export interface AppObservation {
   app: string;
