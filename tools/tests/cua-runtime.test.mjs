@@ -146,13 +146,20 @@ test("an unawaited native action is reset before later code can use the owned ru
 
 test("ordinary guest errors preserve authoritative partial outcomes without resetting JS", async () => {
   const action = { id: 1, method: "set_value", app: "App", dispatched: true, outcome: "completed", verification: "exact-field-value" };
-  const f = fixture(request => request.name === "js" ? { ...success(request, { actions: [action] }), isError: true, content: [{ type: "text", text: "Error: script failed after the edit" }] } : undefined);
-  const result = await f.runtime.execute(mutating);
-  assert.equal(result.isError, true);
-  assert.equal(result.details.macuse.kernelReset, false);
-  assert.deepEqual(result.details.macuse.actions, [action]);
-  assert.equal(f.calls.length, 1);
-  await f.runtime.stop();
+  for (const text of ["Error: script failed after the edit", "Invalid timeout setting", "js execution timed out; kernel reset, rerun your request"]) {
+    const f = fixture(request => {
+      if (request.name !== "js") return;
+      const result = success(request, { actions: [action] });
+      result._meta["codex/nodeReplExecutionDurationMs"] = 0;
+      return { ...result, isError: true, content: [{ type: "text", text }] };
+    });
+    const result = await f.runtime.execute(mutating);
+    assert.equal(result.isError, true);
+    assert.equal(result.details.macuse.kernelReset, false, text);
+    assert.deepEqual(result.details.macuse.actions, [action]);
+    assert.equal(f.calls.length, 1);
+    await f.runtime.stop();
+  }
 });
 
 test("guard rejection caught by guest still surfaces an error and its partial record", async () => {
