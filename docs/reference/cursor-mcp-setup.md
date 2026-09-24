@@ -47,9 +47,9 @@ Then bind the chosen app:
 
 Bindings and observations persist for that server process. Read the emitted documentation/state, await every action, and use `await app.getAXState()` or `await app.getAXStateAndScreenshot()` for subsequent observations. These methods emit automatically.
 
-Mutations require exact `apps` scope, `allowMutating:true`, and a concrete `safetyNote`, plus a prior same-app observation. Pointer actions additionally require `allowPointer:true`. The server refreshes full state before each action, validates document/target identity, and verifies full-field `setValue` exactly. Native element indexes come from the observed state; there is no additional selector language.
+Mutations require exact `apps` scope, `allowMutating:true`, and a concrete `safetyNote`, plus a prior same-app observation. Pointer actions use the same scoped mutation authorization. The server refreshes full state before each action, validates document/target identity, and verifies full-field `setValue` exactly. Native element indexes come from the observed state; there is no additional selector language.
 
-Use `macuse_insert_text` for selected-range Unicode insertion into an already-focused, freshly observed field. It preserves unselected text and verifies native readback without keyboard input or clipboard writes. Observe again afterward. Raw `typeText` is ASCII-only; paste is disabled.
+Use `macuse_insert_text` for selected-range Unicode insertion into an already-focused, freshly observed field. It preserves unselected text and verifies native readback without keyboard input or clipboard writes. Observe again afterward. Raw `typeText` is ASCII-only. Native `app.paste(text)` supports Unicode and restores the previous clipboard; an optional second argument `{format:"md"}` or `{format:"html"}` selects Markdown or HTML instead of plain text. Paste shortcuts are supported. Verify the result with a fresh observation.
 
 Tool results contain text/images and `isError`; structured macuse evidence is in MCP `_meta`. Inspect partial `dispatched`/`outcome` evidence. Timeout/abort resets JavaScript and awaits settlement, but a GUI effect may already have happened. Never automatically replay an uncertain action. `macuse_reset({})` clears bindings/observations without undoing GUI state.
 

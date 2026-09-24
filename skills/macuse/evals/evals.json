@@ -13,7 +13,7 @@
     {
       "id": "unicode-selection-insertion",
       "prompt": "In the already-focused TextEdit draft, insert ‘café — 東京’ at the current caret without replacing the rest of the document or touching my clipboard.",
-      "expected_output": "Get a fresh same-app focused-field observation, then call macuse_insert_text with the literal Unicode text, allowMutating true, and a scoped safetyNote. Preserve unselected content and observe again afterward. Do not use raw typeText, paste, keyboard input, whole-field setValue, transliteration, or a fallback if insertion is unsupported or uncertain."
+      "expected_output": "Get a fresh same-app focused-field observation, then call macuse_insert_text with the literal Unicode text, allowMutating true, and a scoped safetyNote. Preserve unselected content and observe again afterward. Do not use paste or paste shortcuts: this task explicitly forbids touching the clipboard. Do not use raw typeText for Unicode, unrequested whole-field setValue, or transliteration. Never automatically replay an uncertain insertion through another input method."
     },
     {
       "id": "persistent-observation-output",

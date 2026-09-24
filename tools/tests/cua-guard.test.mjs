@@ -31,19 +31,24 @@ test("setup preserves GUI primitives but removes audio and unknown services; met
   await assert.rejects(f.guard({ type: "drag_start", point: [1, 1] }), /trusted macuse/);
 });
 
-test("exact app scope, mutation note and pointer gates fail before dispatch", async () => {
-  for (const meta of [{ ...gates, allowMutating: false }, { ...gates, apps: ["app"] }, { ...gates, safetyNote: "too short" }]) {
+test("exact app scope and nonempty mutation note fail before dispatch", async () => {
+  for (const meta of [{ ...gates, allowMutating: false }, { ...gates, apps: ["app"] }, { ...gates, safetyNote: " \n " }]) {
     const f = fixture();
     await f.observe();
     f.context.requestMeta.macuse = meta;
     await assert.rejects(f.guard(request("set_value", { element_index: 1, value: "new" })));
     assert.equal(f.calls.some(c => c.method === "set_value"), false);
   }
-  for (const [method, input] of [["click", { element_index: 3 }], ["drag", { from_x: 1, from_y: 1, to_x: 2, to_y: 2 }], ["scroll", { x: 1, y: 1, direction: "down" }]]) {
+});
+
+test("short mutation notes and pointer actions use the ordinary mutation scope", async () => {
+  for (const [method, input] of [["click", { element_index: 3 }], ["click", { x: 1, y: 1 }], ["drag", { from_x: 1, from_y: 1, to_x: 2, to_y: 2 }], ["scroll", { x: 1, y: 1, direction: "down" }]]) {
     const f = fixture();
     await f.observe();
-    await assert.rejects(f.guard(request(method, input)), /allowPointer/);
-    assert.equal(f.calls.some(c => c.method === method), false);
+    f.context.requestMeta.macuse.safetyNote = "App fixture only.";
+    await f.guard(request(method, input));
+    assert.equal(f.calls.at(-1).method, method);
+    assert.equal(f.actions()[0].outcome, "completed");
   }
   const f = fixture();
   await f.observe();
@@ -51,9 +56,11 @@ test("exact app scope, mutation note and pointer gates fail before dispatch", as
   assert.equal(f.actions()[0].outcome, "completed");
 });
 
-test("validate complete arguments and block Unicode typing and clipboard paths before action", async () => {
+test("validate complete arguments and block corrupting Unicode typing before action", async () => {
   for (const [method, input] of [
-    ["type_text", { text: "café 漢字 🙂" }], ["paste", { text: "ascii" }], ["press_key", { key: "super+v" }],
+    ["type_text", { text: "café 漢字 🙂" }],
+    ["paste", { text: "bad\ud800", format: "text" }], ["paste", { text: "ascii", format: "rtf" }],
+    ["paste", { text: "ascii" }], ["paste", { text: 123, format: "text" }],
     ["select_text", { element_index: 1, text: "old", selection_type: "invalid" }],
     ["scroll", { element_index: 1, direction: "down", pages: Infinity }],
     ["set_value", { element_index: 1, value: "bad\ud800" }], ["select_text", { element_index: 1, text: "bad\udfff" }],
@@ -67,6 +74,48 @@ test("validate complete arguments and block Unicode typing and clipboard paths b
     assert.equal(f.calls.length, count, `${method} must fail before even preflight`);
     assert.equal(f.actions()[0].dispatched, false);
   }
+});
+
+test("native paste accepts vendor text, Markdown and HTML formats with Unicode", async () => {
+  for (const format of ["text", "md", "html"]) {
+    const f = fixture();
+    await f.observe();
+    const input = { text: "café 漢字 🙂", format };
+    await f.guard(request("paste", input));
+    assert.deepEqual(f.calls.at(-1), request("paste", input));
+    assert.equal(f.actions()[0].outcome, "completed");
+  }
+});
+
+test("paste shortcuts and Control+V reach the native key implementation", async () => {
+  for (const key of ["super+v", "cmd+v", "command+shift+v", "meta+alt+shift+v", "ctrl+v", "control+v", "shift+insert"]) {
+    const f = fixture();
+    await f.observe();
+    await f.guard(request("press_key", { key }));
+    assert.equal(f.calls.at(-1).args[0].key, key);
+  }
+});
+
+test("paste retains exact scope, observation, document and focused-input guards", async () => {
+  for (const after of [tree({ title: "other" }), tree({ focus: 3 }), tree({ value: "external edit" })]) {
+    const f = fixture({ states: [tree(), after] });
+    await f.observe();
+    await assert.rejects(f.guard(request("paste", { text: "new", format: "text" })), /changed/);
+    assert.equal(f.calls.some(call => call.method === "paste"), false);
+  }
+  const f = fixture();
+  await assert.rejects(f.guard(request("paste", { text: "new", format: "text" })), /Observe/);
+  await f.observe();
+  await assert.rejects(f.guard(request("paste", { app: "Other", text: "new", format: "text" })), /scope/);
+});
+
+test("failed paste preserves uncertain outcome and prevents replay", async () => {
+  const f = fixture({ mutate: () => { throw new Error("native pipe closed"); } });
+  await f.observe();
+  await assert.rejects(f.guard(request("paste", { text: "new", format: "text" })), /native pipe closed/);
+  await assert.rejects(f.guard(request("paste", { text: "new", format: "text" })), /uncertain outcome/);
+  assert.equal(f.actions()[0].outcome, "unknown");
+  assert.equal(f.calls.filter(call => call.method === "paste").length, 1);
 });
 
 test("native canonical app bindings keep the observed exact scope without fuzzy aliases", async () => {
@@ -188,6 +237,43 @@ test("keyboard input preserves unchanged focus and window-level shortcuts withou
   }
 });
 
+test("app-wide Command shortcuts tolerate changed focused text but never document drift", async () => {
+  for (const key of ["super+s", "cmd+s", "command+shift+s", "meta+w", "Super_L+n", "Super_R+o", "Meta_L+p", "Meta_R+q", "cmd+h", "cmd+m", " Shift_R + Command + S "]) {
+    const f = fixture({ states: [tree(), tree({ value: "edited draft" })] });
+    await f.observe();
+    await f.guard(request("press_key", { key }));
+    assert.equal(f.calls.at(-1).method, "press_key");
+    const drift = fixture({ states: [tree(), tree({ title: "other" })] });
+    await drift.observe();
+    await assert.rejects(drift.guard(request("press_key", { key })), /document changed/);
+  }
+});
+
+test("text entry and editing shortcuts retain focused-field value checks", async () => {
+  for (const key of ["a", "Right", "Backspace", "super+v", "super+x", "super+a", "super+z", "super+Left", "ctrl+v", "shift+insert"]) {
+    const f = fixture({ states: [tree(), tree({ value: "external edit" })] });
+    await f.observe();
+    await assert.rejects(f.guard(request("press_key", { key })), /Focused field changed/);
+    assert.equal(f.calls.some(call => call.method === "press_key"), false);
+  }
+});
+
+test("formatting, submission and unknown Command chords retain value and focus checks", async () => {
+  const before = tree().replace("\t3 button", "\t2 text field (settable) ID: notes, Value: notes\n\t3 button");
+  for (const key of ["super+b", "cmd+i", "command+k", "meta+Return", "Super_L+Enter", "Super_R+KP_Enter", "command+shift+Return", "Return", "Enter", "KP_Enter", "super+f12", "ctrl+super+s"]) {
+    for (const after of [before.replace("Value: old", "Value: external edit"), before.replace("The focused UI element is 1", "The focused UI element is 2")]) {
+      const f = fixture({ states: [before, after] });
+      await f.observe();
+      await assert.rejects(f.guard(request("press_key", { key })), /Focused field changed/, key);
+      assert.equal(f.calls.some(call => call.method === "press_key"), false, key);
+    }
+    const unchanged = fixture({ states: [before] });
+    await unchanged.observe();
+    await unchanged.guard(request("press_key", { key }));
+    assert.equal(unchanged.actions()[0].outcome, "completed", key);
+  }
+});
+
 test("typing cannot retarget to an originally identical field when the focused field disappears", async () => {
   const f = fixture({ states: [tree({ duplicate: true }), tree({ index: 8 })] });
   await f.observe();
@@ -299,13 +385,28 @@ test("explicit window close reports identity without a native read that could re
   for (const [method, input] of [["press_key", { key: "super+w" }], ["click", { element_index: 5 }], ["perform_secondary_action", { element_index: 5, action: "Press" }]]) {
     const text = tree().replace("3 button Save", "5 close button Close, Secondary Actions: Press\n3 button Save");
     const f = fixture({ states: [text] });
-    f.context.requestMeta.macuse.allowPointer = true;
     await f.observe();
     await f.guard(request(method, input));
     assert.equal(f.calls.at(-1).method, method);
     assert.equal(f.actions()[0].closesWindow, true);
     assert.deepEqual(f.actions()[0].before, { title: "fixture", url: "file:///tmp/fixture" });
     assert.equal(f.actions()[0].verification, "native-returned");
+  }
+});
+
+test("native Command aliases and modifier order share close classification", async () => {
+  for (const key of ["super+w", "cmd+w", "command+w", "meta+w", "Super_L+w", "Super_R+w", "Meta_L+w", "Meta_R+w", "shift+cmd+w", " Command + Shift_R + W ", "Shift_L+SUPER+W", "alt+cmd+w", "Command+Alt_R+w", "option+meta+w"]) {
+    const f = fixture({ states: [tree(), tree({ value: "edited draft" })] });
+    await f.observe();
+    await f.guard(request("press_key", { key }));
+    assert.equal(f.actions()[0].closesWindow, true, key);
+    assert.equal(f.calls.at(-1).method, "press_key", key);
+  }
+  for (const key of ["ctrl+w", "super+ctrl+w", "super+s", "w"]) {
+    const f = fixture();
+    await f.observe();
+    await f.guard(request("press_key", { key }));
+    assert.equal(f.actions()[0].closesWindow, undefined, key);
   }
 });
 

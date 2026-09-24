@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Enable native Unicode paste with plain-text, Markdown, and HTML formats, plus paste shortcuts.
+- Remove the separate pointer flag and minimum safety-note length; scoped mutation authorization and nonempty notes remain required.
+- Let app-wide Command shortcuts such as Save operate after focused text changes, while preserving text-input, target, and document checks.
+- Recognize app-access approval from structured metadata independently of its displayed wording.
+
 ## 0.5.0 — Experimental prerelease
 
 - Replace the app-server GUI bridge and JSON sequence language with persistent JavaScript through installed `@oai/cua-repl`, computer-only and Sky-only in the normal vendor sandbox. Primary GUI control has no app-server dependency.

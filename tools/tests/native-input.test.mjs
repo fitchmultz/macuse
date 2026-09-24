@@ -75,7 +75,7 @@ test("missing observation, permission flags and malformed Unicode fail before na
 	for (const [candidate, observed, pattern] of [
 		[input, undefined, /Observe the intended app/],
 		[{ ...input, allowMutating: false }, observation, /allowMutating:true/],
-		[{ ...input, safetyNote: "short" }, observation, /20 characters/],
+		[{ ...input, safetyNote: " \n " }, observation, /nonempty safetyNote/],
 		[{ ...input, text: "bad\ud800" }, observation, /well-formed Unicode/],
 		[{ ...input, text: "bad\udfff" }, observation, /well-formed Unicode/],
 		[{ ...input, expectedTitle: 123 }, observation, /exact string/],
@@ -84,6 +84,12 @@ test("missing observation, permission flags and malformed Unicode fail before na
 		noEdit(await insertText(f.native, candidate, observed), f, pattern);
 		assert.equal(f.calls.length, 0);
 	}
+});
+
+test("selected-text insertion accepts a short nonempty mutation note", async () => {
+	const result = await insertText(fixture().native, { ...input, safetyNote: "Fixture only." }, observation);
+	assert.equal(result.isError, false);
+	assert.equal(result.details.macuse.outcome, "verified");
 });
 
 test("no prior focused field refuses before native access rather than editing the current field", async () => {

@@ -29,6 +29,11 @@ test('Pi uses the shared strict surface, resets auxiliary activation, and preser
     assert.equal(tool.executionMode, 'sequential');
     assert.deepEqual(tool.constrainedSampling, { type: 'json_schema', strict: 'prefer' });
   }
+  assert.deepEqual(Object.keys(f.tools.get('macuse').parameters.properties),
+    ['code', 'apps', 'allowMutating', 'safetyNote', 'timeoutMs', 'saveImagePath', 'trackFocus']);
+  for (const name of ['macuse', 'macuse_insert_text']) {
+    assert.equal(f.tools.get(name).parameters.properties.safetyNote.minLength, 1);
+  }
   for (const reason of ['startup', 'reload', 'resume', 'new', 'fork']) {
     await f.handlers.get('session_start')({ reason });
     assert.deepEqual(f.active().sort(), ['read', 'macuse', 'macuse_insert_text', 'macuse_reset', 'macuse_tools'].sort());

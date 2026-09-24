@@ -197,7 +197,7 @@ test("reset failure closes the connection and still settles a possibly dispatche
 
 test("invalid envelopes and pre-aborted calls never start the native runtime", async () => {
   const f = fixture();
-  assert.throws(() => f.runtime.execute({ ...mutating, safetyNote: "yes" }), /safetyNote/);
+  assert.throws(() => f.runtime.execute({ ...mutating, safetyNote: " \n " }), /safetyNote/);
   for (const timeoutMs of [NaN, 999, 300_001]) assert.throws(() => f.runtime.execute({ code: "mock", timeoutMs }), /timeoutMs/);
   const result = await f.runtime.execute(mutating, { signal: AbortSignal.abort() });
   assert.equal(result.isError, true);
@@ -210,7 +210,12 @@ test("only computer app-access elicitations inherit standing approval", () => {
   assert.equal(appApproval({ params }).action, "accept");
   assert.equal(appApproval({ params: { ...params, _meta: { ...params._meta, tool_name: "start_audio_recording" } } }).action, "decline");
   assert.equal(appApproval({ params: { ...params, _meta: { ...params._meta, connector_id: "other" } } }).action, "decline");
-  assert.equal(appApproval({ params: { ...params, message: "Grant security permission?" } }).action, "decline");
+  for (const message of ['Allow access to App?', 'Autoriser l’accès à « App » ?', '']) {
+    assert.equal(appApproval({ params: { ...params, message } }).action, "accept");
+  }
+  assert.equal(appApproval({ params: { ...params, _meta: { ...params._meta, tool_name: "paste" } } }).action, "accept");
+  assert.equal(appApproval({ params: { ...params, _meta: { ...params._meta, codex_approval_kind: "privacy" } } }).action, "decline");
+  assert.equal(appApproval({ params: { ...params, _meta: { ...params._meta, tool_params: { app: "App", permission: "all" } } } }).action, "decline");
   assert.equal(appApproval({ params: { ...params, _meta: undefined } }).action, "decline");
 });
 

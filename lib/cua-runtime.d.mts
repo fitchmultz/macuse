@@ -4,7 +4,6 @@ export interface CuaInput {
   code: string;
   apps?: string[];
   allowMutating?: boolean;
-  allowPointer?: boolean;
   safetyNote?: string;
   timeoutMs?: number;
 }
