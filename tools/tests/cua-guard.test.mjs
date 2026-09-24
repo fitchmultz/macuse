@@ -169,6 +169,25 @@ test("scroll position changes outside the row do not block its Delete button", a
   assert.equal(f.actions()[0].outcome, "completed");
 });
 
+test("keyboard input rejects focus drift before dispatch", async () => {
+  const before = tree().replace("\t3 button", "\t2 text field (settable) ID: notes, Value: notes\n\t3 button");
+  const f = fixture({ states: [before, before.replace("The focused UI element is 1", "The focused UI element is 2")] });
+  await f.observe();
+  await assert.rejects(f.guard(request("press_key", { key: "Right" })), /Focused field changed/);
+  assert.equal(f.calls.some(c => c.method === "press_key"), false);
+  assert.equal(f.actions()[0].outcome, "not_dispatched");
+});
+
+test("keyboard input preserves unchanged focus and window-level shortcuts without a focused field", async () => {
+  for (const state of [tree(), tree().replace(/\nThe focused UI element.*$/, "")]) {
+    const f = fixture({ states: [state] });
+    await f.observe();
+    await f.guard(request("press_key", { key: "super+w" }));
+    assert.equal(f.calls.at(-1).method, "press_key");
+    assert.equal(f.actions()[0].outcome, "completed");
+  }
+});
+
 test("typing cannot retarget to an originally identical field when the focused field disappears", async () => {
   const f = fixture({ states: [tree({ duplicate: true }), tree({ index: 8 })] });
   await f.observe();
