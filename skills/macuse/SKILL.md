@@ -51,7 +51,7 @@ Example call after binding and inspecting Activity Monitor, for an approved dism
 }
 ```
 
-The guard refreshes full state before every action, validates inventory/arguments and document/target identity, and rebinds native indexes internally. Failed refresh or stale identity blocks dispatch. Text input and editing keys check the focused field; app-wide Command shortcuts such as Save tolerate changed field text while retaining document checks. `setValue` verifies the exact resolved field. It replaces the whole field; never use it as an unrequested substitute for insertion.
+The guard refreshes full state before every action, validates inventory/arguments and document/target identity, and rebinds native indexes internally. Failed refresh or stale identity blocks dispatch. Text input and keyboard chords check the focused field. Standard Command shortcuts for Save, Close, New, Open, Print, Quit, Hide, and Minimize (including Shift/Option variants) tolerate changed field text while retaining document checks; formatting, link, and submission chords retain focused-field checks. `setValue` verifies the exact resolved field. It replaces the whole field; never use it as an unrequested substitute for insertion.
 
 ## Unicode and selected text
 

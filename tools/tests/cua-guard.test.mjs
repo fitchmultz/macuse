@@ -238,7 +238,7 @@ test("keyboard input preserves unchanged focus and window-level shortcuts withou
 });
 
 test("app-wide Command shortcuts tolerate changed focused text but never document drift", async () => {
-  for (const key of ["super+s", "cmd+s", "command+shift+s", "meta+w"]) {
+  for (const key of ["super+s", "cmd+s", "command+shift+s", "meta+w", "Super_L+n", "Super_R+o", "Meta_L+p", "Meta_R+q", "cmd+h", "cmd+m", " Shift_R + Command + S "]) {
     const f = fixture({ states: [tree(), tree({ value: "edited draft" })] });
     await f.observe();
     await f.guard(request("press_key", { key }));
@@ -255,6 +255,22 @@ test("text entry and editing shortcuts retain focused-field value checks", async
     await f.observe();
     await assert.rejects(f.guard(request("press_key", { key })), /Focused field changed/);
     assert.equal(f.calls.some(call => call.method === "press_key"), false);
+  }
+});
+
+test("formatting, submission and unknown Command chords retain value and focus checks", async () => {
+  const before = tree().replace("\t3 button", "\t2 text field (settable) ID: notes, Value: notes\n\t3 button");
+  for (const key of ["super+b", "cmd+i", "command+k", "meta+Return", "Super_L+Enter", "Super_R+KP_Enter", "command+shift+Return", "Return", "Enter", "KP_Enter", "super+f12", "ctrl+super+s"]) {
+    for (const after of [before.replace("Value: old", "Value: external edit"), before.replace("The focused UI element is 1", "The focused UI element is 2")]) {
+      const f = fixture({ states: [before, after] });
+      await f.observe();
+      await assert.rejects(f.guard(request("press_key", { key })), /Focused field changed/, key);
+      assert.equal(f.calls.some(call => call.method === "press_key"), false, key);
+    }
+    const unchanged = fixture({ states: [before] });
+    await unchanged.observe();
+    await unchanged.guard(request("press_key", { key }));
+    assert.equal(unchanged.actions()[0].outcome, "completed", key);
   }
 });
 
@@ -375,6 +391,22 @@ test("explicit window close reports identity without a native read that could re
     assert.equal(f.actions()[0].closesWindow, true);
     assert.deepEqual(f.actions()[0].before, { title: "fixture", url: "file:///tmp/fixture" });
     assert.equal(f.actions()[0].verification, "native-returned");
+  }
+});
+
+test("native Command aliases and modifier order share close classification", async () => {
+  for (const key of ["super+w", "cmd+w", "command+w", "meta+w", "Super_L+w", "Super_R+w", "Meta_L+w", "Meta_R+w", "shift+cmd+w", " Command + Shift_R + W ", "Shift_L+SUPER+W", "alt+cmd+w", "Command+Alt_R+w", "option+meta+w"]) {
+    const f = fixture({ states: [tree(), tree({ value: "edited draft" })] });
+    await f.observe();
+    await f.guard(request("press_key", { key }));
+    assert.equal(f.actions()[0].closesWindow, true, key);
+    assert.equal(f.calls.at(-1).method, "press_key", key);
+  }
+  for (const key of ["ctrl+w", "super+ctrl+w", "super+s", "w"]) {
+    const f = fixture();
+    await f.observe();
+    await f.guard(request("press_key", { key }));
+    assert.equal(f.actions()[0].closesWindow, undefined, key);
   }
 });
 

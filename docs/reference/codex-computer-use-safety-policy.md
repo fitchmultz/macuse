@@ -32,7 +32,7 @@ The parent session serializes insertion with other app operations. Before insert
 
 Observe again after insertion. Use `app.setValue(index, value)` only when replacing the entire field is intended. Raw `app.typeText` accepts ASCII only. Native `app.paste(text, {format:"text"})` supports Unicode, Markdown (`md`), and HTML (`html`); the default format is `text`. The vendor restores the previous clipboard after pasting. Paste shortcuts are supported. Paste checks the observed focused field and reports native completion; observe afterward to verify the result. Selected-text insertion remains available when exact native readback without clipboard use is needed.
 
-Focused-field checks apply to text input and editing keys. App-wide Command shortcuts such as Save do not require unchanged field text. Every action still checks the observed app/document.
+Focused-field checks apply to text input and keyboard chords, including formatting, link, and submission keys. Standard Command shortcuts for Save, Close, New, Open, Print, Quit, Hide, and Minimize (including Shift/Option variants) do not require unchanged field text. Every action still checks the observed app/document.
 
 ## Failure, reset, and cleanup
 
