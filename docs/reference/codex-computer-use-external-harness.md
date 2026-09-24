@@ -65,7 +65,7 @@ Screenshot coordinates refer to the native returned image, with no assumed Retin
 ## Breaking migration from 0.4.x
 
 - Replace the old individual GUI tools and `macuse_sequence` JSON workflow with `macuse` JavaScript against the emitted native API. Old selector aliases, wait/assertion pseudo-tools, and sequence arguments are removed.
-- Use `macuse_insert_text` for selected-range Unicode insertion. Raw `typeText` is ASCII-only; paste is disabled. Do not substitute whole-field `setValue` for an insertion request.
+- Use `macuse_insert_text` for selected-range Unicode insertion. Raw `typeText` is ASCII-only; native `app.paste(text)` also supports Unicode, with optional `{format:"md"}` or `{format:"html"}` as the second argument. Do not substitute whole-field `setValue` for an insertion request.
 - Replace `macuse_restart` with `macuse_reset` when bindings/observations need clearing. Reset does not restart global services.
 - Replace the old extension/module tree with `extensions/macuse.ts` and `lib/`. Replace the old GUI CLI/MCP bridges with `tools/macuse.mjs` and `tools/macuse-mcp.mjs`. There are no backwards-compatible aliases.
 - Regenerate MCP configuration: server `macuse`, environment variable `MACUSE_CWD`. See [MCP setup](cursor-mcp-setup.md).

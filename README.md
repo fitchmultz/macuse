@@ -60,7 +60,7 @@ Record & Replay start and Computer History resume require exact user intent, `al
 
 ## Act within the approved task
 
-`macuse` accepts `code`, optional `apps`, `allowMutating`, `allowPointer`, `safetyNote`, `timeoutMs`, `trackFocus`, and `saveImagePath`. A mutation requires an exact `apps` scope matching the identifiers used in code, `allowMutating:true`, a concrete safety note, and a prior same-app observation. A safety note names the target, intended effect, and stop boundary; mutation notes must be at least 20 characters. Flags record authorization; they do not create user permission.
+`macuse` accepts `code`, optional `apps`, `allowMutating`, `safetyNote`, `timeoutMs`, `trackFocus`, and `saveImagePath`. A mutation requires an exact `apps` scope matching the identifiers used in code, `allowMutating:true`, a concrete safety note, and a prior same-app observation. A safety note names the target, intended effect, and stop boundary; mutation notes must be nonempty. Flags record authorization; they do not create user permission.
 
 For an approved dismissal of Activity Monitor's current transient UI, after inspecting it:
 
@@ -73,7 +73,7 @@ For an approved dismissal of Activity Monitor's current transient UI, after insp
 }
 ```
 
-Use native element indexes from the latest observation and the methods documented by the runtime. The guard refreshes full app state before each action, checks the document and target, and rebinds indexes internally. It tracks only app identities resolved by the native service, so a binding's native app path still matches the original exact `apps` identifier. It does not add fuzzy aliases or a selector API. Prefer accessibility `Press`, listed secondary actions, intended full-field `setValue`, keys, and element-targeted scroll. Primary `Press` may be omitted from Sky's secondary-action list; that omission alone does not require pointer fallback. Pointer clicks/drags and coordinate scrolling require `allowPointer:true`; coordinates use the returned screenshot's pixel space, without an inferred Retina or OS-point conversion.
+Use native element indexes from the latest observation and the methods documented by the runtime. The guard refreshes full app state before each action, checks the document and target, and rebinds indexes internally. It tracks only app identities resolved by the native service, so a binding's native app path still matches the original exact `apps` identifier. It does not add fuzzy aliases or a selector API. Prefer accessibility `Press`, listed secondary actions, intended full-field `setValue`, keys, and element-targeted scroll. Primary `Press` may be omitted from Sky's secondary-action list; that omission alone does not require pointer fallback. Pointer clicks/drags and coordinate scrolling use the same scoped mutation authorization; coordinates use the returned screenshot's pixel space, without an inferred Retina or OS-point conversion.
 
 For Unicode insertion, observe the intended app and already-focused field, then call `macuse_insert_text`:
 
@@ -86,7 +86,9 @@ For Unicode insertion, observe the intended app and already-focused field, then 
 }
 ```
 
-Optional `expectedTitle` and `expectedUrl` pin the native insertion target. When Sky omits a focused-field marker, macuse joins fresh native AX evidence only to a unique stable field ID in the same observed document. Missing or ambiguous identity blocks insertion. Insertion uses guarded `AXSelectedText` replacement and exact readback, with no keyboard input, clipboard writes, or fallback replay. Observe again afterward. `app.setValue(index, value)` replaces an entire field and verifies that field exactly; it is not selected-range insertion. Raw `app.typeText` is ASCII-only. Clipboard paste is disabled.
+Optional `expectedTitle` and `expectedUrl` pin the native insertion target. When Sky omits a focused-field marker, macuse joins fresh native AX evidence only to a unique stable field ID in the same observed document. Missing or ambiguous identity blocks insertion. Insertion uses guarded `AXSelectedText` replacement and exact readback, with no keyboard input, clipboard writes, or fallback replay. Observe again afterward. `app.setValue(index, value)` replaces an entire field and verifies that field exactly; it is not selected-range insertion. Raw `app.typeText` is ASCII-only. Native `await app.paste("Hello — café")` supports Unicode and restores the previous clipboard. Pass `{format:"md"}` or `{format:"html"}` as the second argument for Markdown or HTML; the default is `text`. Paste shortcuts are also supported. Observe afterward to verify the result; native paste does not provide the exact selected-text readback of `macuse_insert_text`.
+
+Text input and editing keys check the observed focused field. App-wide Command shortcuts such as Save do not require that field's text to remain unchanged; document checks still apply.
 
 Never automatically replay a dispatched or unknown-outcome mutation. Timeout/abort interrupts JavaScript through the vendor's reset operation and waits for settlement; it does not undo or prove cancellation of a GUI action. Inspect partial `dispatched`/`outcome` evidence and fresh app state before continuing. Programs are not transactions, and a reset can prevent JavaScript cleanup from running.
 
