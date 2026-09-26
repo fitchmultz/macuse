@@ -6,6 +6,7 @@
 - Remove the separate pointer flag and minimum safety-note length; scoped mutation authorization and nonempty notes remain required.
 - Let app-wide Command shortcuts such as Save operate after focused text changes, while preserving text-input, target, and document checks.
 - Recognize app-access approval from structured metadata independently of its displayed wording.
+- Require Node 24.21 or later and update the MCP SDK, TypeBox, TypeScript, and Node type definitions to their current stable releases.
 
 ## 0.5.0 — Experimental prerelease
 

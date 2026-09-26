@@ -4,20 +4,14 @@
 		"lib": ["ES2023"],
 		"module": "ESNext",
 		"moduleResolution": "bundler",
-		"resolveJsonModule": true,
-		"allowJs": false,
-		"checkJs": false,
 		"strict": true,
-		"noUnusedLocals": false,
-		"noUnusedParameters": false,
 		"noImplicitOverride": true,
 		"noFallthroughCasesInSwitch": true,
 		"skipLibCheck": true,
 		"noEmit": true,
 		"types": ["node"],
-		"esModuleInterop": true,
 		"forceConsistentCasingInFileNames": true
 	},
-	"include": ["extensions/**/*.ts"],
+	"include": ["extensions/**/*.ts", ".github/scripts/**/*.ts"],
 	"exclude": ["node_modules", ".scratch", "subagent-artifacts"]
 }
