@@ -37,7 +37,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 6
     env:
-      FORK_REF: 870f4f667bb0135f2d9d935c087dc45b6e48ff74
+      FORK_REF: 3131bc2e94122eac80dd1684ee2e7b50ad5025d4
       PI_TELEMETRY: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
