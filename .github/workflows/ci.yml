@@ -37,16 +37,16 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 6
     env:
-      FORK_REF: 870f4f667bb0135f2d9d935c087dc45b6e48ff74
       PI_TELEMETRY: '0'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        id: fork
         with:
           repository: fitchmultz/pi
-          ref: ${{ env.FORK_REF }}
+          ref: main
           path: fork
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
@@ -59,8 +59,10 @@ jobs:
         run: |
           node tools/validate-pi-host.mjs
           node .github/scripts/validate-pi-cli.mjs
-      - name: Build the pinned fork
+      - name: Build the current fork
         working-directory: fork
+        env:
+          FORK_REF: ${{ steps.fork.outputs.commit }}
         run: |
           test "$(git rev-parse HEAD)" = "$FORK_REF"
           npm ci --ignore-scripts
