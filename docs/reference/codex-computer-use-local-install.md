@@ -1,6 +1,6 @@
 # Local requirements and installation
 
-macuse v0.5.0 is an experimental GitHub prerelease installed in Pi from Git, not npm. Its `private: true` package metadata prevents npm publication. It reuses proprietary software already installed with ChatGPT; external-host use is unsupported and interfaces can change with vendor updates.
+macuse v0.5.1 is an experimental GitHub prerelease installed in Pi from Git, not npm. Its `private: true` package metadata prevents npm publication. It reuses proprietary software already installed with ChatGPT; external-host use is unsupported and interfaces can change with vendor updates.
 
 ## Requirements
 
@@ -16,14 +16,14 @@ macuse does not install the vendor runtime/compiler, change user settings, grant
 ## Install in Pi
 
 ```bash
-pi install git:github.com/fitchmultz/macuse@v0.5.0
+pi install git:github.com/fitchmultz/macuse@v0.5.1
 ```
 
 The package supplies `extensions/macuse.ts` and `skills/macuse/SKILL.md`. A local checkout can instead be installed with `pi install /absolute/path/to/macuse`.
 
 Quit Pi and start a new process after install/update or extension/dependency changes. `/reload` refreshes resources and activation but does not replace loaded extension code. Restart CLI/MCP processes after changes too; a new process picks up native helper source changes through the source-hash cache.
 
-Four tools start active: `macuse`, `macuse_insert_text`, `macuse_reset`, and `macuse_tools`. The eight recording/history tools remain inactive until the loader enables them. No host patches or image-sizing settings edits are required for Astra.
+Ordinary Pi starts with four tools: `macuse`, `macuse_insert_text`, `macuse_reset`, and `macuse_tools`. Discovery-capable hosts can defer this source-owned `macos` group; official Pi ignores the optional metadata. No `toolDiscovery` settings inventory is required. The eight recording/history tools remain lazy until selected through the loader or an explicit host tool policy. Pi's declared selection survives reload/resume, fork and compaction without keeping native runtime bindings alive. No host patches or image-sizing settings edits are required for Astra.
 
 ## Installed paths
 

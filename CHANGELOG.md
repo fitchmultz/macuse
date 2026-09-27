@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.5.1 — Experimental prerelease
+
+- Let capable Pi hosts discover macuse from extension-owned metadata without a settings inventory; official Pi keeps its ordinary tool surface.
+- Preserve declared tool selections across reload, resume, fork and compaction while retaining tool restrictions and native runtime cleanup.
 - Enable native Unicode paste with plain-text, Markdown, and HTML formats, plus paste shortcuts.
 - Remove the separate pointer flag and minimum safety-note length; scoped mutation authorization and nonempty notes remain required.
 - Let app-wide Command shortcuts such as Save operate after focused text changes, while preserving text-input, target, and document checks.

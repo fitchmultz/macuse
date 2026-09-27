@@ -7,10 +7,10 @@ Native macOS Computer Use for Pi and MCP clients, with persistent JavaScript, gu
 
 ## Install in Pi
 
-The v0.5.0 distribution is an experimental GitHub prerelease, installed in Pi from Git rather than npm. The package is marked `private: true` to prevent npm publication.
+The v0.5.1 distribution is an experimental GitHub prerelease, installed in Pi from Git rather than npm. The package is marked `private: true` to prevent npm publication.
 
 ```bash
-pi install git:github.com/fitchmultz/macuse@v0.5.0
+pi install git:github.com/fitchmultz/macuse@v0.5.1
 ```
 
 Quit Pi and start a **new process** after installation or updates; `/reload` does not replace loaded extension code. Restart CLI/MCP processes after updates too.
@@ -48,7 +48,9 @@ Bindings persist in that session. The next call can use them:
 | `macuse_reset` | Clear JavaScript bindings and app observations; it does not undo GUI actions. |
 | `macuse_tools` | Pi-only activation of the eight recording/history tools below. It starts no recording. |
 
-These four tools start active in Pi. Eight auxiliary tools are registered but inactive until requested through `macuse_tools`: `event_stream_start`, `event_stream_status`, `event_stream_stop`, `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, and `computer_history_update_settings`. Activation resets at session boundaries. The MCP server exposes eleven tools: the three primary tools plus all eight auxiliary tools.
+These four tools start active on ordinary Pi. Eight auxiliary tools are registered but inactive until requested through `macuse_tools`: `event_stream_start`, `event_stream_status`, `event_stream_stop`, `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, and `computer_history_update_settings`. Pi's declared tool selection survives reload/resume, fork and compaction; owned runtime bindings and observations still reset at lifecycle boundaries. Explicit tool allowlists/exclusions remain authoritative, including auxiliary-only selections and an excluded loader. The MCP server exposes eleven tools: the three primary tools plus all eight auxiliary tools.
+
+Discovery-capable Pi hosts can defer the source-owned `macos` group until requested, exposing these four entry tools first. The auxiliary tools are marked advanced and `macuse_tools` enables only the requested names. No `toolDiscovery` settings inventory is needed. Official Pi safely ignores this optional metadata and retains the ordinary four-tool front door and lazy auxiliary loader.
 
 For example, in Pi enable a status read, then call `event_stream_status` with `{}`:
 
