@@ -1,6 +1,6 @@
 {
   "name": "macuse",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "private": true,
   "description": "Guarded native macOS Computer Use with persistent JavaScript for Pi and MCP clients.",
   "type": "module",

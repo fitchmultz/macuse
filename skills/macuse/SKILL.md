@@ -13,7 +13,7 @@ Inspect and operate native macOS apps with short adaptive JavaScript programs. P
 
 ## Bootstrap and routing
 
-Pi starts with four tools: `macuse`, `macuse_insert_text`, `macuse_reset`, and `macuse_tools`. The MCP server exposes the first three plus eight auxiliary tools directly, without a loader.
+Ordinary Pi starts with four tools: `macuse`, `macuse_insert_text`, `macuse_reset`, and `macuse_tools`. On discovery-capable hosts, enable the source-owned `macos` group to reveal those entry tools; no `toolDiscovery` settings inventory is required. Official Pi ignores the optional discovery metadata. Explicit tool selections and exclusions remain binding. The MCP server exposes the first three plus eight auxiliary tools directly, without a loader.
 
 Start by calling `macuse` with one of:
 
@@ -78,7 +78,7 @@ In Pi, enable only the requested auxiliary tools:
 { "tools": ["event_stream_status"] }
 ```
 
-Then call `event_stream_status({})`. The loader only activates tools; it does not start a service or recording. Activation resets at session boundaries. The eight supported names are:
+Then call `event_stream_status({})`. The loader only activates tools; it does not start a service or recording. Pi's declared tool selection survives reload/resume, fork and compaction; runtime bindings and observations still reset at lifecycle boundaries. An auxiliary-only selection or excluded loader does not hide explicitly permitted tools. The eight supported names are:
 
 - `event_stream_start`, `event_stream_status`, `event_stream_stop`
 - `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, `computer_history_update_settings`

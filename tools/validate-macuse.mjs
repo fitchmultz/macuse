@@ -102,9 +102,9 @@ async function main() {
   try {
     if (mode === 'extension') {
       await check('Pi extension contract (no desktop)', () => {
-        const result = spawnSync(process.execPath, ['--test', 'tools/tests/pi-extension.test.mjs'], { encoding: 'utf8', env: { ...process.env, PI_OFFLINE: '1' }, timeout: 60000 });
+        const result = spawnSync(process.execPath, ['--test', 'tools/tests/pi-extension.test.mjs', 'tools/tests/pi-lifecycle.test.mjs'], { encoding: 'utf8', env: { ...process.env, PI_OFFLINE: '1' }, timeout: 60000 });
         assert.equal(result.status, 0, result.stderr + result.stdout);
-        return 'Registration, lifecycle, partial error flags, scoped original-image restoration';
+        return 'Registration, native SDK selection recovery and runtime cleanup, partial error flags, scoped original-image restoration';
       });
       await check('MCP schemas and pre-dispatch refusal', () => mcpCheck());
     } else {

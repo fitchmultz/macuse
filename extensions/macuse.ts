@@ -1,8 +1,11 @@
+import { getCurrentSystemMessage } from '@earendil-works/pi-ai';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { tools, primaryTools } from '../lib/tools.mjs';
 import { restoreMacuseImages } from '../lib/pi-images.mjs';
 import type { MacuseSession } from '../lib/macuse-session.mjs';
+
+const discoveryGroup = { name: 'macos', description: 'Inspect and operate native macOS apps, and use Record & Replay or Computer History.' };
 
 export default function macuse(pi: ExtensionAPI) {
   let session: MacuseSession | undefined;
@@ -14,6 +17,7 @@ export default function macuse(pi: ExtensionAPI) {
   for (const spec of tools) pi.registerTool({
     name: spec.name,
     label: spec.name,
+    ...{ discovery: { group: discoveryGroup, role: primaryTools.includes(spec) ? 'entry' as const : 'advanced' as const } },
     description: spec.description,
     parameters: Type.Unsafe<Record<string, unknown>>(spec.inputSchema),
     constrainedSampling: { type: 'json_schema', strict: 'prefer' },
@@ -37,7 +41,8 @@ export default function macuse(pi: ExtensionAPI) {
   pi.registerTool({
     name: 'macuse_tools',
     label: 'macuse Tools',
-    description: 'Enable recording/history tools until the next session boundary. Starts no recording or service by itself.',
+    description: 'Enable selected recording/history tools. Pi preserves declared selections across reload/resume. Starts no recording or service by itself.',
+    ...{ discovery: { group: discoveryGroup, role: 'entry' as const } },
     promptSnippet: 'Enable macuse Record & Replay or Computer History tools',
     parameters: Type.Object({ tools: Type.Array(Type.Unsafe<string>({ type: 'string', enum: auxiliaryNames }), { minItems: 1 }) }, { additionalProperties: false }),
     constrainedSampling: { type: 'json_schema', strict: 'prefer' },
@@ -58,8 +63,23 @@ export default function macuse(pi: ExtensionAPI) {
     if (details?.macuse?.isError) return { isError: true };
   });
   pi.on('before_provider_request', (event, ctx) => restoreMacuseImages(event.payload, ctx.sessionManager.buildContextEntries(), ctx.model));
-  pi.on('session_start', async () => {
+  pi.on('session_start', async (_event, ctx) => {
     await stop();
+    // An explicit CLI selection takes precedence over saved declarations.
+    const argv = process.argv.slice(2);
+    const delimiter = argv.indexOf('--');
+    if ((delimiter < 0 ? argv : argv.slice(0, delimiter)).some(arg => arg === '--tools' || arg === '-t' || arg.startsWith('--tools='))) return;
+    const available = new Set(pi.getAllTools().map(tool => tool.name));
+    const owned = new Set([...tools.map(tool => tool.name), 'macuse_tools']);
+    // Pi's branch/compaction projection owns selection; never keep a second activation journal.
+    const current = getCurrentSystemMessage(ctx.sessionManager.buildSessionProjection().messages);
+    if (current) {
+      const restored = (current.toolsAdded ?? []).map(tool => tool.name).filter(name => owned.has(name) && available.has(name));
+      pi.setActiveTools([...new Set([...pi.getActiveTools().filter(name => !owned.has(name)), ...restored])]);
+      return;
+    }
+    // Only narrow the ordinary default catalog, not explicit selections or a missing loader.
+    if (![...owned].every(name => available.has(name))) return;
     pi.setActiveTools(pi.getActiveTools().filter(name => !lazy.has(name)));
   });
   pi.on('session_tree', stop);

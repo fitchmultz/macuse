@@ -15,12 +15,13 @@ export function extensionFixture() {
     registerCommand(name, command) { commands.set(name, command); },
     on(name, handler) { handlers.set(name, handler); },
     getActiveTools: () => active,
+    getAllTools: () => [...tools.values()],
     setActiveTools: names => { active = names.filter(name => name !== 'event_stream_start'); },
   });
   return { tools, handlers, commands, active: () => active };
 }
 
-test('Pi uses the shared strict surface, resets auxiliary activation, and preserves other tools', async () => {
+test('Pi uses the shared strict surface and source-owned discovery, with lazy defaults and guarded activation', async () => {
   const f = extensionFixture();
   assert.equal(f.tools.size, specs.length + 1);
   for (const spec of specs) {
@@ -34,8 +35,14 @@ test('Pi uses the shared strict surface, resets auxiliary activation, and preser
   for (const name of ['macuse', 'macuse_insert_text']) {
     assert.equal(f.tools.get(name).parameters.properties.safetyNote.minLength, 1);
   }
-  for (const reason of ['startup', 'reload', 'resume', 'new', 'fork']) {
-    await f.handlers.get('session_start')({ reason });
+  assert.deepEqual([...f.tools.values()].filter(tool => tool.discovery.role === 'entry').map(tool => tool.name), ['macuse', 'macuse_insert_text', 'macuse_reset', 'macuse_tools']);
+  const advanced = [...f.tools.values()].filter(tool => tool.discovery.role === 'advanced').map(tool => tool.name);
+  assert.equal(advanced.length, 8);
+  assert.deepEqual(f.tools.get('macuse_tools').parameters.properties.tools.items.enum, advanced);
+  assert.ok([...f.tools.values()].every(tool => tool.discovery.group === f.tools.get('macuse').discovery.group));
+  assert.equal(f.tools.get('macuse').discovery.group.name, 'macos');
+  for (const reason of ['startup', 'new']) {
+    await f.handlers.get('session_start')({ reason }, { sessionManager: { buildSessionProjection: () => ({ messages: [] }) } });
     assert.deepEqual(f.active().sort(), ['read', 'macuse', 'macuse_insert_text', 'macuse_reset', 'macuse_tools'].sort());
     const loaded = await f.tools.get('macuse_tools').execute('load', { tools: ['computer_history_status', 'event_stream_start'] });
     assert.deepEqual(loaded.details.added, ['computer_history_status']);
@@ -47,6 +54,18 @@ test('Pi uses the shared strict surface, resets auxiliary activation, and preser
   assert.equal(f.handlers.get('tool_result')({ ...result, toolName: 'foreign' }), undefined);
   await f.handlers.get('session_tree')();
   await f.handlers.get('session_shutdown')();
+});
+
+test('explicit CLI selections are not narrowed, and arguments after -- are not flags', async () => {
+  const original = process.argv;
+  try {
+    for (const args of [['--tools', '*'], ['-t', '*'], ['--tools=*'], ['--', '--tools', '*']]) {
+      process.argv = [...original.slice(0, 2), ...args];
+      const f = extensionFixture();
+      await f.handlers.get('session_start')({ reason: 'startup' }, { sessionManager: { buildSessionProjection: () => ({ messages: [] }) } });
+      assert.equal(f.active().includes('computer_history_status'), args[0] !== '--');
+    }
+  } finally { process.argv = original; }
 });
 
 const image = data => ({ type: 'image', mimeType: 'image/png', data });
