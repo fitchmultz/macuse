@@ -109,6 +109,53 @@ test('saved selection never bypasses a new host exclusion', async t => {
   assert.deepEqual(next.errors, []);
 });
 
+test('explicit CLI selection wins over a saved declaration on resume', async t => {
+  const f = await fixture(t);
+  f.session.setActiveToolsByName(['macuse']);
+  declare(f);
+  const argv = process.argv;
+  process.argv = [...argv.slice(0, 2), '--tools', 'macuse_reset'];
+  try {
+    const next = await fixture(t, { tools: ['macuse_reset'], sessionStartEvent: { type: 'session_start', reason: 'resume' } }, f.sessionManager);
+    assert.deepEqual(next.session.getActiveToolNames(), ['macuse_reset']);
+    assert.deepEqual(next.errors, []);
+  } finally {
+    process.argv = argv;
+  }
+});
+
+test('exclusion-only resume does not resurrect deselected auxiliary tools', async t => {
+  const f = await fixture(t);
+  f.session.setActiveToolsByName(['macuse']);
+  declare(f);
+  const owned = new Set(f.session.getAllTools().filter(tool => tool.sourceInfo.source !== 'builtin').map(tool => tool.name));
+  const next = await fixture(t, { excludeTools: ['computer_history_status'], sessionStartEvent: { type: 'session_start', reason: 'resume' } }, f.sessionManager);
+  assert.deepEqual(next.session.getActiveToolNames().filter(name => owned.has(name)), ['macuse']);
+  assert.deepEqual(next.errors, []);
+});
+
+for (const selected of [['macuse_reset'], ['macuse', 'computer_history_status'], []]) {
+  test(`SDK post-bind selection replaces saved declaration: ${JSON.stringify(selected)}`, async t => {
+    const f = await fixture(t);
+    f.session.setActiveToolsByName(['macuse']);
+    declare(f);
+    const next = await fixture(t, { tools: selected, sessionStartEvent: { type: 'session_start', reason: 'resume' } }, f.sessionManager);
+    next.session.setActiveToolsByName(selected);
+    assert.deepEqual(next.session.getActiveToolNames(), selected);
+    assert.deepEqual(next.errors, []);
+  });
+}
+
+test('SDK post-bind selection cannot bypass exclusions', async t => {
+  const f = await fixture(t);
+  f.session.setActiveToolsByName(['macuse']);
+  declare(f);
+  const next = await fixture(t, { excludeTools: ['computer_history_status'], sessionStartEvent: { type: 'session_start', reason: 'resume' } }, f.sessionManager);
+  next.session.setActiveToolsByName(['macuse', 'computer_history_status']);
+  assert.deepEqual(next.session.getActiveToolNames(), ['macuse']);
+  assert.deepEqual(next.errors, []);
+});
+
 test('native tree and reload boundaries stop the owned session without starting native services', async t => {
   const f = await fixture(t);
   declare(f);

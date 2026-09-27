@@ -65,6 +65,10 @@ export default function macuse(pi: ExtensionAPI) {
   pi.on('before_provider_request', (event, ctx) => restoreMacuseImages(event.payload, ctx.sessionManager.buildContextEntries(), ctx.model));
   pi.on('session_start', async (_event, ctx) => {
     await stop();
+    // An explicit CLI selection takes precedence over saved declarations.
+    const argv = process.argv.slice(2);
+    const delimiter = argv.indexOf('--');
+    if ((delimiter < 0 ? argv : argv.slice(0, delimiter)).some(arg => arg === '--tools' || arg === '-t' || arg.startsWith('--tools='))) return;
     const available = new Set(pi.getAllTools().map(tool => tool.name));
     const owned = new Set([...tools.map(tool => tool.name), 'macuse_tools']);
     // Pi's branch/compaction projection owns selection; never keep a second activation journal.
@@ -75,9 +79,6 @@ export default function macuse(pi: ExtensionAPI) {
       return;
     }
     // Only narrow the ordinary default catalog, not explicit selections or a missing loader.
-    const argv = process.argv.slice(2);
-    const delimiter = argv.indexOf('--');
-    if ((delimiter < 0 ? argv : argv.slice(0, delimiter)).some(arg => arg === '--tools' || arg === '-t' || arg.startsWith('--tools='))) return;
     if (![...owned].every(name => available.has(name))) return;
     pi.setActiveTools(pi.getActiveTools().filter(name => !lazy.has(name)));
   });

@@ -69,7 +69,7 @@ Screenshot coordinates refer to the native returned image, with no assumed Retin
 - Replace `macuse_restart` with `macuse_reset` when bindings/observations need clearing. Reset does not restart global services.
 - Replace the old extension/module tree with `extensions/macuse.ts` and `lib/`. Replace the old GUI CLI/MCP bridges with `tools/macuse.mjs` and `tools/macuse-mcp.mjs`. There are no backwards-compatible aliases.
 - Regenerate MCP configuration: server `macuse`, environment variable `MACUSE_CWD`. See [MCP setup](cursor-mcp-setup.md).
-- Restart the full Pi/CLI/MCP process after updating. Pi's loader enables only selected auxiliary recording/history tools. Pi's native transcript preserves declared selections across reload/resume, fork and compaction; owned runtime bindings and observations still reset. Explicit allowlists/exclusions are never widened. Optional source-owned `macos` discovery metadata requires no settings inventory; official Pi retains ordinary loader behavior.
+- Restart the full Pi/CLI/MCP process after updating. Pi's loader enables only selected auxiliary recording/history tools. Pi's native transcript preserves declared selections across reload/resume, fork and compaction; owned runtime bindings and observations still reset. Explicit allowlists/exclusions are never widened. CLI `--tools` overrides saved selection; SDK replacement requires the [post-bind selection boundary](codex-computer-use-local-install.md#sdk-tool-selection) because official Pi does not expose selection-policy provenance to extensions. Optional source-owned `macos` discovery metadata requires no settings inventory; official Pi retains ordinary loader behavior.
 
 ## Historical findings
 

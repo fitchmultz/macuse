@@ -25,6 +25,21 @@ Quit Pi and start a new process after install/update or extension/dependency cha
 
 Ordinary Pi starts with four tools: `macuse`, `macuse_insert_text`, `macuse_reset`, and `macuse_tools`. Discovery-capable hosts can defer this source-owned `macos` group; official Pi ignores the optional metadata. No `toolDiscovery` settings inventory is required. The eight recording/history tools remain lazy until selected through the loader or an explicit host tool policy. Pi's declared selection survives reload/resume, fork and compaction without keeping native runtime bindings alive. No host patches or image-sizing settings edits are required for Astra.
 
+## SDK tool selection
+
+When replacing a saved tool selection through the Pi SDK, apply the final selection after extension binding:
+
+```ts
+const selected = ['macuse', 'computer_history_status'];
+const { session } = await createAgentSession({ ...options, tools: selected });
+await session.bindExtensions(bindings);
+session.setActiveToolsByName(selected);
+```
+
+Use `[]` to deliberately deselect all tools. This shared public method cannot enable tools excluded by the host. Reapply an explicit replacement after later lifecycle operations that restore saved declarations, or let declared selections recover normally.
+
+**Known limitation:** on official Pi 0.87.1, the extension cannot distinguish an SDK `tools` allowlist from equivalent `excludeTools` through the public filtered catalog and active tool list. Supplying only `tools` before binding on resume can therefore lose newly selected tools when an older declaration exists. macuse conservatively restores permitted saved selections rather than resurrecting deselected tools for exclusion-only resumes. The post-bind call above is required for portable explicit replacement; CLI `--tools` already takes precedence.
+
 ## Installed paths
 
 Default paths are resolved from the local installation rather than copied versioned caches:
