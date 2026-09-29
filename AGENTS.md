@@ -18,7 +18,7 @@ macuse reuses the installed native Computer Use runtime for Pi, CLI, and MCP cli
 
 - Use the installed vendor `@oai/cua-repl`, computer-only and Sky-only through the trusted guard service, with the normal sandbox. Do not add QuickJS, a general evaluator, module loading, or browser/audio tools. Primary GUI actions do not depend on app-server.
 - The separate auxiliary app-server starts lazily for only `event-stream` and `computer-history`. Disable inherited MCP servers/plugins and the `apps` feature; preserve existing authentication and launcher `CODEX_HOME`. Never bypass auth or privacy checks.
-- Target both latest stable official Pi and `fitchmultz/pi` 0.87.0 through shared public APIs. Apply extension/dependency/native changes with a new process, not `/reload`; restart CLI/MCP processes too.
+- Target both latest stable official Pi and `fitchmultz/pi` through shared public APIs; the recorded 0.87.0 fork baseline is not qualification of later runtimes. Choose reload by the actual host and owned resources: use supported extension-code `/reload` only after verifying disposal and reinitialization of the affected resources. Use a new process for dependency/native-runtime changes or unqualified reload paths; restart affected CLI/MCP processes too.
 - No compatibility aliases for removed tools or entrypoints. Update public docs, skill, schemas, config, and validation together when the installed vendor contract changes.
 - Astra `auto` already means original. The provider hook may restore macuse image bytes only for matching retained outputs that Pi resized; respect filtering/compaction and leave other models alone. Do not patch hosts or current user settings.
 
