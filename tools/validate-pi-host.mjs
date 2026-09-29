@@ -15,12 +15,13 @@ const load = (base, file) => import(pathToFileURL(join(base, file)).href);
 const { AgentSession } = await load(root, 'dist/core/agent-session.js');
 const { SessionManager } = await load(root, 'dist/core/session-manager.js');
 const { ExtensionRunner } = await load(root, 'dist/core/extensions/runner.js');
+const { createEventBus } = await load(root, 'dist/core/event-bus.js');
 const { convertToLlm } = await load(root, 'dist/core/messages.js');
 const { normalizeContext } = await load(ai, 'dist/utils/transcript.js');
 const jiti = createJiti(import.meta.url);
 const { default: extension } = await jiti.import('../extensions/macuse.ts');
 const handlers = new Map(), tools = [];
-extension({ registerTool: tool => tools.push(tool), registerCommand() {}, on: (name, fn) => handlers.set(name, [fn]) });
+extension({ events: createEventBus(), registerTool: tool => tools.push(tool), registerCommand() {}, on: (name, fn) => handlers.set(name, [fn]) });
 
 function png(width, height) {
   const chunk = (name, bytes) => { const data = Buffer.concat([Buffer.from(name), bytes]), length = Buffer.alloc(4), crc = Buffer.alloc(4); length.writeUInt32BE(bytes.length); crc.writeUInt32BE(crc32(data)); return Buffer.concat([length, data, crc]); };
