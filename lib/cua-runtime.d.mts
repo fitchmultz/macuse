@@ -15,7 +15,7 @@ export interface CuaAction {
   outcome: "not_dispatched" | "unknown" | "completed";
   verification: "none" | "native-returned" | "exact-field-value";
   target?: { index: string; id?: string; role: string; name: string };
-  before?: { title: string | null; url: string | null };
+  before?: { title: string | null; url: string | null; nativeWindowIdentity: boolean };
   closesWindow?: boolean;
   error?: string;
 }

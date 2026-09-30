@@ -12,7 +12,7 @@ import { MacOSNative } from "../macos-native.mjs";
 
 const app = { pid: 4242, name: "TextEdit", bundleId: "com.apple.TextEdit", path: "/System/Applications/TextEdit.app" };
 const input = { app: app.bundleId, text: "café 漢字 🙂 e\u0301", allowMutating: true, safetyNote: "Replace the selection in the disposable TextEdit fixture only; do not save or send." };
-const observation = { app: app.bundleId, title: "Fixture.txt", url: "file:///tmp/Fixture.txt", text: "full CUA observation", observedAt: Date.now(), elements: [],
+const observation = { app: app.bundleId, title: "Fixture.txt", url: "file:///tmp/Fixture.txt", nativeWindowIdentity: true, text: "full CUA observation", observedAt: Date.now(), elements: [],
 	focused: { index: "2", id: "First Text View", role: "text entry area", value: "prefix ORIGINAL suffix\n" } };
 observation.elements = [observation.focused];
 const state = { pid: app.pid, app, accessibilityTrusted: true, windowsCount: 1, windowsError: 0, windows: [],
@@ -165,6 +165,19 @@ test("document URL wins over abbreviated titles, but explicit title guards remai
 	const untitled = { ...observation, url: null };
 	const other = fixture({ inspectApp: async () => ({ ...state, focusedWindow: { ...state.focusedWindow, title: "Other.txt", document: null } }) });
 	noEdit(await insertText(other.native, input, untitled), other, /window\/document changed/);
+});
+
+test("page labels and nonstandard roots cannot authorize insertion through a coincident native window title", async () => {
+	for (const root of [
+		"window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html",
+		"standard window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html",
+		"sheet Fixture.txt",
+		"window Fixture.txt",
+	]) {
+		const observed = parseAppState(app.bundleId, `Window: "", App: TextEdit.\n0 ${root}\n\t2 text entry area ID: First Text View, Value: prefix ORIGINAL suffix\n\nThe focused UI element is 2 text entry area`);
+		const f = fixture({ inspectApp: async () => ({ ...state, focusedWindow: { ...state.focusedWindow, title: observed.title, document: observed.url } }) });
+		noEdit(await insertText(f.native, input, observed), f, /window\/document.*observation|native window identity/i);
+	}
 });
 
 test("unsupported fields and unavailable Accessibility/compiler keep actionable reasons", async () => {

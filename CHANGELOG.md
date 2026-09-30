@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Recognize named native windows/sheets and a sole full HTML-content/web-area URL label in otherwise anonymous browser popups. Labels supply document-title identity, never URL/origin proof; exact app, document/target drift, ambiguity, and field-readback guards remain enforced. Page labels and nonstandard roots cannot supply native close, insertion, or focus-joining identity; zero native windows still prove closure.
+
 ## 0.5.1 — Experimental prerelease
 
 - Let capable Pi hosts discover macuse from extension-owned metadata without a settings inventory; official Pi keeps its ordinary tool surface.

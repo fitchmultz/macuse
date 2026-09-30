@@ -39,7 +39,7 @@ export type NativeTextResult =
 	| { status: "unsupported" | "guard_failed"; mutationAttempted: false; reason: string }
 	| { status: "unverified"; mutationAttempted: true; reason: string }
 	| { status: "applied"; mutationAttempted: true; verified: true; insertedUTF16Length: number; replacedUTF16Length: number };
-export function nativeWindowClosed(before: { title: string | null; url: string | null }, after: NativeAppState | null): boolean;
+export function nativeWindowClosed(before: { title: string | null; url: string | null; nativeWindowIdentity: boolean }, after: NativeAppState | null): boolean;
 export function nativeTextUnavailableReason(state: NativeAppState | null): string;
 export type NativeRequestOptions = { signal?: AbortSignal };
 export class MacOSNative {

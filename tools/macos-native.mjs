@@ -35,7 +35,7 @@ async function executable() {
 // Verify absence from a successful native window listing, never by reopening the app.
 export function nativeWindowClosed(before, after) {
 	if (after?.windowsCount === 0) return true;
-	if (after?.windowsCount == null || !after.windows?.length) return false;
+	if (before.nativeWindowIdentity !== true || after?.windowsCount == null || !after.windows?.length) return false;
 	return after.windows.every(window => before.url
 		? window.document != null && window.document !== before.url
 		: before.title != null && window.title != null && window.title !== before.title);
