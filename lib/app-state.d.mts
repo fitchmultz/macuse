@@ -17,6 +17,7 @@ export interface AppObservation {
   app: string;
   title: string | null;
   url: string | null;
+  nativeWindowIdentity: boolean;
   text: string;
   focused?: AppElement;
   elements: AppElement[];

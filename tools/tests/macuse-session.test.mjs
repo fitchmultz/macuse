@@ -6,10 +6,11 @@ import { join } from 'node:path';
 import { MacuseSession } from '../../lib/macuse-session.mjs';
 import { CuaRuntime } from '../../lib/cua-runtime.mjs';
 import { parseAppState } from '../../lib/app-state.mjs';
+import { createGuard } from '../../lib/cua-guard-service.mjs';
 import { activityMonitorCheck } from '../validate-macuse.mjs';
 
 const result = () => ({ content: [{ type: 'text', text: 'Observed' }], isError: false, details: { macuse: {} } });
-const observed = { app: 'Test', title: 'Fixture', url: null, observedAt: 1, elements: [], focused: { index: '1', role: 'text field', id: 'editor', value: 'old' } };
+const observed = { app: 'Test', title: 'Fixture', url: null, nativeWindowIdentity: true, observedAt: 1, elements: [], focused: { index: '1', role: 'text field', id: 'editor', value: 'old' } };
 observed.elements = [observed.focused];
 const app = { pid: 42, bundleId: 'test.app', name: 'Test', path: '/Test.app' };
 const state = { pid: 42, app, accessibilityTrusted: true, focusedWindow: { token: 'w', title: 'Fixture', document: null }, focusedElement: { token: 'f', role: 'AXTextField', roleDescription: 'text field', identifier: 'editor', value: 'old', selectedTextSettable: true } };
@@ -46,14 +47,63 @@ test('code never starts auxiliary transport; invalid envelopes fail before nativ
 });
 
 test('missing Sky focus marker is joined only to a unique matching native ID in the observed document', async () => {
-  for (const mismatch of [false, 'document', 'value', 'duplicate']) {
+  for (const mismatch of [false, 'document', 'value', 'duplicate', 'page label', 'sheet', 'window']) {
     const f = fixture();
-    const field = observed.focused;
-    const observation = { ...observed, focused: undefined, observedAt: Date.now() + 1000, elements: mismatch === 'duplicate' ? [field, field] : [field] };
+    const source = ['page label', 'sheet', 'window'].includes(mismatch)
+      ? parseAppState('Test', `Window: "", App: Test.\n0 ${mismatch === 'page label' ? 'window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html' : `${mismatch} Fixture`}\n\t2 text field ID: editor, Value: old`)
+      : observed;
+    const field = source.focused ?? source.elements.find(e => e.id === 'editor');
+    const observation = { ...source, focused: undefined, observedAt: Date.now() + 1000, elements: mismatch === 'duplicate' ? [field, field] : source.elements };
     f.runtime.execute = async () => ({ ...result(), details: { macuse: { observations: [observation] } } });
-    f.native.inspectApp = async () => ({ ...state, focusedWindow: { ...state.focusedWindow, title: mismatch === 'document' ? 'Other' : 'Fixture' }, focusedElement: { ...state.focusedElement, value: mismatch === 'value' ? 'changed' : 'old' } });
+    f.native.inspectApp = async () => ({ ...state, focusedWindow: { ...state.focusedWindow, title: mismatch === 'document' ? 'Other' : source.title }, focusedElement: { ...state.focusedElement, value: mismatch === 'value' ? 'changed' : 'old' } });
     await f.session.callTool('macuse', { code: 'observe', trackFocus: false });
-    assert.equal(observation.focused?.id, mismatch ? undefined : 'editor');
+    assert.equal(observation.focused?.id, mismatch ? undefined : 'editor', String(mismatch));
+  }
+});
+
+test('guard-generated close evidence cannot certify labels or nonstandard roots absent from a populated native window list', async () => {
+  for (const [root, nativeTitle, nativeDocument, closed] of [
+    ['window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html', '', null, false],
+    ['standard window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html', '', null, false],
+    ['sheet Confirmation', 'Parent window', null, false],
+    ['window Confirmation', 'Parent window', null, false],
+    ['standard window Fixture', 'Other window', null, true],
+    ['standard window Fixture', 'Fixture', null, false],
+    ['standard window Fixture, URL: file:///tmp/Fixture.txt', 'Other window', 'file:///tmp/Other.txt', true],
+    ['standard window Fixture, URL: file:///tmp/Fixture.txt', 'Other window', 'file:///tmp/Fixture.txt', false],
+    ['standard window Fixture, URL: file:///tmp/Fixture.txt', 'Other window', null, false],
+  ]) {
+    for (const empty of [false, true]) {
+      const f = fixture();
+      let reads = 0, closes = 0;
+      const context = { setResponseMeta(meta) { this.meta = structuredClone(meta); } };
+      const guard = createGuard({ context: () => context, dispatch: async request => {
+        if (request.method === 'get_app_state') {
+          reads++;
+          return { app: 'Test', text: `Window: "", App: Test.\n0 ${root}` };
+        }
+        assert.equal(request.method, 'press_key');
+        closes++;
+      } });
+      f.runtime.execute = async input => {
+        context.requestMeta = { macuse: { runId: 'close-regression', ...input } };
+        await guard({ type: 'execute', method: 'get_app_state', args: [{ app: 'Test' }] });
+        await guard({ type: 'execute', method: 'press_key', args: [{ app: 'Test', key: 'cmd+w' }] });
+        return { ...result(), details: context.meta };
+      };
+      f.native.inspectApp = async () => ({ ...state, windowsCount: empty ? 0 : 1,
+        windows: empty ? [] : [{ title: nativeTitle, document: nativeDocument }] });
+      const response = await f.session.callTool('macuse', { code: 'observe then close', apps: ['Test'],
+        allowMutating: true, safetyNote: 'Close only the observed fixture.', trackFocus: false });
+      assert.equal(response.isError, false);
+      const action = response.details.macuse.actions[0];
+      assert.equal(action.dispatched, true);
+      assert.equal(action.closesWindow, true);
+      assert.equal(action.verification, empty || closed ? 'native-window-closed' : 'native-returned', `${root}; empty=${empty}`);
+      assert.equal(response.content.some(part => part.text?.includes('confirms the target window is closed')), empty || closed);
+      assert.equal(reads, 2, 'close verification must not reopen the app via Sky');
+      assert.equal(closes, 1, 'close must never be replayed');
+    }
   }
 });
 

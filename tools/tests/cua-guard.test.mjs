@@ -146,6 +146,84 @@ test("preflight rejects document or field drift and ambiguous target identity", 
   }
 });
 
+const popupUrl = "chrome-extension://ghmbeldphafepmbegfdlkpapadhbakde/popup.html#/u/0/share/fixture/item/fixture?filters=fixture";
+const popupTree = ({ page = `HTML content ${popupUrl}`, value = "old" } = {}) =>
+  `Window: "", App: Brave Browser.\n0 window Secondary Actions: Raise\n\t1 container\n\t\t2 scroll area\n\t\t\t3 ${page}\n\t\t\t\t4 container\n\t\t\t\t\t8 button Open navigation\n\t\t\t\t\t11 text field (settable) Search in all items…, Value: ${value}`;
+
+test("an empty-title popup uses its sole full page label as title, not URL proof, for exact setValue", async () => {
+  for (const page of [
+    `HTML content ${popupUrl}`, `web area ${popupUrl}`, `HTML content URL: ${popupUrl}`,
+    `HTML content ${popupUrl.replace("item/fixture", "item/other")}, URL: ${popupUrl}`,
+  ]) {
+    const f = fixture({ nativeApp: "Brave Browser", states: [popupTree({ page }), popupTree({ page }), popupTree({ page, value: "new" })] });
+    await f.observe();
+    await f.guard(request("set_value", { element_index: 11, value: "new" }));
+    assert.deepEqual(f.actions()[0].before, page.includes("URL:")
+      ? { title: "", url: popupUrl, nativeWindowIdentity: false } : { title: popupUrl, url: null, nativeWindowIdentity: false });
+    assert.equal(f.actions()[0].verification, "exact-field-value");
+    assert.equal(f.actions()[0].outcome, "completed");
+    assert.equal(f.calls.filter(call => call.method === "set_value").length, 1);
+  }
+});
+
+test("anonymous popup labels cannot bypass document, target, or exact readback guards", async () => {
+  const before = popupTree();
+  const cases = [
+    ["changed full URL", before, before.replace("item/fixture", "item/other"), /document changed/],
+    ["changed fragment", before, before.replace("filters=fixture", "filters=other"), /document changed/],
+    ["changed value", before, popupTree({ value: "external edit" }), /Target identity or value changed/],
+    ["duplicate target", before, `${before}\n\t\t\t\t\t12 text field (settable) Search in all items…, Value: old`, /Target identity or value changed/],
+    ...[
+      ["ordinary body URL", popupTree({ page: `text ${popupUrl}` })],
+      ["unnamed document", popupTree({ page: "HTML content" })],
+      ["URL prefix without scheme", popupTree({ page: "HTML content ghmbeldphafepmbegfdlkpapadhbakde/popup.html" })],
+      ["invalid URL", popupTree({ page: "HTML content https://" })],
+      ["URL with extra text", popupTree({ page: `HTML content ${popupUrl} is the current page` })],
+      ["URL with metadata", popupTree({ page: `HTML content ${popupUrl}, Help: page` })],
+      ["multiple distinct page labels", `${before}\n\t\t\t12 web area https://other.invalid/`],
+      ["duplicate page labels", `${before}\n\t\t\t12 HTML content ${popupUrl}`],
+      ["multiple anonymous windows", `${before}\n12 window Secondary Actions: Raise`],
+    ].map(([name, text]) => [name, text, text, /document changed/]),
+  ];
+  for (const [name, observed, fresh, error] of cases) {
+    const f = fixture({ states: [observed, fresh] });
+    await f.observe();
+    await assert.rejects(f.guard(request("set_value", { element_index: 11, value: "new" })), error, name);
+    assert.equal(f.calls.some(call => call.method === "set_value"), false, name);
+    assert.equal(f.actions()[0].outcome, "not_dispatched", name);
+  }
+  for (const after of [popupTree(), popupTree({ value: "new" }).replace("filters=fixture", "filters=other")]) {
+    const f = fixture({ states: [before, before, after] });
+    await f.observe();
+    await assert.rejects(f.guard(request("set_value", { element_index: 11, value: "new" })), /readback/);
+    assert.equal(f.actions()[0].outcome, "unknown");
+    await assert.rejects(f.guard(request("set_value", { element_index: 11, value: "new" })), /uncertain outcome/);
+    assert.equal(f.calls.filter(call => call.method === "set_value").length, 1);
+  }
+});
+
+test("named top-level native sheets and windows permit targeted actions but reject title drift and unnamed roots", async () => {
+  const title = 'Add "Proton Pass: Free Password Manager"?';
+  for (const role of ["sheet", "window"]) {
+    const snapshot = (name, actions) => `Window: "", App: Google Chrome.\n0 ${role} ${name}${name ? ", " : ""}Secondary Actions: ${actions}\n\t1 container ${title}\n\t\t2 container\n\t\t\t3 heading ${title}\n\t\t\t8 container\n\t\t\t\t9 button Cancel\n\t\t\t\t10 button Add extension\n11 menu bar\n\t12 Chrome`;
+    for (const [observed, fresh, allowed, actions = "Raise"] of [
+      [title, title, true], [title, "Other sheet", false], ["", "", false], ["", "", false, "Raise, Minimize"],
+    ]) {
+      const f = fixture({ nativeApp: "Google Chrome", states: [snapshot(observed, actions), snapshot(fresh, actions)] });
+      await f.observe();
+      const action = f.guard(request("perform_secondary_action", { element_index: 10, action: "Press" }));
+      if (allowed) {
+        await action;
+        assert.deepEqual(f.actions()[0].before, { title, url: null, nativeWindowIdentity: false });
+        assert.equal(f.actions()[0].outcome, "completed");
+      } else {
+        await assert.rejects(action, /document changed/);
+        assert.equal(f.calls.some(call => call.method === "perform_secondary_action"), false);
+      }
+    }
+  }
+});
+
 test("preflight detects an external edit after a metadata-looking field line", async () => {
   const f = fixture({ states: [tree({ value: "heading\nNote: schedule\nfirst draft" }), tree({ value: "heading\nNote: schedule\nsecond draft" })] });
   await f.observe();
@@ -389,7 +467,7 @@ test("explicit window close reports identity without a native read that could re
     await f.guard(request(method, input));
     assert.equal(f.calls.at(-1).method, method);
     assert.equal(f.actions()[0].closesWindow, true);
-    assert.deepEqual(f.actions()[0].before, { title: "fixture", url: "file:///tmp/fixture" });
+    assert.deepEqual(f.actions()[0].before, { title: "fixture", url: "file:///tmp/fixture", nativeWindowIdentity: true });
     assert.equal(f.actions()[0].verification, "native-returned");
   }
 });
