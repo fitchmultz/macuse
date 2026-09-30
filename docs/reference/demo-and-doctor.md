@@ -22,7 +22,7 @@ node tools/validate-macuse.mjs mcp
 | `focus` | Controlled mutation plus native focus observations; coverage and attribution limits remain explicit. |
 | `mcp` | Standard MCP transport, eleven-tool inventory, routing, and guard checks; inspect current help for its live probes. |
 
-Use `--help` for current options and `--json` for machine-readable results. Offline compatibility checks do not certify macOS permissions, native runtime behavior, or every host. Latest stable official Pi and `fitchmultz/pi` 0.87.0 both need qualification through their public APIs; one host's result is not the other's evidence.
+Use `--help` for current options and `--json` for machine-readable results. Offline compatibility checks do not certify macOS permissions, native runtime behavior, or every host. Latest stable official Pi and the maintained `fitchmultz/pi` both need qualification through their public APIs; the development baseline is 0.99.1, and one host's result is not the other's evidence.
 
 The credential-free host probe exercises real Pi hooks, image normalization, both Responses adapters, schema binding, and image-removal policy with synthetic fixtures and no network:
 
