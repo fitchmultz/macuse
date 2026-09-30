@@ -8,7 +8,7 @@ macuse v0.5.1 is an experimental GitHub prerelease installed in Pi from Git, not
 - Access to the installed `@oai/cua-repl`, bundled Node/kernel, and native Sky service.
 - Existing vendor authentication and the macOS permissions required by the responsible launcher, including applicable Screen Recording, Accessibility, and Automation grants.
 - An installed Swift compiler (`xcrun swiftc`) for macuse's native AX helper. The helper compiles lazily, caches by source hash under `~/Library/Caches/macuse/native`, and needs Accessibility access for focus/window/text operations.
-- For Pi, latest stable official Pi or `fitchmultz/pi` 0.87.0. macuse uses their shared public extension APIs; Pi runtime dependencies come from the host.
+- For Pi, latest stable official Pi or the maintained `fitchmultz/pi`. The development baseline is 0.99.1; macuse uses shared public extension APIs and Pi runtime dependencies come from the host.
 - For CLI/MCP, Node 24.21.0 or later and installed repository dependencies.
 
 macuse does not install the vendor runtime/compiler, change user settings, grant permissions, or bypass authentication. Missing requirements should produce a concrete setup error, not a fallback input system.
@@ -21,7 +21,7 @@ pi install git:github.com/fitchmultz/macuse@v0.5.1
 
 The package supplies `extensions/macuse.ts` and `skills/macuse/SKILL.md`. A local checkout can instead be installed with `pi install /absolute/path/to/macuse`.
 
-Quit Pi and start a new process after install/update or extension/dependency changes. `/reload` refreshes resources and activation but does not replace loaded extension code. Restart CLI/MCP processes after changes too; a new process picks up native helper source changes through the source-hash cache.
+Pi 0.99.1 `/reload` replaces extension code, disposes macuse's owned session, and restores permitted tool selections. Quit Pi and start a new process after dependency/native-runtime updates, or on older hosts whose code reload is unqualified. Restart CLI/MCP processes after changes too; a new process picks up native helper source changes through the source-hash cache.
 
 Ordinary Pi starts with four tools: `macuse`, `macuse_insert_text`, `macuse_reset`, and `macuse_tools`. Discovery-capable hosts can defer this source-owned `macos` group; official Pi ignores the optional metadata. No `toolDiscovery` settings inventory is required. The eight recording/history tools remain lazy until selected through the loader or an explicit host tool policy. Pi's declared selection survives reload/resume, fork and compaction without keeping native runtime bindings alive. No host patches or image-sizing settings edits are required for Astra.
 
@@ -38,7 +38,7 @@ session.setActiveToolsByName(selected);
 
 Use `[]` to deliberately deselect all tools. This shared public method cannot enable tools excluded by the host. Reapply an explicit replacement after later lifecycle operations that restore saved declarations, or let declared selections recover normally.
 
-**Known limitation:** on official Pi 0.87.1, the extension cannot distinguish an SDK `tools` allowlist from equivalent `excludeTools` through the public filtered catalog and active tool list. Supplying only `tools` before binding on resume can therefore lose newly selected tools when an older declaration exists. macuse conservatively restores permitted saved selections rather than resurrecting deselected tools for exclusion-only resumes. The post-bind call above is required for portable explicit replacement; CLI `--tools` already takes precedence.
+**Known limitation:** on the qualified official Pi 0.99.1 baseline, the extension cannot distinguish an SDK `tools` allowlist from equivalent `excludeTools` through the public filtered catalog and active tool list. Supplying only `tools` before binding on resume can therefore lose newly selected tools when an older declaration exists. macuse conservatively restores permitted saved selections rather than resurrecting deselected tools for exclusion-only resumes. The post-bind call above is required for portable explicit replacement; CLI `--tools` already takes precedence.
 
 ## Installed paths
 

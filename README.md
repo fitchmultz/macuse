@@ -13,9 +13,9 @@ The v0.5.1 distribution is an experimental GitHub prerelease, installed in Pi fr
 pi install git:github.com/fitchmultz/macuse@v0.5.1
 ```
 
-Quit Pi and start a **new process** after installation or updates; `/reload` does not replace loaded extension code. Restart CLI/MCP processes after updates too.
+On Pi 0.99.1, `/reload` replaces extension code and stops macuse's owned runtime before reinitializing it. Use a **new process** after dependency or native-runtime updates, or on an older host whose code reload is unqualified. Restart CLI/MCP processes after updates too.
 
-macuse targets both the latest stable official Pi and `fitchmultz/pi` 0.87.0 through shared public extension APIs. It needs macOS, the installed ChatGPT Computer Use runtime, and its existing authentication and permissions. Native focus observations and selected-text insertion also need Accessibility access and an installed Swift compiler (`xcrun swiftc`). Nothing installs a compiler or grants privacy permissions automatically. See [local setup](docs/reference/codex-computer-use-local-install.md).
+macuse targets both the latest stable official Pi and `fitchmultz/pi` through shared public extension APIs. Its development baseline is Pi 0.99.1, with each host qualified independently. It needs macOS, the installed ChatGPT Computer Use runtime, and its existing authentication and permissions. Native focus observations and selected-text insertion also need Accessibility access and an installed Swift compiler (`xcrun swiftc`). Nothing installs a compiler or grants privacy permissions automatically. See [local setup](docs/reference/codex-computer-use-local-install.md).
 
 ## Start with an observation
 
