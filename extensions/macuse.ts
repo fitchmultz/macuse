@@ -49,6 +49,7 @@ export default function macuse(pi: ExtensionAPI) {
     label: spec.name,
     description: spec.description,
     parameters: Type.Unsafe<Record<string, unknown>>(spec.inputSchema),
+    defaultActive: false,
     constrainedSampling: { type: 'json_schema', strict: 'prefer' },
     executionMode: 'sequential',
     ...(spec.name === 'macuse' ? {
@@ -67,6 +68,7 @@ export default function macuse(pi: ExtensionAPI) {
     description: 'Enable selected recording/history tools. Pi preserves declared selections across reload/resume. Starts no recording or service by itself.',
     promptSnippet: 'Enable macuse Record & Replay or Computer History tools',
     parameters: Type.Object({ tools: Type.Array(Type.Unsafe<string>({ type: 'string', enum: auxiliaryNames }), { minItems: 1 }) }, { additionalProperties: false }),
+    defaultActive: false,
     constrainedSampling: { type: 'json_schema', strict: 'prefer' },
     executionMode: 'sequential',
     async execute(_id, params) {
@@ -85,24 +87,35 @@ export default function macuse(pi: ExtensionAPI) {
     if (details?.macuse?.isError) return { isError: true };
   });
   pi.on('before_provider_request', (event, ctx) => restoreMacuseImages(event.payload, ctx.sessionManager.buildContextEntries(), ctx.model));
-  pi.on('session_start', async (_event, ctx) => {
+  pi.on('session_start', async (event, ctx) => {
     await stop();
+    const owned = new Set([...tools.map(tool => tool.name), 'macuse_tools']);
+    // Record initialization only, never a second copy of the active selection.
+    // ponytail: an unrecorded pre-marker session is indistinguishable from first install; restart for that source upgrade.
+    const initialized = ctx.sessionManager.getEntries().some(entry =>
+      (entry.type === 'custom' && entry.customType === 'macuse-initialized') ||
+      (entry.type === 'message' && entry.message.role === 'system' &&
+        [...(entry.message.toolsAdded ?? []), ...(entry.message.toolsRemoved ?? [])].some(tool => owned.has(tool.name))));
+    if (!initialized) pi.appendEntry('macuse-initialized', {});
+    // Inactive registration lets Pi preserve live selections and newly added defaults on reload.
+    if (event.reason === 'reload' && initialized) return;
     // An explicit CLI selection takes precedence over saved declarations.
     const argv = process.argv.slice(2);
     const delimiter = argv.indexOf('--');
     if ((delimiter < 0 ? argv : argv.slice(0, delimiter)).some(arg => arg === '--tools' || arg === '-t' || arg.startsWith('--tools='))) return;
     const available = new Set(pi.getAllTools().map(tool => tool.name));
-    const owned = new Set([...tools.map(tool => tool.name), 'macuse_tools']);
     // Pi's branch/compaction projection owns selection; never keep a second activation journal.
-    const current = getCurrentSystemMessage(ctx.sessionManager.buildSessionProjection().messages);
+    const current = event.reason === 'reload' ? undefined : getCurrentSystemMessage(ctx.sessionManager.buildSessionProjection().messages);
     if (current) {
       const restored = (current.toolsAdded ?? []).map(tool => tool.name).filter(name => owned.has(name) && available.has(name));
       pi.setActiveTools([...new Set([...pi.getActiveTools().filter(name => !owned.has(name)), ...restored])]);
       return;
     }
-    // Only narrow the ordinary default catalog, not explicit selections or a missing loader.
-    if (![...owned].every(name => available.has(name))) return;
-    pi.setActiveTools(pi.getActiveTools().filter(name => !lazy.has(name)));
+    // A partial catalog previously activated every permitted tool; keep that fallback.
+    const defaults = [...owned].every(name => available.has(name))
+      ? [...owned].filter(name => !lazy.has(name))
+      : [...owned];
+    pi.setActiveTools([...new Set([...pi.getActiveTools(), ...defaults.filter(name => available.has(name))])]);
   });
   pi.on('session_tree', stop);
   pi.on('session_shutdown', stop);

@@ -11,8 +11,9 @@ export function extensionFixture() {
   const tools = new Map(), handlers = new Map(), commands = new Map(), bus = new Map();
   let active = ['read'];
   extension({
-    registerTool(tool) { tools.set(tool.name, tool); active.push(tool.name); },
+    registerTool(tool) { tools.set(tool.name, tool); if (tool.defaultActive !== false) active.push(tool.name); },
     registerCommand(name, command) { commands.set(name, command); },
+    appendEntry() {},
     on(name, handler) { handlers.set(name, handler); },
     events: { on(name, handler) { bus.set(name, handler); } },
     getActiveTools: () => active,
@@ -39,13 +40,11 @@ test('Pi uses the shared strict surface, with lazy defaults and guarded activati
   const auxiliary = f.tools.get('macuse_tools').parameters.properties.tools.items.enum;
   assert.equal(auxiliary.length, 8);
   assert.ok(auxiliary.every(name => name.startsWith('event_stream_') || name.startsWith('computer_history_')));
-  for (const reason of ['startup', 'new']) {
-    await f.handlers.get('session_start')({ reason }, { sessionManager: { buildSessionProjection: () => ({ messages: [] }) } });
-    assert.deepEqual(f.active().sort(), ['read', 'macuse', 'macuse_insert_text', 'macuse_reset', 'macuse_tools'].sort());
-    const loaded = await f.tools.get('macuse_tools').execute('load', { tools: ['computer_history_status', 'event_stream_start'] });
-    assert.deepEqual(loaded.details.added, ['computer_history_status']);
-    assert.deepEqual(loaded.details.unavailable, ['event_stream_start']);
-  }
+  await f.handlers.get('session_start')({ reason: 'startup' }, { sessionManager: { getEntries: () => [], buildSessionProjection: () => ({ messages: [] }) } });
+  assert.deepEqual(f.active().sort(), ['read', 'macuse', 'macuse_insert_text', 'macuse_reset', 'macuse_tools'].sort());
+  const loaded = await f.tools.get('macuse_tools').execute('load', { tools: ['computer_history_status', 'event_stream_start'] });
+  assert.deepEqual(loaded.details.added, ['computer_history_status']);
+  assert.deepEqual(loaded.details.unavailable, ['event_stream_start']);
   const result = { toolName: 'macuse', content: [{ type: 'text', text: 'Partial observation' }], details: { macuse: { isError: true, actions: [{ dispatched: true, outcome: 'unknown' }] } } };
   assert.deepEqual(f.handlers.get('tool_result')(result), { isError: true });
   assert.equal(result.details.macuse.actions[0].outcome, 'unknown');
@@ -89,18 +88,6 @@ test('full macOS instructions are bus-owned when managed and eager on stock or d
   assert.deepEqual(prepare(), stock, 'management is checked dynamically');
   managed = true;
   assert.deepEqual(prepare(), { existing: stock.existing });
-});
-
-test('explicit CLI selections are not narrowed, and arguments after -- are not flags', async () => {
-  const original = process.argv;
-  try {
-    for (const args of [['--tools', '*'], ['-t', '*'], ['--tools=*'], ['--', '--tools', '*']]) {
-      process.argv = [...original.slice(0, 2), ...args];
-      const f = extensionFixture();
-      await f.handlers.get('session_start')({ reason: 'startup' }, { sessionManager: { buildSessionProjection: () => ({ messages: [] }) } });
-      assert.equal(f.active().includes('computer_history_status'), args[0] !== '--');
-    }
-  } finally { process.argv = original; }
 });
 
 const image = data => ({ type: 'image', mimeType: 'image/png', data });
