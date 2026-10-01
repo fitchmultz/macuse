@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Qualify official Pi 0.99.2 and the maintained fork with native inactive tool registration. Respect explicit startup defaults and newly added defaults during reload; preserve live deselections even before a model request, host exclusions, saved resume/fork declarations, and owned-runtime cleanup.
+- Qualify official Pi 0.99.2 and the maintained fork with native inactive tool registration. Respect explicit startup defaults and newly added defaults during reload; preserve live deselections even before a model request, host exclusions, saved resume/fork declarations, and owned-runtime cleanup. Initialize the entry tools on first installation into a running session; document the pre-marker source-upgrade restart boundary.
 
 - Recognize named native windows/sheets and a sole full HTML-content/web-area URL label in otherwise anonymous browser popups. Labels supply document-title identity, never URL/origin proof; exact app, document/target drift, ambiguity, and field-readback guards remain enforced. Page labels and nonstandard roots cannot supply native close, insertion, or focus-joining identity; zero native windows still prove closure.
 

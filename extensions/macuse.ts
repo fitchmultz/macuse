@@ -91,6 +91,7 @@ export default function macuse(pi: ExtensionAPI) {
     await stop();
     const owned = new Set([...tools.map(tool => tool.name), 'macuse_tools']);
     // Record initialization only, never a second copy of the active selection.
+    // ponytail: an unrecorded pre-marker session is indistinguishable from first install; restart for that source upgrade.
     const initialized = ctx.sessionManager.getEntries().some(entry =>
       (entry.type === 'custom' && entry.customType === 'macuse-initialized') ||
       (entry.type === 'message' && entry.message.role === 'system' &&
