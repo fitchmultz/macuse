@@ -1,12 +1,12 @@
 # Changelog
 
-## 0.6.0 — Experimental prerelease (pending release)
+## 0.6.0 — Experimental prerelease — 2026-10-01
 
 - Set the supported Pi floor and development cohort to 1.0.0. Keep native persistent JavaScript, guards, focus, selected-text insertion, recording/history, and enable-first auxiliary tools; the minimal 1.0 fork requires its own qualification before activation.
 - Eliminate history/projection reads for non-Astra requests. Restore Astra images from an event-fed retained-window index selected through actual request messages, reconciling appended entries and post-handler compaction drafts. Redactions and changed payload metadata fail closed.
 - Store only resized original image bytes once, without copying images into capped full-output details. Verify public native resize bytes/notes and unchanged original text so later-hook redaction cannot be undone; match the full result identity. Revalidate saved originals using their producing resize profile.
 
-- Qualify official Pi 0.99.2 and the maintained fork with native inactive tool registration. Respect explicit startup defaults and newly added defaults during reload; preserve live deselections even before a model request, host exclusions, saved resume/fork declarations, and owned-runtime cleanup. Initialize the entry tools on first installation into a running session; document the pre-marker source-upgrade restart boundary.
+- Qualify official Pi 1.0.0 with native inactive tool registration; maintained-fork qualification requires a supported 1.0+ candidate. Respect explicit startup defaults and newly added defaults during reload; preserve live deselections even before a model request, host exclusions, saved resume/fork declarations, and owned-runtime cleanup. Initialize the entry tools on first installation into a running session; document the pre-marker source-upgrade restart boundary.
 
 - Recognize named native windows/sheets and a sole full HTML-content/web-area URL label in otherwise anonymous browser popups. Labels supply document-title identity, never URL/origin proof; exact app, document/target drift, ambiguity, and field-readback guards remain enforced. Page labels and nonstandard roots cannot supply native close, insertion, or focus-joining identity; zero native windows still prove closure.
 
