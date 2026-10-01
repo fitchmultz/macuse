@@ -49,6 +49,7 @@ export default function macuse(pi: ExtensionAPI) {
     label: spec.name,
     description: spec.description,
     parameters: Type.Unsafe<Record<string, unknown>>(spec.inputSchema),
+    defaultActive: false,
     constrainedSampling: { type: 'json_schema', strict: 'prefer' },
     executionMode: 'sequential',
     ...(spec.name === 'macuse' ? {
@@ -67,6 +68,7 @@ export default function macuse(pi: ExtensionAPI) {
     description: 'Enable selected recording/history tools. Pi preserves declared selections across reload/resume. Starts no recording or service by itself.',
     promptSnippet: 'Enable macuse Record & Replay or Computer History tools',
     parameters: Type.Object({ tools: Type.Array(Type.Unsafe<string>({ type: 'string', enum: auxiliaryNames }), { minItems: 1 }) }, { additionalProperties: false }),
+    defaultActive: false,
     constrainedSampling: { type: 'json_schema', strict: 'prefer' },
     executionMode: 'sequential',
     async execute(_id, params) {
@@ -85,8 +87,10 @@ export default function macuse(pi: ExtensionAPI) {
     if (details?.macuse?.isError) return { isError: true };
   });
   pi.on('before_provider_request', (event, ctx) => restoreMacuseImages(event.payload, ctx.sessionManager.buildContextEntries(), ctx.model));
-  pi.on('session_start', async (_event, ctx) => {
+  pi.on('session_start', async (event, ctx) => {
     await stop();
+    // Inactive registration lets Pi preserve live selections and newly added defaults on reload.
+    if (event.reason === 'reload') return;
     // An explicit CLI selection takes precedence over saved declarations.
     const argv = process.argv.slice(2);
     const delimiter = argv.indexOf('--');
@@ -100,9 +104,11 @@ export default function macuse(pi: ExtensionAPI) {
       pi.setActiveTools([...new Set([...pi.getActiveTools().filter(name => !owned.has(name)), ...restored])]);
       return;
     }
-    // Only narrow the ordinary default catalog, not explicit selections or a missing loader.
-    if (![...owned].every(name => available.has(name))) return;
-    pi.setActiveTools(pi.getActiveTools().filter(name => !lazy.has(name)));
+    // A partial catalog previously activated every permitted tool; keep that fallback.
+    const defaults = [...owned].every(name => available.has(name))
+      ? [...owned].filter(name => !lazy.has(name))
+      : [...owned];
+    pi.setActiveTools([...new Set([...pi.getActiveTools(), ...defaults.filter(name => available.has(name))])]);
   });
   pi.on('session_tree', stop);
   pi.on('session_shutdown', stop);
