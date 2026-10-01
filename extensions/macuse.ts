@@ -2,7 +2,7 @@ import { getCurrentSystemMessage } from '@earendil-works/pi-ai';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { tools, primaryTools } from '../lib/tools.mjs';
-import { restoreMacuseImages } from '../lib/pi-images.mjs';
+import { canRestoreMacuseImages, macuseImageIndex, restoreMacuseImages } from '../lib/pi-images.mjs';
 import type { MacuseSession } from '../lib/macuse-session.mjs';
 
 interface InstructionGroupCollector {
@@ -25,6 +25,8 @@ const fullInstructions = () => [
 
 export default function macuse(pi: ExtensionAPI) {
   let session: MacuseSession | undefined;
+  const imageIndex = macuseImageIndex();
+  let requestImages = new Map();
   const auxiliaryNames = tools.filter(tool => !primaryTools.includes(tool)).map(tool => tool.name);
   const lazy = new Set(auxiliaryNames);
   const getSession = async (cwd: string) => session ??= new (await import('../lib/macuse-session.mjs')).MacuseSession({ cwd });
@@ -86,8 +88,20 @@ export default function macuse(pi: ExtensionAPI) {
     const details = event.details as { macuse?: { isError?: boolean } } | undefined;
     if (details?.macuse?.isError) return { isError: true };
   });
-  pi.on('before_provider_request', (event, ctx) => restoreMacuseImages(event.payload, ctx.sessionManager.buildContextEntries(), ctx.model));
+  pi.on('message_end', (event, ctx) => imageIndex.messageEnd(event.message, ctx.model?.inputLimits?.images?.resize));
+  pi.on('session_compact', () => {
+    imageIndex.reset();
+    requestImages.clear();
+  });
+  pi.on('context_with_system', async (event, ctx) => {
+    requestImages = canRestoreMacuseImages(ctx.model)
+      ? await imageIndex.select(ctx.sessionManager, event.messages, ctx.model?.inputLimits?.images?.resize)
+      : new Map();
+  });
+  pi.on('before_provider_request', (event, ctx) => restoreMacuseImages(event.payload, requestImages, ctx.model));
   pi.on('session_start', async (event, ctx) => {
+    imageIndex.reset();
+    requestImages.clear();
     await stop();
     const owned = new Set([...tools.map(tool => tool.name), 'macuse_tools']);
     // Record initialization only, never a second copy of the active selection.
@@ -117,8 +131,13 @@ export default function macuse(pi: ExtensionAPI) {
       : [...owned];
     pi.setActiveTools([...new Set([...pi.getActiveTools(), ...defaults.filter(name => available.has(name))])]);
   });
-  pi.on('session_tree', stop);
-  pi.on('session_shutdown', stop);
+  const reset = async () => {
+    imageIndex.reset();
+    requestImages.clear();
+    await stop();
+  };
+  pi.on('session_tree', reset);
+  pi.on('session_shutdown', reset);
 
   pi.registerCommand('macuse-status', {
     description: 'Show the owned native and auxiliary runtime status without starting them',

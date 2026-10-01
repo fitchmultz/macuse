@@ -59,7 +59,36 @@ jobs:
         run: |
           node tools/validate-pi-host.mjs
           node .github/scripts/validate-pi-cli.mjs
+      - name: Check fork supported floor
+        id: fork_support
+        env:
+          FORK_REF: ${{ steps.fork.outputs.commit }}
+        run: |
+          test "$(git -C fork rev-parse HEAD)" = "$FORK_REF"
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync, appendFileSync } from 'node:fs';
+          import { join } from 'node:path';
+          import { createRequire, findPackageJSON } from 'node:module';
+          const { valid, gte } = createRequire(findPackageJSON('@earendil-works/pi-coding-agent', import.meta.url))('semver');
+          const version = JSON.parse(readFileSync('fork/packages/coding-agent/package.json', 'utf8')).version;
+          if (!valid(version)) throw new Error(`Invalid fork version: ${version}`);
+          const floor = '1.0.0';
+          const supported = gte(version, floor);
+          const receipt = {
+            repository: 'fitchmultz/pi', ref: 'main', commit: process.env.FORK_REF,
+            version, supportedFloor: floor, status: supported ? 'ELIGIBLE' : 'UNATTEMPTED',
+            qualification: supported
+              ? 'Full fork build and host/CLI checks follow; eligibility is not a pass.'
+              : 'Below supported floor; fork build and host/CLI checks are unattempted. Future supported fork remains unqualified.',
+          };
+          const json = JSON.stringify(receipt, null, 2);
+          writeFileSync(join(process.env.RUNNER_TEMP, 'fork-host-eligibility.json'), `${json}\n`);
+          console.log(json);
+          appendFileSync(process.env.GITHUB_OUTPUT, `supported=${supported}\n`);
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Fork host eligibility\n\n\`\`\`json\n${json}\n\`\`\`\n`);
+          NODE
       - name: Build the current fork
+        if: steps.fork_support.outputs.supported == 'true'
         working-directory: fork
         env:
           FORK_REF: ${{ steps.fork.outputs.commit }}
@@ -70,6 +99,7 @@ jobs:
           PI_OFFLINE=1 npm run build:offline
           git diff --exit-code
       - name: Fork Pi host and CLI
+        if: steps.fork_support.outputs.supported == 'true'
         run: |
           node tools/validate-pi-host.mjs "$GITHUB_WORKSPACE/fork/packages/coding-agent"
           node .github/scripts/validate-pi-cli.mjs "$GITHUB_WORKSPACE/fork/packages/coding-agent"

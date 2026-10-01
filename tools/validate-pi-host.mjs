@@ -9,8 +9,13 @@ import { pathToFileURL } from 'node:url';
 import { crc32, deflateSync, zstdDecompressSync } from 'node:zlib';
 import { createJiti } from 'jiti';
 
+if (process.argv.includes('--help') || process.argv.includes('-h')) {
+  console.log('Usage: node tools/validate-pi-host.mjs [PI_PACKAGE_DIR] [MACUSE_PACKAGE_DIR]\nOffline SDK, image-normalization and Responses-adapter checks.\nExample: node tools/validate-pi-host.mjs /tmp/pi/node_modules/@earendil-works/pi-coding-agent /tmp/packed/package\nExit: 0 checks passed; 1 validation failure.');
+  process.exit(0);
+}
 globalThis.fetch = async () => { throw new Error('Unexpected network in offline Pi probe'); };
 const root = process.argv[2] ? resolve(process.argv[2]) : dirname(findPackageJSON('@earendil-works/pi-coding-agent', import.meta.url));
+process.env.PI_PACKAGE_DIR = root;
 const ai = dirname(findPackageJSON('@earendil-works/pi-ai', pathToFileURL(join(root, 'package.json')).href));
 const load = (base, file) => import(pathToFileURL(join(base, file)).href);
 const { createAgentSession, convertToLlm, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } = await load(root, 'dist/index.js');
@@ -18,7 +23,7 @@ const { fauxProvider, fauxAssistantMessage, InMemoryCredentialStore, InMemoryMod
 const { openaiProvider } = await load(ai, 'dist/providers/openai.js');
 const { openaiCodexProvider } = await load(ai, 'dist/providers/openai-codex.js');
 const jiti = createJiti(import.meta.url);
-const { default: extension } = await jiti.import('../extensions/macuse.ts');
+const { default: extension } = await jiti.import(process.argv[3] ? join(resolve(process.argv[3]), 'extensions/macuse.ts') : '../extensions/macuse.ts');
 
 function png(width, height) {
   const chunk = (name, bytes) => { const data = Buffer.concat([Buffer.from(name), bytes]), length = Buffer.alloc(4), crc = Buffer.alloc(4); length.writeUInt32BE(bytes.length); crc.writeUInt32BE(crc32(data)); return Buffer.concat([length, data, crc]); };
@@ -28,11 +33,13 @@ function png(width, height) {
 const content = [{ type: 'text', text: 'Controlled synthetic image' }, { type: 'image', mimeType: 'image/png', data: png(4000, 3000) }];
 const details = { macuse: { isError: true, originalContent: content, actions: [{ dispatched: true, outcome: 'unknown' }] } };
 const call = { type: 'toolCall', name: 'macuse', id: 'call_image|fc_image', arguments: { code: 'synthetic fixture only' } };
-const model = openaiProvider().getModels().find(model => model.id === 'gpt-6-astra');
-assert.ok(model, 'Installed host has no native Astra catalog entry');
+const redacted = [{ type: 'text', text: 'Redacted screenshot' }, { type: 'image', mimeType: 'image/png', data: png(64, 64) }];
+// Astra is a user-configured route, not guaranteed to be in the host catalog.
+const model = { ...openaiProvider().getModels().find(model => model.api === 'openai-responses' && model.input.includes('image')), id: 'gpt-6-astra' };
+assert.ok(model.api, 'Installed host has no Responses image model');
 const scratch = await mkdtemp(join(tmpdir(), 'macuse-host-'));
 const faux = fauxProvider({ provider: 'macuse-image-probe', tokensPerSecond: 1000000, models: [{ id: 'fixture', input: ['text', 'image'] }] });
-faux.setResponses([fauxAssistantMessage(call, { stopReason: 'toolUse' }), fauxAssistantMessage('Observed synthetic image')]);
+faux.setResponses([fauxAssistantMessage([call, { ...call, id: 'call_redacted|fc_redacted' }, { ...call, id: 'call_text_redacted|fc_text_redacted' }], { stopReason: 'toolUse' }), fauxAssistantMessage('Observed synthetic image')]);
 const credentials = new InMemoryCredentialStore();
 const modelRuntime = await ModelRuntime.create({ credentials, modelsStore: new InMemoryModelsStore(), modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
 modelRuntime.registerNativeProvider(faux.provider);
@@ -43,8 +50,11 @@ const resourceLoader = new DefaultResourceLoader({ cwd: scratch, agentDir: scrat
   extensionFactories: [pi => extension({ ...pi, registerTool(tool) {
     tools.push(tool);
     // Synthetic tool output isolates Pi's real result hooks and image normalization from the desktop.
-    pi.registerTool(tool.name === 'macuse' ? { ...tool, execute: async () => ({ content, details }) } : tool);
-  } })],
+    pi.registerTool(tool.name === 'macuse' ? { ...tool, execute: async () => structuredClone({ content, details }) } : tool);
+  } }), pi => pi.on('tool_result', event => {
+    if (event.toolCallId === 'call_redacted|fc_redacted') return { content: redacted };
+    if (event.toolCallId === 'call_text_redacted|fc_text_redacted') return { content: [{ type: 'text', text: 'Redacted text' }, content[1]] };
+  })],
 });
 await resourceLoader.reload();
 assert.deepEqual(resourceLoader.getExtensions().errors, []);
@@ -58,6 +68,13 @@ try {
   assert.ok(normalized, 'Native tool execution must produce a result');
   assert.equal(normalized.isError, true, 'Actual host did not apply macuse partial-failure hook');
   assert.notEqual(normalized.content.find(c => c.type === 'image').data, content[1].data, 'Fixture must exercise actual host resizing');
+  assert.equal(normalized.details.macuse.originalContent, undefined);
+  assert.equal(normalized.details.macuse.originalImages[0].data, content[1].data);
+  assert.equal(JSON.stringify(normalized).split(content[1].data).length - 1, 1, 'Original bytes must serialize once');
+  for (const result of session.messages.filter(message => message.role === 'toolResult' && message.toolCallId.includes('redacted'))) {
+    assert.equal(result.details.macuse.originalContent, undefined);
+    assert.equal(result.details.macuse.originalImages, undefined, 'A later tool_result redaction is not attributable to Pi resizing');
+  }
   const runner = session.extensionRunner;
   const requests = [];
   const fakeFetch = async (_url, init) => {
@@ -74,6 +91,7 @@ try {
     else await credentials.modify(current.provider, async () => ({ type: 'oauth', access: fakeJwt, refresh: 'offline-only', expires: Date.now() + 3600000 }));
     await session.setModel(current);
     const send = async messages => {
+      messages = await runner.emitContext(messages);
       const response = await adapter.streamSimple(current, normalizeContext({ systemPrompt: 'Offline test', tools: tools.filter(t => ['macuse', 'macuse_insert_text', 'macuse_reset', 'macuse_tools'].includes(t.name)), messages: convertToLlm(messages) }), { apiKey: api === 'openai-responses' ? 'offline-only' : fakeJwt, transport: 'sse', maxRetries: 0, fetch: fakeFetch, reasoning: 'low', onPayload: payload => runner.emitBeforeProviderRequest(payload) }).result();
       assert.equal(response.stopReason, 'stop', response.errorMessage);
       return requests.at(-1);
@@ -86,10 +104,35 @@ try {
     assert.equal(output.output.find(p => p.type === 'input_image').image_url, `data:image/png;base64,${content[1].data}`);
     assert.equal(output.output.find(p => p.type === 'input_image').detail, 'auto');
     assert.equal(JSON.stringify(output).includes('displayed at'), false);
+    const redactedOutput = payload.input.find(item => item.type === 'function_call_output' && item.call_id === 'call_redacted');
+    assert.equal(redactedOutput.output.find(part => part.type === 'input_image').image_url, `data:image/png;base64,${redacted[1].data}`);
+    assert.equal(redactedOutput.output.find(part => part.type === 'input_text').text, 'Redacted screenshot');
+    assert.equal(payload.input.find(item => item.type === 'function_call_output' && item.call_id === 'call_text_redacted').output.find(part => part.type === 'input_text').text.startsWith('Redacted text'), true);
+    for (const replacement of [{ timestamp: normalized.timestamp + 1 }, { toolCallId: 'call_image|fc_other' }]) {
+      const changedIdentity = await send(messages.map(message => message.role === 'toolResult' && message.toolCallId === normalized.toolCallId ? { ...message, ...replacement } : message));
+      assert.equal(changedIdentity.input.find(item => item.type === 'function_call_output' && item.call_id === 'call_image').output.find(part => part.type === 'input_image').image_url,
+        `data:image/png;base64,${normalized.content.find(part => part.type === 'image').data}`, 'Different full result identity must not restore originals');
+    }
     const filtered = await send(messages.map(message => message.role === 'toolResult' ? { ...message, content: [{ type: 'text', text: 'Image removed by host policy' }] } : message));
     assert.equal(JSON.stringify(filtered).includes('input_image'), false);
+    const originalLeaf = sm.getLeafId();
+    const resultEntry = sm.getEntries().find(entry => entry.type === 'message' && entry.message.role === 'toolResult');
+    sm.appendContextEdit(resultEntry.id, { content: [{ type: 'text', text: 'Image removed by persisted context edit' }] });
+    const edited = await send(sm.buildSessionContext().messages);
+    assert.equal(JSON.stringify(edited.input.find(item => item.type === 'function_call_output' && item.call_id === 'call_image')).includes('input_image'), false);
+    const editedLeaf = sm.getLeafId();
+    sm.branch(originalLeaf);
+    await runner.emit({ type: 'session_tree', oldLeafId: editedLeaf, newLeafId: originalLeaf });
+    const branched = await send(sm.buildSessionContext().messages);
+    assert.equal(branched.input.find(item => item.type === 'function_call_output').output.find(p => p.type === 'input_image').image_url, `data:image/png;base64,${content[1].data}`);
+    await runner.emit({ type: 'session_start', reason: 'resume' });
+    const resumed = await send(sm.buildSessionContext().messages);
+    assert.equal(resumed.input.find(item => item.type === 'function_call_output').output.find(p => p.type === 'input_image').image_url, `data:image/png;base64,${content[1].data}`);
   }
-  console.log(JSON.stringify({ host: root, version: JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).version, ok: true, checks: ['actual tool execution and tool_result error flag', 'actual oversized-image normalization', 'both Responses adapters restore matching original bytes', 'strict code schema', 'image-removal policy honored'], mockRequests: requests.length }));
+  sm.appendCompaction('Synthetic retained-none boundary', null, 100);
+  await runner.emitContext(sm.buildSessionContext().messages);
+  assert.equal(await runner.emitBeforeProviderRequest(requests.at(-1)), requests.at(-1), 'A post-handler retain-none draft cannot restore old images');
+  console.log(JSON.stringify({ host: root, version: JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).version, ok: true, checks: ['actual tool execution and tool_result error flag', 'actual oversized-image normalization and single-copy originals', 'later tool_result image/text redactions preserved', 'full call ID and timestamp correlation', 'both Responses adapters restore matching original bytes', 'strict code schema', 'image-removal policy and persisted edit honored', 'branch/resume exact-byte restoration', 'post-handler retain-none compaction'], mockRequests: requests.length }));
 } finally {
   await session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' });
   session.dispose();
