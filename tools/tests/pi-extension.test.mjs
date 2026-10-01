@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createJiti } from 'jiti';
-import { restoreMacuseImages } from '../../lib/pi-images.mjs';
+import { restoreMacuseImages, retainMacuseOriginals } from '../../lib/pi-images.mjs';
 import { tools as specs } from '../../lib/tools.mjs';
 
 const jiti = createJiti(import.meta.url);
@@ -101,18 +101,85 @@ test('Astra restores only matching retained macuse images and removes only its o
   for (const api of ['openai-responses', 'openai-codex-responses']) for (const type of ['function_call_output', 'custom_tool_call_output']) {
     const payload = { input: [{ type, call_id: 'call_one', output }, { type, call_id: 'foreign', output }] };
     const model = { id: 'gpt-6-astra', api };
-    const restored = restoreMacuseImages(payload, [entry], model);
+    const restored = restoreMacuseImages(payload, new Map([['call_one', entry.message]]), model);
     assert.equal(restored.input[0].output[1].image_url, 'data:image/png;base64,original-bytes');
     assert.equal(restored.input[0].output[0].text, 'Observed');
     assert.equal(restored.input[0].output[1].detail, 'auto');
     assert.deepEqual(restored.input[1], payload.input[1]);
     assert.equal(payload.input[0].output[1].image_url, 'data:image/png;base64,resized-bytes');
-    assert.equal(restoreMacuseImages(payload, [], model), undefined, 'compacted/omitted entries stay omitted');
+    assert.equal(restoreMacuseImages(payload, new Map(), model), undefined, 'compacted/omitted entries stay omitted');
     for (const filtered of [output.slice(0, 1), output.slice(0, 2), [{ type: 'input_text', text: 'redacted' }, ...output.slice(1)]]) {
-      assert.equal(restoreMacuseImages({ input: [{ type, call_id: 'call_one', output: filtered }] }, [entry], model), undefined);
+      assert.equal(restoreMacuseImages({ input: [{ type, call_id: 'call_one', output: filtered }] }, new Map([['call_one', entry.message]]), model), undefined);
     }
-    assert.equal(restoreMacuseImages(payload, [entry], { id: 'other-model', api }), undefined);
+    assert.equal(restoreMacuseImages(payload, new Map([['call_one', entry.message]]), { id: 'other-model', api }), undefined);
     const unchanged = { ...entry, message: { ...entry.message, content: original } };
-    assert.equal(restoreMacuseImages(payload, [unchanged], model), undefined);
+    assert.equal(restoreMacuseImages(payload, new Map([['call_one', unchanged.message]]), model), undefined);
   }
+});
+
+test('image hook does no non-target history work and reconciles only target appends across lifecycle and edits', async () => {
+  const f = extensionFixture();
+  const rows = Array.from({ length: 43000 }, (_, i) => ({ id: `e${i}`, parentId: i ? `e${i - 1}` : null, type: 'custom' }));
+  rows.push({ ...structuredClone(entry), id: 'result', parentId: 'e42999' });
+  const entries = new Map(rows.map(row => [row.id, row]));
+  let leaf = 'result', projections = 0, reads = 0;
+  const sm = {
+    getLeafId: () => leaf,
+    getEntry: id => { reads++; return entries.get(id); },
+    buildContextEntries: () => { projections++; return rows; },
+  };
+  const ctx = { sessionManager: sm, model: { id: 'other', api: 'openai-responses' } };
+  const payload = { input: [{ type: 'function_call_output', call_id: 'call_one', output }] };
+  const request = (messages = [entry.message]) => {
+    f.handlers.get('context_with_system')({ messages }, ctx);
+    return f.handlers.get('before_provider_request')({ payload }, ctx);
+  };
+  for (let i = 0; i < 20; i++) assert.equal(request(), undefined);
+  assert.equal(projections + reads, 0, 'non-target models must not touch history');
+  ctx.model.id = 'gpt-6-astra';
+  assert.equal(request().input[0].output[1].image_url, 'data:image/png;base64,original-bytes');
+  assert.equal(projections, 1);
+  for (let i = 0; i < 20; i++) assert.ok(request());
+  assert.equal(projections, 1);
+  assert.equal(reads, 0, 'unchanged requests are independent of journal size');
+  assert.equal(request([]), undefined, 'a filtered output cannot return via the cache');
+  const edited = { ...entry.message, content: [text('redacted'), ...normalized.slice(1)] };
+  assert.equal(request([edited]), undefined, 'edited content is never the restoration baseline');
+  const ended = structuredClone(entry.message);
+  ended.toolCallId = 'next|fc_next';
+  f.handlers.get('message_end')({ message: ended });
+  assert.equal(ended.details.macuse.originalContent, undefined);
+  assert.deepEqual(ended.details.macuse.originalImages.map(p => p.data), ['original-bytes']);
+  // The host appends only AFTER message_end; next-request suffix reconciliation
+  // must not assume that entry already existed in the event callback.
+  const appended = { type: 'message', id: 'next', parentId: leaf, message: ended };
+  rows.push(appended); entries.set(appended.id, appended); leaf = appended.id;
+  request([ended]);
+  assert.equal(reads, 1);
+  assert.equal(projections, 1);
+  await f.handlers.get('session_tree')();
+  assert.ok(request());
+  assert.equal(projections, 2, 'branch/resume invalidation reseeds the retained window');
+  const collision = structuredClone(entry.message);
+  collision.details.macuse.originalContent[1].data = 'different-original-same-normalized-bytes';
+  const repeated = { type: 'message', id: 'reused-id', parentId: leaf, message: collision };
+  rows.push(repeated); entries.set(repeated.id, repeated); leaf = repeated.id;
+  assert.equal(request(), undefined, 'reused wire IDs cannot prove original-image provenance');
+  const compacted = { id: 'compact', parentId: leaf, type: 'compaction' };
+  entries.set(compacted.id, compacted); leaf = compacted.id;
+  rows.splice(0, rows.length, compacted);
+  assert.equal(request(), undefined, 'post-handler compaction drafts cannot resurrect images');
+  assert.equal(projections, 3);
+});
+
+test('resized originals serialize once while unchanged originals stay solely in normalized content', () => {
+  const message = structuredClone(entry.message);
+  retainMacuseOriginals(message);
+  const serialized = JSON.stringify(message);
+  assert.equal(serialized.split('original-bytes').length - 1, 1);
+  assert.equal(serialized.split('small-unchanged').length - 1, 1);
+  const restored = restoreMacuseImages({ input: [{ type: 'custom_tool_call_output', call_id: 'call_one', output }] }, new Map([['call_one', message]]), { id: 'gpt-6-astra', api: 'openai-responses' });
+  assert.equal(restored.input[0].output[0].text, 'Observed');
+  assert.equal(restored.input[0].output[1].image_url, 'data:image/png;base64,original-bytes');
+  assert.equal(restoreMacuseImages({ input: [{ type: 'custom_tool_call_output', call_id: 'call_one', output: output.map(p => ({ ...p, untrusted: true })) }] }, new Map([['call_one', message]]), { id: 'gpt-6-astra', api: 'openai-responses' }), undefined);
 });

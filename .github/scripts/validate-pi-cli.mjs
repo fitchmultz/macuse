@@ -8,16 +8,19 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { tools } from '../../lib/tools.mjs';
 
+if (process.argv.includes('--help') || process.argv.includes('-h')) {
+  console.log('Usage: node .github/scripts/validate-pi-cli.mjs [PI_PACKAGE_DIR] [MACUSE_PACKAGE_DIR]\nOffline CLI extension-registration check.\nExample: node .github/scripts/validate-pi-cli.mjs /tmp/pi/node_modules/@earendil-works/pi-coding-agent /tmp/packed/package\nExit: 0 checks passed; 1 validation failure.');
+  process.exit(0);
+}
 const root = process.argv[2] ? resolve(process.argv[2]) : dirname(findPackageJSON('@earendil-works/pi-coding-agent', import.meta.url));
 const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
-const extension = fileURLToPath(new URL('../../extensions/macuse.ts', import.meta.url));
+const extension = process.argv[3] ? join(resolve(process.argv[3]), 'extensions/macuse.ts') : fileURLToPath(new URL('../../extensions/macuse.ts', import.meta.url));
 const directory = mkdtempSync(join(tmpdir(), 'macuse-cli-'));
 try {
   const observer = join(directory, 'observe.ts');
   const observation = join(directory, 'observation.json');
   cpSync(fileURLToPath(new URL('./ci-observer.ts', import.meta.url)), observer);
-  const env = { ...process.env, PI_TELEMETRY: '0', MACUSE_CI_OBSERVATION: observation };
-  delete env.PI_PACKAGE_DIR;
+  const env = { ...process.env, PI_PACKAGE_DIR: root, PI_CODING_AGENT_DIR: join(directory, 'agent'), PI_TELEMETRY: '0', MACUSE_CI_OBSERVATION: observation };
   const result = spawnSync(process.execPath, [join(root, manifest.bin.pi), '--offline', '--mode', 'rpc', '-ne', '-ns', '-np', '-nc',
     '--no-themes', '--no-approve', '--no-session', '-e', extension, '-e', observer], {
     cwd: directory,
