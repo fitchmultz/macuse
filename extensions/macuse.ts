@@ -88,14 +88,14 @@ export default function macuse(pi: ExtensionAPI) {
     const details = event.details as { macuse?: { isError?: boolean } } | undefined;
     if (details?.macuse?.isError) return { isError: true };
   });
-  pi.on('message_end', event => imageIndex.messageEnd(event.message));
+  pi.on('message_end', (event, ctx) => imageIndex.messageEnd(event.message, ctx.model?.inputLimits?.images?.resize));
   pi.on('session_compact', () => {
     imageIndex.reset();
     requestImages.clear();
   });
-  pi.on('context_with_system', (event, ctx) => {
+  pi.on('context_with_system', async (event, ctx) => {
     requestImages = canRestoreMacuseImages(ctx.model)
-      ? imageIndex.select(ctx.sessionManager, event.messages)
+      ? await imageIndex.select(ctx.sessionManager, event.messages, ctx.model?.inputLimits?.images?.resize)
       : new Map();
   });
   pi.on('before_provider_request', (event, ctx) => restoreMacuseImages(event.payload, requestImages, ctx.model));
