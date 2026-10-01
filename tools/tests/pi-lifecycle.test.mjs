@@ -23,12 +23,12 @@ const hostVersion = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'
 async function fixture(t, options = {}, manager) {
   const dir = await mkdtemp(join(tmpdir(), 'macuse-lifecycle-'));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  const { settings = {}, ...sessionOptions } = options;
+  const { settings = {}, installed = true, ...sessionOptions } = options;
   await writeFile(join(dir, 'settings.json'), JSON.stringify(settings));
   const settingsManager = SettingsManager.create(dir, dir);
   const resourceLoader = new DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager,
-    noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-    additionalExtensionPaths: [fileURLToPath(new URL('../../extensions/macuse.ts', import.meta.url))],
+    noExtensions: installed, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
+    additionalExtensionPaths: installed ? [fileURLToPath(new URL('../../extensions/macuse.ts', import.meta.url))] : [],
   });
   await resourceLoader.reload();
   assert.deepEqual(resourceLoader.getExtensions().errors, []);
@@ -52,6 +52,22 @@ test('native defaults can select auxiliary tools at startup without activating t
   const f = await fixture(t, { settings: { defaultTools: ['+computer_history_status'] } });
   assert.ok(f.session.getActiveToolNames().includes('computer_history_status'));
   assert.ok(!f.session.getActiveToolNames().includes('computer_history_resume'));
+  assert.deepEqual(f.errors, []);
+});
+
+test('first installation on reload activates defaults without resurrecting later live deselections', async t => {
+  const settings = { extensions: ['-builtin:mcp', '-builtin:llama.cpp', '-builtin:codemode', '-builtin:tool-search'] };
+  const f = await fixture(t, { installed: false, settings });
+  declare(f);
+  settings.extensions.push(fileURLToPath(new URL('../../extensions/macuse.ts', import.meta.url)));
+  await writeFile(join(f.dir, 'settings.json'), JSON.stringify(settings));
+  await f.session.reload();
+  assert.deepEqual(f.session.getActiveToolNames().filter(name => name.startsWith('macuse')).sort(),
+    ['macuse', 'macuse_insert_text', 'macuse_reset', 'macuse_tools']);
+  assert.ok(!f.session.getActiveToolNames().includes('computer_history_status'));
+  f.session.setActiveToolsByName([]);
+  await f.session.reload();
+  assert.deepEqual(f.session.getActiveToolNames(), []);
   assert.deepEqual(f.errors, []);
 });
 

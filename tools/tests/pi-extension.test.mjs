@@ -13,6 +13,7 @@ export function extensionFixture() {
   extension({
     registerTool(tool) { tools.set(tool.name, tool); if (tool.defaultActive !== false) active.push(tool.name); },
     registerCommand(name, command) { commands.set(name, command); },
+    appendEntry() {},
     on(name, handler) { handlers.set(name, handler); },
     events: { on(name, handler) { bus.set(name, handler); } },
     getActiveTools: () => active,
@@ -39,7 +40,7 @@ test('Pi uses the shared strict surface, with lazy defaults and guarded activati
   const auxiliary = f.tools.get('macuse_tools').parameters.properties.tools.items.enum;
   assert.equal(auxiliary.length, 8);
   assert.ok(auxiliary.every(name => name.startsWith('event_stream_') || name.startsWith('computer_history_')));
-  await f.handlers.get('session_start')({ reason: 'startup' }, { sessionManager: { buildSessionProjection: () => ({ messages: [] }) } });
+  await f.handlers.get('session_start')({ reason: 'startup' }, { sessionManager: { getEntries: () => [], buildSessionProjection: () => ({ messages: [] }) } });
   assert.deepEqual(f.active().sort(), ['read', 'macuse', 'macuse_insert_text', 'macuse_reset', 'macuse_tools'].sort());
   const loaded = await f.tools.get('macuse_tools').execute('load', { tools: ['computer_history_status', 'event_stream_start'] });
   assert.deepEqual(loaded.details.added, ['computer_history_status']);

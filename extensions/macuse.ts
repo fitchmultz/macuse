@@ -89,16 +89,22 @@ export default function macuse(pi: ExtensionAPI) {
   pi.on('before_provider_request', (event, ctx) => restoreMacuseImages(event.payload, ctx.sessionManager.buildContextEntries(), ctx.model));
   pi.on('session_start', async (event, ctx) => {
     await stop();
+    const owned = new Set([...tools.map(tool => tool.name), 'macuse_tools']);
+    // Record initialization only, never a second copy of the active selection.
+    const initialized = ctx.sessionManager.getEntries().some(entry =>
+      (entry.type === 'custom' && entry.customType === 'macuse-initialized') ||
+      (entry.type === 'message' && entry.message.role === 'system' &&
+        [...(entry.message.toolsAdded ?? []), ...(entry.message.toolsRemoved ?? [])].some(tool => owned.has(tool.name))));
+    if (!initialized) pi.appendEntry('macuse-initialized', {});
     // Inactive registration lets Pi preserve live selections and newly added defaults on reload.
-    if (event.reason === 'reload') return;
+    if (event.reason === 'reload' && initialized) return;
     // An explicit CLI selection takes precedence over saved declarations.
     const argv = process.argv.slice(2);
     const delimiter = argv.indexOf('--');
     if ((delimiter < 0 ? argv : argv.slice(0, delimiter)).some(arg => arg === '--tools' || arg === '-t' || arg.startsWith('--tools='))) return;
     const available = new Set(pi.getAllTools().map(tool => tool.name));
-    const owned = new Set([...tools.map(tool => tool.name), 'macuse_tools']);
     // Pi's branch/compaction projection owns selection; never keep a second activation journal.
-    const current = getCurrentSystemMessage(ctx.sessionManager.buildSessionProjection().messages);
+    const current = event.reason === 'reload' ? undefined : getCurrentSystemMessage(ctx.sessionManager.buildSessionProjection().messages);
     if (current) {
       const restored = (current.toolsAdded ?? []).map(tool => tool.name).filter(name => owned.has(name) && available.has(name));
       pi.setActiveTools([...new Set([...pi.getActiveTools().filter(name => !owned.has(name)), ...restored])]);
