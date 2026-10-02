@@ -7,15 +7,15 @@ Native macOS Computer Use for Pi and MCP clients, with persistent JavaScript, gu
 
 ## Install in Pi
 
-The v0.5.1 distribution is an experimental GitHub prerelease, installed in Pi from Git rather than npm. The package is marked `private: true` to prevent npm publication.
+The v0.6.1 distribution is an experimental GitHub prerelease, installed in Pi from Git rather than npm. The package is marked `private: true` to prevent npm publication.
 
 ```bash
-pi install git:github.com/fitchmultz/macuse@v0.5.1
+pi install git:github.com/fitchmultz/macuse@v0.6.1
 ```
 
 On official Pi 1.0.0, `/reload` replaces extension code and stops macuse's owned runtime before reinitializing it. Use a **new process** after dependency or native-runtime updates, or on an older host whose code reload is unqualified. Restart CLI/MCP processes after updates too.
 
-macuse targets both the latest stable official Pi and `fitchmultz/pi` through shared public extension APIs. Its minimum supported and development baseline is Pi 1.0.0, with each host qualified independently. The upcoming minimal 1.0 fork remains separately qualified; the live 0.99.1 fork is not an activation target. It needs macOS, the installed ChatGPT Computer Use runtime, and its existing authentication and permissions. Native focus observations and selected-text insertion also need Accessibility access and an installed Swift compiler (`xcrun swiftc`). Nothing installs a compiler or grants privacy permissions automatically. See [local setup](docs/reference/codex-computer-use-local-install.md).
+macuse targets both the latest stable official Pi and `fitchmultz/pi` through shared public extension APIs. Its minimum supported and development baseline is Pi 1.0.0, with each host qualified independently. Each host is qualified separately; see [Pi 1.0 qualification](docs/pi-1.0-qualification.md) for exact offline evidence and remaining live checks. It needs macOS, the installed ChatGPT Computer Use runtime, and its existing authentication and permissions. Native focus observations and selected-text insertion also need Accessibility access and an installed Swift compiler (`xcrun swiftc`). Nothing installs a compiler or grants privacy permissions automatically. See [local setup](docs/reference/codex-computer-use-local-install.md).
 
 ## Start with an observation
 
@@ -47,10 +47,13 @@ Bindings persist in that session. The next call can use them:
 | `macuse_insert_text` | Replace only the current selection in an already-focused field through native Accessibility, preserving unselected text. |
 | `macuse_reset` | Clear JavaScript bindings and app observations; it does not undo GUI actions. |
 | `macuse_tools` | Pi-only activation of the eight recording/history tools below. It starts no recording. |
+| `macuse_enable` | Pi-only recovery: explicitly select the four permitted entry tools without starting app control or recording. |
 
-These four tools start active on ordinary Pi. Eight auxiliary tools are registered but inactive until requested through `macuse_tools`: `event_stream_start`, `event_stream_status`, `event_stream_stop`, `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, and `computer_history_update_settings`. Pi's live tool selection survives reload, including newly added `defaultTools` on hosts supporting that behavior. Saved declarations survive resume, fork and compaction; owned runtime bindings and observations still reset at lifecycle boundaries. Host allowlists/exclusions are never widened, and explicit CLI `--tools` selections take precedence over saved declarations. SDK callers replacing a saved selection must apply their final selection after binding extensions; see [SDK selection](docs/reference/codex-computer-use-local-install.md#sdk-tool-selection). The MCP server exposes eleven tools: the three primary tools plus all eight auxiliary tools.
+The four entry tools and the separate ungrouped `macuse_enable` recovery tool start active on ordinary Pi. Eight auxiliary tools are registered but inactive until requested through `macuse_tools`: `event_stream_start`, `event_stream_status`, `event_stream_stop`, `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, and `computer_history_update_settings`. Pi's live tool selection survives reload, including newly added `defaultTools` on hosts supporting that behavior. Saved declarations survive resume, fork and compaction; owned runtime bindings and observations still reset at lifecycle boundaries. Host allowlists/exclusions are never widened, and explicit CLI `--tools` selections take precedence over saved declarations. SDK callers replacing a saved selection must apply their final selection after binding extensions; see [SDK selection](docs/reference/codex-computer-use-local-install.md#sdk-tool-selection). The MCP server exposes eleven tools: the three primary tools plus all eight auxiliary tools.
 
 Hosts managing the public `pi:instruction-groups` event bus receive the complete extension-owned `macos` instructions on demand. On managed hosts, selected macuse tool declarations remain hidden until `discover_tools {enable:["macos"]}` enables the group. Without an active instruction-group manager, including official Pi, macuse supplies the same full instructions eagerly. Active selections, callable permissions, the `macuse_tools` loader, and native safety gates remain unchanged. No discovery metadata or settings inventory is required.
+
+If an installed, enabled macuse package is missing from a saved session's tools, call `macuse_enable({})` or run `/macuse-enable`. It explicitly adds only the four permitted entry tools, preserves other selections and exclusions, and reports added, already-active, and unavailable tools. It starts no app control, service, or recording and does not enable the eight auxiliary tools. On discovery hosts, then enable `macos` through `discover_tools` and read its instructions before acting. Use the revealed tools in a later turn after reading the instructions. An unavailable group alone cannot repair a deselected tool set. The recovery tool follows native default-active behavior: restart/reload can select it again, saved tree selections can omit it, and hard host restrictions can make it unavailable. It is not part of `macos` or macuse's saved entry/auxiliary selection.
 
 For example, in Pi enable a status read, then call `event_stream_status` with `{}`:
 
