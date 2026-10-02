@@ -28,10 +28,20 @@ export default function macuse(pi: ExtensionAPI) {
   const imageIndex = macuseImageIndex();
   let requestImages = new Map();
   const auxiliaryNames = tools.filter(tool => !primaryTools.includes(tool)).map(tool => tool.name);
-  const lazy = new Set(auxiliaryNames);
+  const entryNames = [...primaryTools.map(tool => tool.name), 'macuse_tools'];
   const getSession = async (cwd: string) => session ??= new (await import('../lib/macuse-session.mjs')).MacuseSession({ cwd });
   const stop = async () => { await session?.stop(); session = undefined; };
   let isManaged = () => false;
+  const enableEntryTools = () => {
+    const active = pi.getActiveTools();
+    pi.setActiveTools([...new Set([...active, ...entryNames])]);
+    const enabled = pi.getActiveTools();
+    const added = entryNames.filter(name => !active.includes(name) && enabled.includes(name));
+    const alreadyActive = entryNames.filter(name => active.includes(name) && enabled.includes(name));
+    const unavailable = entryNames.filter(name => !enabled.includes(name));
+    const text = `Added: ${added.join(', ') || 'none'}. Already active: ${alreadyActive.join(', ') || 'none'}. Unavailable: ${unavailable.join(', ') || 'none'}. No app control or recording started.${isManaged() ? ' Enable macos with discover_tools and read its instructions before using its tools in a later turn.' : ''}`;
+    return { text, details: { added, alreadyActive, unavailable } };
+  };
   pi.events.on('pi:instruction-groups', data => {
     const collector = data as InstructionGroupCollector;
     collector.register({
@@ -61,6 +71,20 @@ export default function macuse(pi: ExtensionAPI) {
       const result = await (await getSession(ctx.cwd)).callTool(spec.name, params, { signal, onUpdate });
       if (spec.name === 'macuse' && result.content.some(part => part.type === 'image')) result.details.macuse.originalContent = result.content;
       return result;
+    },
+  });
+
+  pi.registerTool({
+    name: 'macuse_enable',
+    label: 'Enable macuse',
+    description: 'Explicitly select the four permitted macuse entry tools when they are missing or deselected. Preserves other selections and restrictions; starts no app control, service, or recording and enables no auxiliary tools.',
+    parameters: Type.Object({}, { additionalProperties: false }),
+    defaultActive: true,
+    constrainedSampling: { type: 'json_schema', strict: 'prefer' },
+    executionMode: 'sequential',
+    async execute() {
+      const { text, details } = enableEntryTools();
+      return { content: [{ type: 'text', text }], details };
     },
   });
 
@@ -120,14 +144,14 @@ export default function macuse(pi: ExtensionAPI) {
     const available = new Set(pi.getAllTools().map(tool => tool.name));
     // Pi's branch/compaction projection owns selection; never keep a second activation journal.
     const current = event.reason === 'reload' ? undefined : getCurrentSystemMessage(ctx.sessionManager.buildSessionProjection().messages);
-    if (current) {
+    if (current && initialized) {
       const restored = (current.toolsAdded ?? []).map(tool => tool.name).filter(name => owned.has(name) && available.has(name));
       pi.setActiveTools([...new Set([...pi.getActiveTools().filter(name => !owned.has(name)), ...restored])]);
       return;
     }
     // A partial catalog previously activated every permitted tool; keep that fallback.
     const defaults = [...owned].every(name => available.has(name))
-      ? [...owned].filter(name => !lazy.has(name))
+      ? entryNames
       : [...owned];
     pi.setActiveTools([...new Set([...pi.getActiveTools(), ...defaults.filter(name => available.has(name))])]);
   });
@@ -138,6 +162,15 @@ export default function macuse(pi: ExtensionAPI) {
   };
   pi.on('session_tree', reset);
   pi.on('session_shutdown', reset);
+
+  pi.registerCommand('macuse-enable', {
+    description: 'Select the four permitted macuse entry tools without starting app control or recording',
+    handler: async (_args, ctx) => {
+      const { text, details } = enableEntryTools();
+      if (ctx.hasUI) ctx.ui.notify(text, details.unavailable.length ? 'warning' : 'info');
+      else pi.sendMessage({ customType: 'macuse-enable', content: text, display: true, details }, { triggerTurn: false });
+    },
+  });
 
   pi.registerCommand('macuse-status', {
     description: 'Show the owned native and auxiliary runtime status without starting them',

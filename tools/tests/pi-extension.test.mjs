@@ -27,7 +27,7 @@ export function extensionFixture() {
 
 test('Pi uses the shared strict surface, with lazy defaults and guarded activation', async () => {
   const f = extensionFixture();
-  assert.equal(f.tools.size, specs.length + 1);
+  assert.equal(f.tools.size, specs.length + 2);
   for (const spec of specs) {
     const tool = f.tools.get(spec.name);
     assert.deepEqual(JSON.parse(JSON.stringify(tool.parameters)), spec.inputSchema);
@@ -43,7 +43,7 @@ test('Pi uses the shared strict surface, with lazy defaults and guarded activati
   assert.equal(auxiliary.length, 8);
   assert.ok(auxiliary.every(name => name.startsWith('event_stream_') || name.startsWith('computer_history_')));
   await f.handlers.get('session_start')({ reason: 'startup' }, { sessionManager: { getEntries: () => [], buildSessionProjection: () => ({ messages: [] }) } });
-  assert.deepEqual(f.active().sort(), ['read', 'macuse', 'macuse_insert_text', 'macuse_reset', 'macuse_tools'].sort());
+  assert.deepEqual(f.active().sort(), ['read', 'macuse', 'macuse_insert_text', 'macuse_reset', 'macuse_tools', 'macuse_enable'].sort());
   const loaded = await f.tools.get('macuse_tools').execute('load', { tools: ['computer_history_status', 'event_stream_start'] });
   assert.deepEqual(loaded.details.added, ['computer_history_status']);
   assert.deepEqual(loaded.details.unavailable, ['event_stream_start']);
@@ -82,7 +82,7 @@ test('full macOS instructions are bus-owned when managed and eager on stock or d
   });
   assert.equal(group.name, 'macos');
   assert.ok(group.description);
-  assert.deepEqual(group.tools, [...f.tools.keys()]);
+  assert.deepEqual(group.tools, [...f.tools.keys()].filter(name => name !== 'macuse_enable'));
   assert.equal(group.instructions({}), stock.macos);
   assert.deepEqual(prepare(), { existing: stock.existing });
   assert.deepEqual(f.active(), active, 'instruction registration never activates tools');
