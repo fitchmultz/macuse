@@ -2,12 +2,11 @@
 // Credential-free probes of the installed host's real hooks, image normalizer and Responses adapters.
 import assert from 'node:assert/strict';
 import { findPackageJSON } from 'node:module';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { crc32, deflateSync, zstdDecompressSync } from 'node:zlib';
-import { createJiti } from 'jiti';
 
 if (process.argv.includes('--help') || process.argv.includes('-h')) {
   console.log('Usage: node tools/validate-pi-host.mjs [PI_PACKAGE_DIR] [MACUSE_PACKAGE_DIR]\nOffline SDK, image-normalization and Responses-adapter checks.\nExample: node tools/validate-pi-host.mjs /tmp/pi/node_modules/@earendil-works/pi-coding-agent /tmp/packed/package\nExit: 0 checks passed; 1 validation failure.');
@@ -22,8 +21,7 @@ const { createAgentSession, convertToLlm, DefaultResourceLoader, ModelRuntime, S
 const { fauxProvider, fauxAssistantMessage, InMemoryCredentialStore, InMemoryModelsStore, normalizeContext } = await load(ai, 'dist/index.js');
 const { openaiProvider } = await load(ai, 'dist/providers/openai.js');
 const { openaiCodexProvider } = await load(ai, 'dist/providers/openai-codex.js');
-const jiti = createJiti(import.meta.url);
-const { default: extension } = await jiti.import(process.argv[3] ? join(resolve(process.argv[3]), 'extensions/macuse.ts') : '../extensions/macuse.ts');
+const extensionPath = process.argv[3] ? join(resolve(process.argv[3]), 'extensions/macuse.ts') : fileURLToPath(new URL('../extensions/macuse.ts', import.meta.url));
 
 function png(width, height) {
   const chunk = (name, bytes) => { const data = Buffer.concat([Buffer.from(name), bytes]), length = Buffer.alloc(4), crc = Buffer.alloc(4); length.writeUInt32BE(bytes.length); crc.writeUInt32BE(crc32(data)); return Buffer.concat([length, data, crc]); };
@@ -38,30 +36,50 @@ const redacted = [{ type: 'text', text: 'Redacted screenshot' }, { type: 'image'
 const model = { ...openaiProvider().getModels().find(model => model.api === 'openai-responses' && model.input.includes('image')), id: 'gpt-6-astra' };
 assert.ok(model.api, 'Installed host has no Responses image model');
 const scratch = await mkdtemp(join(tmpdir(), 'macuse-host-'));
-const faux = fauxProvider({ provider: 'macuse-image-probe', tokensPerSecond: 1000000, models: [{ id: 'fixture', input: ['text', 'image'] }] });
-faux.setResponses([fauxAssistantMessage([call, { ...call, id: 'call_redacted|fc_redacted' }, { ...call, id: 'call_text_redacted|fc_text_redacted' }], { stopReason: 'toolUse' }), fauxAssistantMessage('Observed synthetic image')]);
-const credentials = new InMemoryCredentialStore();
-const modelRuntime = await ModelRuntime.create({ credentials, modelsStore: new InMemoryModelsStore(), modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
-modelRuntime.registerNativeProvider(faux.provider);
-await modelRuntime.refresh({ providers: [faux.provider.id], allowNetwork: false });
-const tools = [];
-const resourceLoader = new DefaultResourceLoader({ cwd: scratch, agentDir: scratch,
-  noExtensions: true, noSkills: true, noThemes: true, noPromptTemplates: true, noContextFiles: true,
-  extensionFactories: [pi => extension({ ...pi, registerTool(tool) {
-    tools.push(tool);
-    // Synthetic tool output isolates Pi's real result hooks and image normalization from the desktop.
-    pi.registerTool(tool.name === 'macuse' ? { ...tool, execute: async () => structuredClone({ content, details }) } : tool);
-  } }), pi => pi.on('tool_result', event => {
-    if (event.toolCallId === 'call_redacted|fc_redacted') return { content: redacted };
-    if (event.toolCallId === 'call_text_redacted|fc_text_redacted') return { content: [{ type: 'text', text: 'Redacted text' }, content[1]] };
-  })],
-});
-await resourceLoader.reload();
-assert.deepEqual(resourceLoader.getExtensions().errors, []);
-const sm = SessionManager.inMemory(scratch);
-const { session } = await createAgentSession({ cwd: scratch, agentDir: scratch, modelRuntime, model: faux.getModel(), resourceLoader,
-  sessionManager: sm, tools: ['macuse'], settingsManager: SettingsManager.inMemory({ images: { autoResize: true }, compaction: { enabled: false }, retry: { enabled: false } }) });
+let session;
 try {
+  // Native ESM helpers resolve physical peers, not the host loader's TS aliases.
+  // Copy unchanged sources into a disposable selected-host consumer; never
+  // replace dependencies in the source checkout or selected host.
+  const packageRoot = dirname(dirname(extensionPath));
+  for (const path of ['extensions', 'lib', 'package.json']) await cp(join(packageRoot, path), join(scratch, path), { recursive: true });
+  for (const [name, target] of [
+    ['@earendil-works/pi-coding-agent', root],
+    ['@earendil-works/pi-ai', ai],
+    ['typebox', dirname(findPackageJSON('typebox', pathToFileURL(join(root, 'package.json')).href))],
+  ]) {
+    const link = join(scratch, 'node_modules', name);
+    await mkdir(dirname(link), { recursive: true });
+    await symlink(target, link, 'dir');
+  }
+  const faux = fauxProvider({ provider: 'macuse-image-probe', tokensPerSecond: 1000000, models: [{ id: 'fixture', input: ['text', 'image'] }] });
+  faux.setResponses([fauxAssistantMessage([call, { ...call, id: 'call_redacted|fc_redacted' }, { ...call, id: 'call_text_redacted|fc_text_redacted' }], { stopReason: 'toolUse' }), fauxAssistantMessage('Observed synthetic image')]);
+  const credentials = new InMemoryCredentialStore();
+  const modelRuntime = await ModelRuntime.create({ credentials, modelsStore: new InMemoryModelsStore(), modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
+  modelRuntime.registerNativeProvider(faux.provider);
+  await modelRuntime.refresh({ providers: [faux.provider.id], allowNetwork: false });
+  const tools = [];
+  const resourceLoader = new DefaultResourceLoader({ cwd: scratch, agentDir: scratch,
+    noExtensions: true, noSkills: true, noThemes: true, noPromptTemplates: true, noContextFiles: true,
+    additionalExtensionPaths: [join(scratch, 'extensions/macuse.ts')],
+    extensionFactories: [pi => pi.on('tool_result', event => {
+      if (event.toolCallId === 'call_redacted|fc_redacted') return { content: redacted };
+      if (event.toolCallId === 'call_text_redacted|fc_text_redacted') return { content: [{ type: 'text', text: 'Redacted text' }, content[1]] };
+    })],
+  });
+  await resourceLoader.reload();
+  assert.deepEqual(resourceLoader.getExtensions().errors, []);
+  for (const extension of resourceLoader.getExtensions().extensions) {
+    for (const { definition: tool } of extension.tools.values()) {
+      tools.push(tool);
+      // Replace only desktop execution; the selected host loads real hooks and image helpers.
+      if (tool.name === 'macuse') tool.execute = async () => structuredClone({ content, details });
+    }
+  }
+  assert.ok(tools.some(tool => tool.name === 'macuse'), 'Selected host must load the macuse extension');
+  const sm = SessionManager.inMemory(scratch);
+  ({ session } = await createAgentSession({ cwd: scratch, agentDir: scratch, modelRuntime, model: faux.getModel(), resourceLoader,
+    sessionManager: sm, tools: ['macuse'], settingsManager: SettingsManager.inMemory({ images: { autoResize: true }, compaction: { enabled: false }, retry: { enabled: false } }) }));
   await session.bindExtensions({ onError: error => { throw new Error(error.error); } });
   await session.prompt('Return the controlled synthetic image.');
   const normalized = session.messages.find(message => message.role === 'toolResult' && message.toolName === 'macuse');
@@ -134,7 +152,12 @@ try {
   assert.equal(await runner.emitBeforeProviderRequest(requests.at(-1)), requests.at(-1), 'A post-handler retain-none draft cannot restore old images');
   console.log(JSON.stringify({ host: root, version: JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).version, ok: true, checks: ['actual tool execution and tool_result error flag', 'actual oversized-image normalization and single-copy originals', 'later tool_result image/text redactions preserved', 'full call ID and timestamp correlation', 'both Responses adapters restore matching original bytes', 'strict code schema', 'image-removal policy and persisted edit honored', 'branch/resume exact-byte restoration', 'post-handler retain-none compaction'], mockRequests: requests.length }));
 } finally {
-  await session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' });
-  session.dispose();
-  await rm(scratch, { recursive: true, force: true });
+  try {
+    if (session) {
+      try { await session.extensionRunner.emit({ type: 'session_shutdown', reason: 'quit' }); }
+      finally { session.dispose(); }
+    }
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
 }
