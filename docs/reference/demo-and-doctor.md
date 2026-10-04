@@ -89,12 +89,12 @@ Use `node tools/macuse.mjs session` for multiple calls sharing JavaScript bindin
 
 ## Diagnose before repair
 
-- **Missing compiler/AX access:** report the exact `xcrun swiftc` or Accessibility failure. Do not install tools or grant permissions implicitly.
+- **Missing compiler/AX access:** report the exact `xcrun swiftc` or Accessibility failure. Complete tooling/setup covered by the user's request or standing authorization through supported system/vendor flows, using grants sufficient for the requested capability. Hand off prompts or authentication that require the user; do not re-ask for already-authorized setup.
 - **AppleEvents/TCC failures:** `-609`, `-1712`, `-1743`, and denial logs can identify the responsible launcher's missing Automation access. Preserve the error; do not report it as an empty app list. Use supported system/vendor permission flows.
 - **Missing window/locked console:** `cgWindowNotFound` or `frontmost=<none>` can reflect console/window state. Ask for the concrete user action needed; do not attempt automatic unlocking.
 - **Timeout/unknown action:** inspect partial evidence and fresh app state after settlement. Do not replay the mutation. A reset cannot prove UI cancellation.
 - **Stale bindings:** `macuse_reset({})` or Pi `/macuse-reset` clears owned JavaScript/observations. `/macuse-stop` stops the session's processes without killing global Computer Use helpers. Neither undoes application effects.
 
-The retained `tools/macuse-repair.mjs` is dry-run by default. Its apply paths can wake/unlock the console, stop processes, or alter privacy state; they are not routine setup or an implicit fix. Do not use TCC database editing as a permission bypass. Broader repairs require exact user authorization and inspection of the requested effects.
+The retained `tools/macuse-repair.mjs` is dry-run by default. Its apply paths can wake/unlock the console, stop processes, or alter privacy state; a generic setup request does not authorize all of those effects. Do not use TCC database editing as a permission bypass. Inspect the requested effects and use only repairs covered by exact user authorization; an existing request covering those effects counts without another approval round.
 
 `tools/probe-codex-computer-use-mcp.mjs` remains for non-mutating raw-MCP discovery and denial diagnostics. Historical raw MCP calls could hang or affect focus, so their results are not authoritative for the native v0.5.0 GUI path. See [historical findings](codex-computer-use-external-harness.md#historical-findings).
