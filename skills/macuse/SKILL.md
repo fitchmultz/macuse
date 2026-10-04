@@ -107,4 +107,4 @@ Focus tracking defaults on; `apps` also scopes native window observations. Repor
 
 For a screenshot artifact, call `macuse` with a screenshot observation and `saveImagePath`. It saves the first emitted image at the exact requested path and refuses overwrite. Verify `savedImage` path/bytes/hash/MIME/dimensions before claiming a file was saved. Astra's Pi hook preserves original macuse screenshots only for matching retained outputs that Pi resized; it does not override filtering/compaction or other models.
 
-Report the target app/window, actions actually dispatched, verified final state, focus coverage, artifacts, and any uncertain outcome or failed cleanup. Keep reports brief. For updates, follow the host-specific reload/restart guidance in `docs/reference/codex-computer-use-local-install.md`.
+Report the target app/window, actions actually dispatched, verified final state, focus coverage, artifacts, and any uncertain outcome or failed cleanup. Keep reports brief. Restart the full Pi/CLI/MCP process after code/dependency updates; `/reload` does not update loaded extension code.
