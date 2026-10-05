@@ -13,6 +13,8 @@ macuse v0.6.1 is an experimental GitHub prerelease installed in Pi from Git, not
 
 macuse does not install the vendor runtime/compiler, change user settings, grant permissions, or bypass authentication. Missing requirements should produce a concrete setup error, not a fallback input system.
 
+This runtime boundary does not prohibit an agent from completing setup authorized by the user's request or standing instructions. Install needed tooling and use supported system/vendor permission flows with grants sufficient for the requested capability; do not ask again for covered setup. Hand off OS prompts or authentication that require the user, and preserve the [safety policy](codex-computer-use-safety-policy.md).
+
 ## Install in Pi
 
 ```bash
