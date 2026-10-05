@@ -227,6 +227,73 @@ test("named top-level native sheets and windows permit targeted actions but reje
 const goToSheet = ({ root = "sheet ID: GoToWindow, Secondary Actions: Raise", index = 2, value = "/tmp", focused = false } = {}) =>
   `Window: "", App: Pi Durable.\n0 ${root}\n\t1 text Go to the folder:\n\t${index} text field (settable) ID: PathTextField, Value: ${value}\n\t3 button Go, ID: GoButton\n\t4 button Cancel, ID: CancelButton\n5 menu bar\n\t6 Pi Durable${focused ? `\nThe focused UI element is ${index} text field` : ""}`;
 
+test("same-ID menu actions preserve full labels with metadata and reject changed labels before dispatch", async () => {
+  for (const [prefix, metadata] of [["", ""], ["menu item ", ""], ["", ", Description: Recording control"]]) {
+    const state = label => `Window: "Fixture", App: App.\n0 standard window Fixture\n1 menu bar\n\t2 ${prefix}${label}, ID: recording-toggle${metadata}`;
+    for (const changed of [true, false]) {
+      const f = fixture({ states: [state("Start Recording"), state(changed ? "Stop Recording" : "Start Recording")] });
+      await f.observe();
+      const original = f.context.meta.macuse.observations[0].elements.find(element => element.id === "recording-toggle");
+      const action = f.guard(request("perform_secondary_action", { element_index: 2, action: "Press" }));
+      if (changed) {
+        await assert.rejects(action, /Target identity or value changed/);
+        assert.equal(f.actions()[0].dispatched, false);
+        assert.equal(f.actions()[0].outcome, "not_dispatched");
+      } else {
+        await action;
+        assert.equal(f.actions()[0].outcome, "completed");
+      }
+      assert.equal(f.calls.filter(call => call.method === "perform_secondary_action").length, changed ? 0 : 1);
+      assert.equal(original.role, "menu item");
+      assert.equal(original.name, "Start Recording");
+    }
+  }
+});
+
+test("actual GoToWindow snapshot with Window menu label verifies setValue on its own PathTextField", async () => {
+  const original = "/private/tmp/cuebox-ui-evidence-closeout-20260711/.ui-evidence-isolation";
+  const before = `Window: "", App: Pi Durable.
+0 sheet ID: GoToWindow, Secondary Actions: Raise
+\t1 button Description: Close, ID: CloseButton
+\t2 text field (settable) Value: ${original}, ID: PathTextField
+3 menu bar
+\t4 Pi Durable
+\t5 File
+\t6 Edit
+\t7 View
+\t8 Window
+
+Selected text: \`\`\`
+${original}
+\`\`\`
+
+Note: Pay special attention to the content selected by the user. If the user asks a question or refers to the content they are looking at on-screen, they might be referring to the selected content (but they might be referring to something else that's visible, too).`;
+  const value = "/private/tmp/cuebox-ui-evidence-closeout-20260711";
+  for (const readback of [value, original]) {
+    // Keep selection unchanged: only the resolved native field can verify the edit.
+    const after = before.replace(`Value: ${original}, ID: PathTextField`, `Value: ${readback}, ID: PathTextField`);
+    const f = fixture({ nativeApp: "Pi Durable", states: [before, before, after] });
+    await f.observe();
+    const action = f.guard(request("set_value", { element_index: 2, value }));
+    if (readback === value) {
+      await action;
+      assert.equal(f.actions()[0].verification, "exact-field-value");
+      assert.equal(f.actions()[0].outcome, "completed");
+      const observed = f.context.meta.macuse.observations[0];
+      assert.equal(observed.nativeSheetId, "GoToWindow");
+      assert.equal(observed.nativeWindowIdentity, false);
+      assert.equal(observed.elements.find(element => element.id === "PathTextField").value, value);
+      assert.equal(observed.elements.find(element => element.index === "8").role, "menu item");
+      assert.equal(observed.elements.find(element => element.index === "8").name, "Window");
+    } else {
+      await assert.rejects(action, /readback/);
+      assert.equal(f.actions()[0].outcome, "unknown");
+      await assert.rejects(f.guard(request("set_value", { element_index: 2, value })), /uncertain outcome/);
+    }
+    assert.deepEqual(f.calls.filter(call => call.method === "set_value"), [request("set_value", { element_index: 2, value })]);
+  }
+});
+
 test("a sole identified untitled native sheet permits exact setValue and Escape with fresh target resolution", async () => {
   const value = "/tmp/café folder";
   const f = fixture({ nativeApp: "Pi Durable", states: [goToSheet(), goToSheet({ index: 9 }), goToSheet({ index: 9, value })] });
