@@ -8,7 +8,17 @@ Astra original-image restoration now checks model/API eligibility before touchin
 
 Only image bytes matching Pi's public native `resizeImage` result and exact `formatDimensionNote`, with unchanged original text, are retained separately, once. Arbitrary output differences do not establish resize provenance: a later `tool_result` image or text redaction fails closed. Full tool-call ID and timestamp must also match the saved raw result; a wire-prefix collision is insufficient. Unchanged images remain in normal content; capped full-output details contain complete text without duplicating images. Existing saved `originalContent` and sparse originals are revalidated at retained-window indexing before eligibility. Verified results retain their producing native resize profile, so a subsequent model switch does not discard genuine originals; unsupported conversion provenance fails closed rather than copying Pi's private normalizer. No image sidecar, second tool-selection journal, deferred callability change, or private structured-details exposure was introduced.
 
-## Checked 2026-10-01
+## Checked 2026-10-02 — 0.6.1 tool discovery and explicit recovery
+
+- Canonical macuse base: `ce0cbccd7a16b4670173921af2250fec1c14880c`. This patch prevents unrelated saved tool declarations from suppressing first initialization on resume/fork.
+- Ungrouped, default-active `macuse_enable({})` and `/macuse-enable` share one native selection helper and explicitly select only the four permitted entry tools. It preserves other active and temporarily suppressed groups, reports added/already-active/unavailable names through native UI or non-UI output, and starts no service, app control, or recording. Existing marker-only empty entry selections remain unchanged until explicit recovery or another host selection is used. The recovery tool is outside `macos` and the prior twelve-tool projection; native restart/reload defaults can restore it, saved tree selections can omit it, and hard policies can exclude it.
+- Official Pi 1.0.0 remains the latest stable release. Current fork qualification uses the installed immutable `69fee3dab4a626202d0f528b8f1605f776f4b2ad` release, Node 24.21.0, CLI SHA256 `3616eed8563c30ae8ef39bf9ce2df410d07cc8409c50b631b05064d9df78daff`; another fork artifact needs its own qualification.
+- Native SDK lifecycle checks passed on both hosts: first-install resume/fork defaults; current fork's actual discovery collector/listing/suppression/enable through reload; official full eager safety instructions; marker-only model/command recovery; strict empty recovery arguments; additive selection and hard allowlist/exclusion/noTools enforcement; eight auxiliary tools remaining inactive; native non-UI command output; another suppressed group's restoration; same-turn action denial for missing instructions and next-turn native call acceptance. The successful call resets only an unstarted fixture runtime, with no vendor process or GUI action.
+- `npm run check:compat` and the current-fork full suite passed: 186 tests each, zero failures/skips, typecheck, offline extension contract, synthetic native image/error/strict-schema checks, and dry-run packaging. The original first-install native resume/fork regression failed on pre-fix source, then passed after repair.
+
+These are offline source/host checks, not live desktop, privacy, recording, auth, or paid-provider certification. The same final 0.6.1 tarball is qualified separately on both hosts for native lifecycle, CLI exposure, and synthetic image/error/schema behavior. Parent owns independent review, GitHub experimental prerelease delivery, and authorized managed installation/recovery. No managed activation was performed by the implementation worker.
+
+## Checked 2026-10-01 — 0.6.0 modernization
 
 - Canonical macuse base: `6a4769f4f1f15d8e847ec092c25e86675d725620`.
 - Official source: `a13d35a742c6ef8462812a28fbe1d8c8b7431c32` (v1.0.0). SDK SHA256: `5482298b995db935f7b96f5d6056fa1c36ac6fc80456be594ef65b83c62b0d30`; bundled CLI: `e79626f2dd6f94aa45d30f3fa63cd84319a6eefcd150b353cfaf274366926774`.
@@ -23,7 +33,7 @@ Accepted review regressions: the native later-hook redaction assertion failed on
 
 Local inspectable logs: `/tmp/macuse-pi100-final-{check,sdk,cli}.log`, `/tmp/macuse-pi100-packed-{sdk,cli}.log`, `/tmp/macuse-pi100-esm.log`. UI fixture and six captures: `/tmp/pi100-native-services/macuse-{fullscreen,regular}-{48,100,160}.txt`; identity observations alongside them. All owned tmux sessions and native test processes were cleaned up.
 
-## Delivery and remaining qualification
+## Delivery and remaining qualification recorded 2026-10-01
 
 Recommended non-reused release: **0.6.0**, Git/GitHub experimental prerelease plus checked tarball only. `private: true` remains; no npm publication channel is added. Existing older unreleased native changes on canonical main are preserved.
 

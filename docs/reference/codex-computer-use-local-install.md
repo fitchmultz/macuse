@@ -1,6 +1,6 @@
 # Local requirements and installation
 
-macuse v0.6.0 is an experimental GitHub prerelease installed in Pi from Git, not npm. Its `private: true` package metadata prevents npm publication. It reuses proprietary software already installed with ChatGPT; external-host use is unsupported and interfaces can change with vendor updates.
+macuse v0.6.1 is an experimental GitHub prerelease installed in Pi from Git, not npm. Its `private: true` package metadata prevents npm publication. It reuses proprietary software already installed with ChatGPT; external-host use is unsupported and interfaces can change with vendor updates.
 
 ## Requirements
 
@@ -18,7 +18,7 @@ This runtime boundary does not prohibit an agent from completing setup authorize
 ## Install in Pi
 
 ```bash
-pi install git:github.com/fitchmultz/macuse@v0.5.1
+pi install git:github.com/fitchmultz/macuse@v0.6.1
 ```
 
 The package supplies `extensions/macuse.ts` and `skills/macuse/SKILL.md`. A local checkout can instead be installed with `pi install /absolute/path/to/macuse`.
@@ -27,7 +27,9 @@ Official Pi 1.0.0's `/reload` replaces extension code, dispose macuse's owned se
 
 For a source-only upgrade from a pre-initialization-marker version, use a new process if no macuse tool declaration has been recorded yet. An entirely deselected legacy session without such a declaration is indistinguishable from first installation; its old reload path also reactivated the primary tools. After initialization by the current version, reload preserves even undeclared live deselections.
 
-Ordinary Pi starts with four tools: `macuse`, `macuse_insert_text`, `macuse_reset`, and `macuse_tools`. Discovery-capable hosts can defer this source-owned `macos` group; official Pi ignores the optional metadata. No `toolDiscovery` settings inventory is required. The eight recording/history tools remain lazy until selected through the loader or an explicit host tool policy. Pi's declared selection survives reload/resume, fork and compaction without keeping native runtime bindings alive. No host patches or image-sizing settings edits are required for Astra.
+Ordinary Pi starts with four entry tools: `macuse`, `macuse_insert_text`, `macuse_reset`, and `macuse_tools`. Discovery-capable hosts can defer this source-owned `macos` group; official Pi ignores the optional metadata. No `toolDiscovery` settings inventory is required. The eight recording/history tools remain lazy until selected through the loader or an explicit host tool policy. Pi's declared selection survives reload/resume, fork and compaction without keeping native runtime bindings alive. No host patches or image-sizing settings edits are required for Astra.
+
+First installation into an existing session enables the permitted entry tools even when that session already declared unrelated tools. Once macuse has initialized, saved deselections remain binding. Pi also registers the default-active, ungrouped `macuse_enable` recovery tool, outside the entry/auxiliary saved selection. If an older version already initialized a session without entry tools, call `macuse_enable({})` or run `/macuse-enable` to explicitly add the four permitted entry tools. It preserves other selections and hard tool restrictions, reports added/already-active/unavailable names, and starts no service, app action, or recording. The eight auxiliary tools remain unchanged. Updating alone does not override the saved selection; a new session is another supported option. Discovery lists only groups with selected tools, so enabling an unavailable `macos` group cannot repair a deselected tool set. After recovery, enable `macos`, read its instructions, and use its tools in a later turn. The recovery tool follows native default-active behavior: restart/reload can select it again, saved tree selections can omit it, and hard restrictions can make it unavailable. This does not reactivate deselected entry or auxiliary tools.
 
 ## SDK tool selection
 
@@ -40,7 +42,7 @@ await session.bindExtensions(bindings);
 session.setActiveToolsByName(selected);
 ```
 
-Use `[]` to deliberately deselect all tools. This shared public method cannot enable tools excluded by the host. Reapply an explicit replacement after resume, fork, or tree operations that restore saved declarations, or let declared selections recover normally. Reload preserves the live selection, including changes not yet declared to the model.
+Use `[]` to deliberately deselect all tools. This shared public method cannot enable tools excluded by the host. Reapply an explicit replacement after resume, fork, or tree operations that restore saved declarations, or let declared selections recover normally. Reload preserves the live entry/auxiliary selection, including changes not yet declared to the model; the separate default-active recovery tool follows the native behavior described above.
 
 **Known limitation:** on official Pi 1.0.0, the extension cannot distinguish an SDK `tools` allowlist from equivalent `excludeTools` through the public filtered catalog and active tool list. Supplying only `tools` before binding on resume can therefore lose newly selected tools when an older declaration exists. macuse conservatively restores permitted saved selections rather than resurrecting deselected tools for exclusion-only resumes. The post-bind call above is required for portable explicit replacement; CLI `--tools` already takes precedence.
 
