@@ -172,6 +172,7 @@ test("page labels and nonstandard roots cannot authorize insertion through a coi
 		"window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html",
 		"standard window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html",
 		"sheet Fixture.txt",
+		"sheet ID: GoToWindow, Secondary Actions: Raise",
 		"window Fixture.txt",
 	]) {
 		const observed = parseAppState(app.bundleId, `Window: "", App: TextEdit.\n0 ${root}\n\t2 text entry area ID: First Text View, Value: prefix ORIGINAL suffix\n\nThe focused UI element is 2 text entry area`);
