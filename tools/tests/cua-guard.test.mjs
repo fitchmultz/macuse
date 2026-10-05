@@ -224,6 +224,98 @@ test("named top-level native sheets and windows permit targeted actions but reje
   }
 });
 
+const goToSheet = ({ root = "sheet ID: GoToWindow, Secondary Actions: Raise", index = 2, value = "/tmp", focused = false } = {}) =>
+  `Window: "", App: Pi Durable.\n0 ${root}\n\t1 text Go to the folder:\n\t${index} text field (settable) ID: PathTextField, Value: ${value}\n\t3 button Go, ID: GoButton\n\t4 button Cancel, ID: CancelButton\n5 menu bar\n\t6 Pi Durable${focused ? `\nThe focused UI element is ${index} text field` : ""}`;
+
+test("a sole identified untitled native sheet permits exact setValue and Escape with fresh target resolution", async () => {
+  const value = "/tmp/café folder";
+  const f = fixture({ nativeApp: "Pi Durable", states: [goToSheet(), goToSheet({ index: 9 }), goToSheet({ index: 9, value })] });
+  await f.observe();
+  await f.guard(request("set_value", { element_index: 2, value }));
+  assert.deepEqual(f.calls.find(call => call.method === "set_value"), request("set_value", { element_index: 9, value }));
+  assert.equal(f.actions()[0].verification, "exact-field-value");
+  assert.equal(f.actions()[0].outcome, "completed");
+  assert.equal(f.context.meta.macuse.observations[0].elements.find(element => element.id === "PathTextField").value, value);
+  // A sheet identity is not proof of an AXWindow for host selected-text insertion.
+  assert.equal(f.context.meta.macuse.observations[0].nativeWindowIdentity, false);
+  for (const focused of [false, true]) {
+    const escape = fixture({ nativeApp: "Pi Durable", states: [goToSheet({ focused })] });
+    await escape.observe();
+    await escape.guard(request("press_key", { key: "Escape" }));
+    assert.equal(escape.calls.at(-1).method, "press_key");
+    assert.equal(escape.actions()[0].outcome, "completed");
+  }
+});
+
+test("untitled sheet actions reject changed, missing or ambiguous document identity before dispatch", async () => {
+  const before = goToSheet();
+  const cases = [
+    ["changed sheet ID", before, before.replace("ID: GoToWindow", "ID: OtherSheet")],
+    ["missing sheet ID", before, before.replace("ID: GoToWindow, ", "")],
+    ["new title", before, before.replace("sheet ID:", "sheet Other document, ID:")],
+    ["new URL", before, before.replace("ID: GoToWindow", "ID: GoToWindow, URL: file:///tmp/other")],
+    ["changed root role", before, before.replace("0 sheet", "0 window")],
+    ["new ambiguous parent", before, `${before}\n7 standard window Parent document`],
+    ...[
+      ["unidentified sheet", goToSheet({ root: "sheet Secondary Actions: Raise" })],
+      ["empty sheet ID", goToSheet({ root: "sheet ID: , Secondary Actions: Raise" })],
+      ["blank sheet ID", goToSheet({ root: "sheet ID:   , Secondary Actions: Raise" })],
+      ["unidentified window", goToSheet({ root: "window Secondary Actions: Raise" })],
+      ["identified window, not sheet", goToSheet({ root: "window ID: GoToWindow, Secondary Actions: Raise" })],
+      ["duplicate sheet ID", `${before}\n\t7 group ID: GoToWindow`],
+      ["second sheet", `${before}\n7 sheet ID: OtherSheet, Secondary Actions: Raise`],
+      ["second window", `${before}\n7 standard window Parent document`],
+      ["unidentified extra root", `${before}\n7 dialog`],
+      ["ambiguous extra root", `${before}\n7 group`],
+      ["unrecognized extra root", `${before}\n7 unknown native root`],
+      ["unrecognized root after wrapper", `<app_state>\n${before}\n</app_state>\n7 unknown native root`],
+      ["sheet with a nested window", before.replace("\t1 text", "\t7 window ID: ParentWindow\n\t1 text")],
+      ["sheet with a nested dialog", before.replace("\t1 text", "\t7 dialog\n\t1 text")],
+      ["sheet nested under an unidentified parent", before.replace("0 sheet", "0 window Secondary Actions: Raise\n\t7 sheet")],
+      ["unidentified web document inside sheet", before.replace("\t1 text", "\t7 web area\n\t1 text")],
+    ].map(([name, state]) => [name, state, state]),
+  ];
+  for (const [name, observed, fresh] of cases) {
+    for (const [method, input] of [["set_value", { element_index: 2, value: "/tmp/new" }], ["press_key", { key: "Escape" }]]) {
+      const f = fixture({ states: [observed, fresh] });
+      await f.observe();
+      await assert.rejects(f.guard(request(method, input)), /document changed/, name);
+      assert.equal(f.calls.some(call => call.method === method), false, name);
+      assert.equal(f.actions()[0].outcome, "not_dispatched", name);
+    }
+  }
+});
+
+test("identified sheets retain exact scope, observation, control, focused-value and readback guards", async () => {
+  const before = goToSheet({ focused: true });
+  for (const [method, input, fresh, error] of [
+    ["set_value", { element_index: 2, value: "/tmp/new" }, before.replace("Value: /tmp", "Value: /other"), /Target identity or value changed/],
+    ["set_value", { element_index: 2, value: "/tmp/new" }, before.replace("ID: PathTextField", "ID: OtherField"), /Target identity or value changed/],
+    ["set_value", { element_index: 2, value: "/tmp/new" }, before.replace("(settable)", "(disabled, settable)"), /Target identity or value changed/],
+    ["set_value", { element_index: 2, value: "/tmp/new" }, before.replace("(settable)", ""), /not settable/],
+    ["set_value", { element_index: 2, value: "/tmp/new" }, before.replace("\t2 text field", "\t8 group Other record\n\t\t2 text field"), /Target identity or value changed/],
+    ["press_key", { key: "Escape" }, before.replace("Value: /tmp", "Value: /other"), /Focused field changed/],
+    ["press_key", { key: "Escape" }, before.replace("focused UI element is 2", "focused UI element is 4"), /Focused field changed/],
+  ]) {
+    const f = fixture({ states: [before, fresh] });
+    await f.observe();
+    await assert.rejects(f.guard(request(method, input)), error);
+    assert.equal(f.calls.some(call => call.method === method), false);
+  }
+  const unobserved = fixture({ states: [before] });
+  await assert.rejects(unobserved.guard(request("press_key", { key: "Escape" })), /Observe/);
+  await unobserved.observe();
+  await assert.rejects(unobserved.guard(request("press_key", { app: "Other", key: "Escape" })), /scope/);
+  for (const after of [before, goToSheet({ value: "/tmp/new", root: "sheet ID: OtherSheet, Secondary Actions: Raise" })]) {
+    const f = fixture({ states: [before, before, after] });
+    await f.observe();
+    await assert.rejects(f.guard(request("set_value", { element_index: 2, value: "/tmp/new" })), /readback/);
+    assert.equal(f.actions()[0].outcome, "unknown");
+    await assert.rejects(f.guard(request("set_value", { element_index: 2, value: "/tmp/new" })), /uncertain outcome/);
+    assert.equal(f.calls.filter(call => call.method === "set_value").length, 1);
+  }
+});
+
 test("preflight detects an external edit after a metadata-looking field line", async () => {
   const f = fixture({ states: [tree({ value: "heading\nNote: schedule\nfirst draft" }), tree({ value: "heading\nNote: schedule\nsecond draft" })] });
   await f.observe();
