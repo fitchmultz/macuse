@@ -18,7 +18,7 @@ This runtime boundary does not prohibit an agent from completing setup authorize
 ## Install in Pi
 
 ```bash
-pi install git:github.com/fitchmultz/macuse@v0.6.0
+pi install git:github.com/fitchmultz/macuse
 ```
 
 The package supplies `extensions/macuse.ts` and `skills/macuse/SKILL.md`. A local checkout can instead be installed with `pi install /absolute/path/to/macuse`.

@@ -18,11 +18,11 @@ Use macOS, Pi 1.0.0 or later, and Node 24.21.0 or later. Set up ChatGPT Computer
 Native focus checks and selected-text insertion also require Accessibility access and `xcrun swiftc`. See [local requirements](docs/reference/codex-computer-use-local-install.md) for setup details.
 
 ```bash
-pi install git:github.com/fitchmultz/macuse@v0.6.0
+pi install git:github.com/fitchmultz/macuse
 pi
 ```
 
-This GitHub prerelease includes the Pi extension and usage skill. npm publication is disabled. macuse supports official Pi and `fitchmultz/pi`; see the [host qualification notes](docs/pi-1.0-qualification.md) for checked versions and limits.
+The package includes the Pi extension and usage skill. npm publication is disabled. macuse supports official Pi and `fitchmultz/pi`; see the [host qualification notes](docs/pi-1.0-qualification.md) for checked versions and limits.
 
 Restart Pi after dependency or native runtime changes.
 
@@ -66,7 +66,7 @@ Use a browser tool for ordinary web pages.
 Clone the repository for CLI or MCP use:
 
 ```bash
-git clone --branch v0.6.0 https://github.com/fitchmultz/macuse.git
+git clone https://github.com/fitchmultz/macuse.git
 cd macuse
 npm ci --ignore-scripts
 node tools/macuse.mjs tools --pretty
