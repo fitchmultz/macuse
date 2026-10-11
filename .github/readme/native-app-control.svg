@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="560" viewBox="0 0 1600 560" role="img" aria-labelledby="title desc">
+  <title id="title">How macuse connects an assistant to native macOS apps</title>
+  <desc id="desc">Pi, CLI, and MCP clients send scoped requests through macuse's app and document guards to the Computer Use runtime installed with ChatGPT, which operates native macOS apps. State, screenshots, and action evidence return to the assistant for inspection before the next action.</desc>
+  <defs>
+    <linearGradient id="canvas" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#060A12"/>
+      <stop offset="0.52" stop-color="#0B1120"/>
+      <stop offset="1" stop-color="#080C16"/>
+    </linearGradient>
+    <radialGradient id="blueBloom" cx="0.18" cy="0.18" r="0.8">
+      <stop stop-color="#2563EB" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#2563EB" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="violetBloom" cx="0.82" cy="0.36" r="0.7">
+      <stop stop-color="#8B5CF6" stop-opacity="0.16"/>
+      <stop offset="1" stop-color="#8B5CF6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="glass" x1="0" y1="0" x2="0" y2="1">
+      <stop stop-color="#172238" stop-opacity="0.96"/>
+      <stop offset="1" stop-color="#0E1525" stop-opacity="0.98"/>
+    </linearGradient>
+    <linearGradient id="focus" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#172554" stop-opacity="0.82"/>
+      <stop offset="1" stop-color="#312E81" stop-opacity="0.58"/>
+    </linearGradient>
+    <pattern id="dotGrid" width="28" height="28" patternUnits="userSpaceOnUse">
+      <circle cx="1.5" cy="1.5" r="1.2" fill="#94A3B8" fill-opacity="0.08"/>
+    </pattern>
+    <filter id="shadow" x="-20%" y="-25%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="12" stdDeviation="12" flood-color="#02040A" flood-opacity="0.45"/>
+    </filter>
+    <marker id="arrowBlue" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M1 1 11 6 1 11Z" fill="#60A5FA"/>
+    </marker>
+    <marker id="arrowViolet" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M1 1 11 6 1 11Z" fill="#A78BFA"/>
+    </marker>
+    <marker id="arrowGreen" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M1 1 11 6 1 11Z" fill="#6EE7B7"/>
+    </marker>
+    <style>
+      .sans { font-family: Inter, ui-sans-serif, Arial, sans-serif; }
+      .mono { font-family: "JetBrains Mono", ui-monospace, monospace; }
+      .role { font: 600 18px "JetBrains Mono", ui-monospace, monospace; letter-spacing: 1px; }
+      .card-title { font: 650 32px Inter, ui-sans-serif, Arial, sans-serif; fill: #F8FAFC; }
+      .copy { font: 450 26px Inter, ui-sans-serif, Arial, sans-serif; fill: #B2BED1; }
+      .connector { fill: none; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round; }
+    </style>
+  </defs>
+
+  <!-- Opaque canvas and restrained starter-token depth. -->
+  <rect width="1600" height="560" fill="url(#canvas)"/>
+  <rect width="1600" height="560" fill="url(#blueBloom)"/>
+  <rect width="1600" height="560" fill="url(#violetBloom)"/>
+  <rect width="1600" height="560" fill="url(#dotGrid)"/>
+  <g class="sans">
+    <text x="64" y="78" font-size="44" font-weight="700" letter-spacing="-1" fill="#F8FAFC">From your assistant to native macOS apps</text>
+    <text x="64" y="122" class="copy">Observe first. Scope each action. Inspect the result.</text>
+  </g>
+
+  <!-- Requests travel left to right. The return lane carries observations and evidence. -->
+  <g class="connector">
+    <path d="M364 290H426" stroke="#60A5FA" marker-end="url(#arrowBlue)"/>
+    <path d="M790 290H852" stroke="#A78BFA" marker-end="url(#arrowViolet)"/>
+    <path d="M1166 290H1228" stroke="#A78BFA" marker-end="url(#arrowViolet)"/>
+    <path d="M1384 390V444Q1384 460 1368 460H230Q214 460 214 444V395" stroke="#6EE7B7" marker-end="url(#arrowGreen)"/>
+  </g>
+
+  <!-- The bridge is the dominant subject; the runtime and apps remain distinct. -->
+  <g filter="url(#shadow)">
+    <rect x="64" y="190" width="300" height="200" rx="24" fill="url(#glass)" stroke="#2A3851"/>
+    <rect x="430" y="174" width="360" height="232" rx="28" fill="url(#focus)" stroke="#6D7DFF" stroke-opacity="0.62"/>
+    <rect x="856" y="190" width="310" height="200" rx="24" fill="url(#glass)" stroke="#2A3851"/>
+    <rect x="1232" y="190" width="304" height="200" rx="24" fill="url(#glass)" stroke="#2A3851"/>
+  </g>
+  <g class="sans">
+    <text x="92" y="234" class="role" fill="#93C5FD">CLIENT</text>
+    <text x="92" y="286" class="card-title">Your assistant</text>
+    <text x="92" y="332" class="copy">Pi · CLI · MCP</text>
+
+    <text x="462" y="218" class="role" fill="#C4B5FD">GUARDED BRIDGE</text>
+    <text x="462" y="270" font-size="38" font-weight="700" fill="#F8FAFC">macuse</text>
+    <text x="462" y="308" class="copy">App + document checks</text>
+    <rect x="462" y="338" width="290" height="38" rx="19" fill="#0C1425" stroke="#51426F"/>
+    <text x="607" y="364" text-anchor="middle" font-size="23" fill="#D8C5FF">Persistent JavaScript</text>
+
+    <text x="884" y="234" class="role" fill="#C4B5FD">VENDOR RUNTIME</text>
+    <text x="884" y="286" class="card-title">Computer Use</text>
+    <text x="884" y="328" class="copy">Installed with</text>
+    <text x="884" y="360" class="copy">ChatGPT</text>
+
+    <text x="1260" y="234" class="role" fill="#6EE7B7">YOUR DESKTOP</text>
+    <text x="1260" y="286" class="card-title">macOS apps</text>
+    <text x="1260" y="328" class="copy">Windows, fields,</text>
+    <text x="1260" y="360" class="copy">and controls</text>
+
+    <rect x="476" y="436" width="648" height="48" rx="24" fill="#0D1C24" stroke="#2D655B"/>
+    <text x="800" y="467" text-anchor="middle" font-size="26" fill="#A7F3D0">App state · screenshots · action evidence</text>
+    <text x="800" y="528" text-anchor="middle" class="copy">Read the result before choosing the next action.</text>
+  </g>
+</svg>

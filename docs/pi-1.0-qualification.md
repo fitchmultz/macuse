@@ -23,10 +23,14 @@ Accepted review regressions: the native later-hook redaction assertion failed on
 
 Local inspectable logs: `/tmp/macuse-pi100-final-{check,sdk,cli}.log`, `/tmp/macuse-pi100-packed-{sdk,cli}.log`, `/tmp/macuse-pi100-esm.log`. UI fixture and six captures: `/tmp/pi100-native-services/macuse-{fullscreen,regular}-{48,100,160}.txt`; identity observations alongside them. All owned tmux sessions and native test processes were cleaned up.
 
-## Delivery and remaining qualification
+## Historical delivery boundary
 
 Recommended non-reused release: **0.6.0**, Git/GitHub experimental prerelease plus checked tarball only. `private: true` remains; no npm publication channel is added. Existing older unreleased native changes on canonical main are preserved.
 
-The live 0.99.1 fork and managed packages/settings/auth were untouched. The future minimal 1.0 fork has no qualified immutable candidate yet; these official checks are not a fork pass. Parent owns independent review, merge and historical release. No merge, tag, publication, install, activation, reload or restart of live sessions occurred.
+During the 2026-10-01 qualification, the live 0.99.1 fork and managed packages/settings/auth were untouched. That run checked official Pi only. The parent owned independent review, merge and release. No merge, tag, publication, install, activation, reload or restart of live sessions occurred during that qualification. Current hosted fork checks are recorded below.
 
 `npm run ci` includes the live-desktop `quick` gate and was not run under the no-user-app-actions constraint. No paid/provider acceptance, live native GUI mutation/focus, recording, privacy change or vendor-auth flow was attempted. The prior GitHub prerelease's discovery/recovery delivery used offline/native lifecycle checks without requiring desktop/recording actions; this change does not alter those OS action implementations. Live operational diagnostics remain separately scoped, not silently marked passing.
+
+## Current hosted qualification
+
+On 2026-10-11, [CI](https://github.com/fitchmultz/macuse/actions/runs/38101874536) passed the Linux offline contract and macOS native helper, official Pi host/CLI, and maintained `fitchmultz/pi` host/CLI checks. The fork was built from main commit `027b114a994f08438acaea4c97c82bfa398280e4`, version 1.1.0. Its SDK/image checks and actual bundled CLI extension loading passed. These hosted results qualify that fork revision; the dated official-only results above remain historical. Hosted checks do not test the installed ChatGPT runtime, live desktop actions, recording, privacy changes, or vendor authentication.
