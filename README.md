@@ -1,69 +1,67 @@
 # macuse
 
-macuse connects Pi and MCP assistants to native macOS apps. Your assistant can inspect a window or edit an approved draft, using the Computer Use runtime installed with ChatGPT.
+macuse connects Pi and MCP assistants to native macOS apps through the Computer Use runtime installed with ChatGPT. Use it to inspect app windows and edit approved documents.
 
-![Pi, CLI, and MCP clients send scoped requests through macuse's guards and the installed Computer Use runtime to macOS apps; app state and screenshots return for inspection.](.github/readme/native-app-control.png)
+![Pi, CLI, and MCP clients send requests through macuse and the installed Computer Use runtime to macOS apps. App state returns to the client.](.github/readme/native-app-control.png)
 
-*macuse connects your assistant to native apps; inspect the returned state before choosing the next action.*
+*macuse checks the app and document before each action. The assistant receives app state, screenshots, and action results.*
 
 > [!WARNING]
-> **Experimental, unsupported integration.** macuse uses proprietary ChatGPT interfaces that OpenAI can change without notice. Read the [safety policy](docs/reference/codex-computer-use-safety-policy.md) before granting permissions or operating apps. Observations can reveal private content and may open an app or window.
+> **Experimental, unsupported integration.** OpenAI can change these private interfaces without notice. Read the [safety policy](docs/reference/codex-computer-use-safety-policy.md) before you grant permissions or use app actions.
+>
+> App observations can expose private content and open app windows. Keep app captures private unless you have permission to share them.
 
 ## Install in Pi
 
-You'll need macOS, Pi 1.0.0 or later, Node 24.21.0 or later, and ChatGPT's Computer Use installation with its authentication and macOS permissions in place. Focus observations and selected-text insertion also need Accessibility access and `xcrun swiftc`. See [local requirements](docs/reference/codex-computer-use-local-install.md) if you're setting this up for the first time.
+Use macOS, Pi 1.0.0 or later, and Node 24.21.0 or later. Set up ChatGPT Computer Use with its normal authentication and macOS permissions.
+
+Native focus checks and selected-text insertion also require Accessibility access and `xcrun swiftc`. See [local requirements](docs/reference/codex-computer-use-local-install.md) for setup details.
 
 ```bash
 pi install git:github.com/fitchmultz/macuse@v0.6.0
 pi
 ```
 
-This GitHub prerelease includes the Pi extension and its usage skill. npm publication is disabled. You can use macuse with official Pi or `fitchmultz/pi`; the [host qualification notes](docs/pi-1.0-qualification.md) cover the checks and known limits.
+This GitHub prerelease includes the Pi extension and usage skill. npm publication is disabled. macuse supports official Pi and `fitchmultz/pi`; see the [host qualification notes](docs/pi-1.0-qualification.md) for checked versions and limits.
 
-## Start with an observation
+## First use
 
-In Pi, ask:
+Ask Pi:
 
-> Use macuse to inspect Activity Monitor and show its current state. Do not change tabs or modify processes.
+> Use macuse to inspect Activity Monitor. Do not change tabs or modify processes.
 
-If you're calling tools directly, send this to `macuse`:
+For a direct call, send this input to `macuse`:
 
 ```json
 { "code": "var app = await cua.getApp(\"Activity Monitor\")", "apps": ["Activity Monitor"] }
 ```
 
-Read the returned API documentation and app state. JavaScript bindings persist in that session, so the next `macuse` call can use `app`:
+The tool returns API documentation and app state. Bindings persist until reset or a session boundary. Await each action. Inspect its result before you choose the next action.
 
-```json
-{ "code": "await app.getAXStateAndScreenshot()", "apps": ["Activity Monitor"] }
-```
+## Tools
 
-Observation methods emit their results automatically. Await every action and inspect the result before deciding what to do next. Prefer a browser tool or a purpose-built API for ordinary web-page work.
-
-## Available tools
-
-| Tool | What it does |
+| Tool | Purpose |
 | --- | --- |
-| `macuse` | Inspect apps and run short JavaScript programs in a persistent session. |
-| `macuse_insert_text` | Insert text at the observed selection without changing the rest of the field. |
-| `macuse_reset` | Clear bindings and observations. Application state stays unchanged. |
-| `macuse_tools` | Enable selected Record & Replay or Computer History tools in Pi. Enabling starts no recording. |
+| `macuse` | Inspect apps and run JavaScript in a persistent session. |
+| `macuse_insert_text` | Replace selected text without changes to the rest of the field. |
+| `macuse_reset` | Clear bindings and observations; preserve app state. |
+| `macuse_tools` | Enable Record & Replay or Computer History tools in Pi. |
 
-A new Pi session starts with these four tools. On hosts with tool discovery, enable the `macos` group first. MCP clients get all eleven tools, including recording and history. The [tool reference](docs/reference/usage.md#tools) explains how selection and saved sessions work.
+Pi starts with these four tools. Enable the `macos` group on Pi hosts with tool discovery. MCP exposes eleven tools, including the eight Record & Replay and Computer History tools. Tool activation starts no recording.
 
-Starting a recording or resuming Computer History needs explicit recording permission. Privacy-setting changes also need approval and a fresh settings read. Status and settings can contain private activity metadata; see [recording and history](docs/reference/codex-computer-use-safety-policy.md#recording-and-history) before using them.
+## App changes and limits
 
-## Making changes
+Observe the target app before each change. Each change needs an exact `apps` scope, `allowMutating:true`, and a nonempty `safetyNote`. Describe the target, effect, and stop boundary in the safety note. These fields record the permission in your request.
 
-Have the assistant inspect the right app and document before changing anything. Each app-changing call needs an exact `apps` scope, `allowMutating:true`, and a nonempty `safetyNote` that says what to change and where to stop. Your request supplies the permission; these fields record it.
+Inspect fresh app state after an error. Never automatically replay a dispatched action or an action with an unknown result. Timeouts and resets do not undo app changes. macuse does not guarantee uninterrupted keyboard or mouse use.
 
-macuse refreshes app state and checks the document and target before each action. These checks do not guarantee uninterrupted keyboard or mouse use. A timeout or reset cannot undo a GUI action: inspect fresh state after an error, and never automatically replay an action with an unknown outcome.
+Recording and privacy changes require explicit permission. Status and settings can expose private activity metadata. See the [tool reference](docs/reference/usage.md) for examples and the complete safety gates.
 
-See [action and text-input examples](docs/reference/usage.md#act-within-the-approved-task) for guarded actions, selected-text insertion, Unicode paste, and screenshot saving.
+Use a browser tool for ordinary web pages.
 
 ## CLI and MCP
 
-For the CLI or an MCP client such as Cursor, clone the repo and install its dependencies. You'll need Node 24.21.0 or later:
+Clone the repository for CLI or MCP use:
 
 ```bash
 git clone https://github.com/fitchmultz/macuse.git
@@ -73,16 +71,18 @@ node tools/macuse.mjs tools --pretty
 node tools/macuse-config.mjs cursor --pretty
 ```
 
-Copy the generated config into your MCP client. It points to this checkout, so keep the checkout in place. [MCP setup](docs/reference/cursor-mcp-setup.md) covers client configuration and permissions.
+Copy the generated config into your MCP client. Keep this checkout in place; the config uses its paths. Follow [MCP setup](docs/reference/cursor-mcp-setup.md) for client configuration.
 
-For multiple CLI calls sharing bindings, use `node tools/macuse.mjs session`; each input line is a JSON request. Separate `call` processes do not share state. See [CLI examples](docs/reference/usage.md#cli-and-mcp).
+Use `node tools/macuse.mjs session` for calls that share bindings. Each input line contains a JSON request. Separate `call` processes do not share bindings.
 
-## Next steps
+## Further reading
 
-- [Tool and session reference](docs/reference/usage.md): complete examples, lifecycle rules, image handling, and runtime boundaries.
-- [Local requirements](docs/reference/codex-computer-use-local-install.md): installation, permissions, SDK selection, and updates. Restart Pi after dependency or native-runtime changes; restart CLI/MCP processes after updates too.
-- [Validation and diagnostics](docs/reference/demo-and-doctor.md): offline checks, read-only doctor, controlled live checks, and troubleshooting.
-- [Documentation index](docs/README.md): architecture, migration, host qualification, and the agent usage skill.
+Restart Pi after dependency or native runtime changes. Restart CLI and MCP processes after updates.
+
+- [Tool reference](docs/reference/usage.md): full examples and session behavior.
+- [Local requirements](docs/reference/codex-computer-use-local-install.md): permissions, updates, and SDK setup.
+- [Validation and diagnostics](docs/reference/demo-and-doctor.md): offline checks and live check scopes.
+- [Documentation index](docs/README.md): architecture, migration, and host qualification.
 - [Changelog](CHANGELOG.md): release history and breaking changes.
 
 ## License
