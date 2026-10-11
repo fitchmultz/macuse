@@ -18,12 +18,12 @@ This runtime boundary does not prohibit an agent from completing setup authorize
 ## Install in Pi
 
 ```bash
-pi install git:github.com/fitchmultz/macuse@v0.5.1
+pi install git:github.com/fitchmultz/macuse@v0.6.0
 ```
 
 The package supplies `extensions/macuse.ts` and `skills/macuse/SKILL.md`. A local checkout can instead be installed with `pi install /absolute/path/to/macuse`.
 
-Official Pi 1.0.0's `/reload` replaces extension code, dispose macuse's owned session, and preserve the live permitted tool selection. On hosts supporting it, tools newly added to `defaultTools` are enabled; unchanged defaults do not resurrect tools you deselected. Quit Pi and start a new process after dependency/native-runtime updates, or on older hosts whose code reload is unqualified. Restart CLI/MCP processes after changes too; a new process picks up native helper source changes through the source-hash cache.
+Official Pi 1.0.0's `/reload` replaces extension code, disposes macuse's owned session, and preserves the live permitted tool selection. On hosts supporting it, tools newly added to `defaultTools` are enabled; unchanged defaults do not resurrect tools you deselected. Quit Pi and start a new process after dependency/native-runtime updates, or on older hosts whose code reload is unqualified. Restart CLI/MCP processes after changes too; a new process picks up native helper source changes through the source-hash cache.
 
 For a source-only upgrade from a pre-initialization-marker version, use a new process if no macuse tool declaration has been recorded yet. An entirely deselected legacy session without such a declaration is indistinguishable from first installation; its old reload path also reactivated the primary tools. After initialization by the current version, reload preserves even undeclared live deselections.
 
