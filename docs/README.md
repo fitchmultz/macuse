@@ -3,12 +3,13 @@
 macuse v0.6.1 uses the installed native Computer Use JavaScript runtime for macOS app control. Pi, CLI, and MCP share the same guarded session. Recording and history use a separate lazy auxiliary transport.
 
 - [Install and first use](../README.md) — Git-installed Pi prerelease, tool surface, and short examples.
+- [Tool and session reference](reference/usage.md) — complete examples, tool selection and discovery, lifecycle, text input, screenshots, and runtime boundaries.
 - [Local requirements](reference/codex-computer-use-local-install.md) — vendor runtime, host compatibility, macOS permissions, and restart requirements.
 - [Runtime and migration](reference/codex-computer-use-external-harness.md) — native/auxiliary boundaries, current paths, and dated investigation findings.
 - [Safety policy](reference/codex-computer-use-safety-policy.md) — authorization, targeting, text insertion, recording, and uncertain outcomes.
 - [MCP setup](reference/cursor-mcp-setup.md) — Cursor and other standard MCP clients.
 - [Validation and diagnostics](reference/demo-and-doctor.md) — offline/live check scopes, doctor, demo, and permission troubleshooting.
-- [Pi 1.0 qualification](pi-1.0-qualification.md) — image hot-path behavior, exact host evidence and unrun live/future-fork checks.
+- [Pi host qualification](pi-1.0-qualification.md) — image behavior, historical evidence, current hosted checks, and live-check limits.
 - [Agent usage skill](../skills/macuse/SKILL.md) — tool routing and task workflow.
 - [Changelog](../CHANGELOG.md) — breaking v0.5.0 migration and earlier releases.
 

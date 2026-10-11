@@ -1,0 +1,147 @@
+# Tool and session reference
+
+This reference contains the detailed examples and runtime behavior for macuse's Pi, CLI, and MCP interfaces. Start with the [README](../../README.md) for installation and first use, and review the [safety policy](codex-computer-use-safety-policy.md) before acting on apps.
+
+## Start with an observation
+
+Call `macuse` to discover apps and read the runtime's emitted documentation:
+
+```json
+{ "code": "await cua.getState()" }
+```
+
+Or bind a known app and receive its first state:
+
+```json
+{ "code": "var app = await cua.getApp(\"Activity Monitor\")", "apps": ["Activity Monitor"] }
+```
+
+Bindings persist in that session. The next call can use them:
+
+```json
+{ "code": "await app.getAXStateAndScreenshot()", "apps": ["Activity Monitor"] }
+```
+
+`getAXState()`, `getScreenshot()`, and `getAXStateAndScreenshot()` emit their results automatically. Do not print or emit them again. Use short adaptive programs, await every action, and inspect the resulting state before deciding the next action. Prefer purpose-built APIs and `agent_browser` for ordinary web-page work.
+
+## Tools
+
+| Tool | Purpose |
+| --- | --- |
+| `macuse` | Run code against the installed `cua` computer API in a persistent sandboxed session. |
+| `macuse_insert_text` | Replace only the current selection in an already-focused field through native Accessibility, preserving unselected text. |
+| `macuse_reset` | Clear JavaScript bindings and app observations; it does not undo GUI actions. |
+| `macuse_tools` | Pi-only activation of the eight recording/history tools below. It starts no recording. |
+| `macuse_enable` | Pi-only recovery: select the four permitted entry tools. |
+
+The four entry tools and the separate `macuse_enable` recovery tool start active on ordinary Pi. Eight auxiliary tools are registered but inactive until requested through `macuse_tools`: `event_stream_start`, `event_stream_status`, `event_stream_stop`, `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, and `computer_history_update_settings`. Pi's live entry/auxiliary selection survives reload, including newly added `defaultTools` on hosts supporting that behavior. Saved declarations survive resume, fork and compaction; owned runtime bindings and observations still reset at lifecycle boundaries. Host allowlists/exclusions are never widened, and explicit CLI `--tools` selections take precedence over saved declarations. SDK callers replacing a saved selection must apply their final selection after binding extensions; see [SDK selection](codex-computer-use-local-install.md#sdk-tool-selection). The MCP server exposes eleven tools: the three primary tools plus all eight auxiliary tools.
+
+Hosts managing the public `pi:instruction-groups` event bus receive the complete extension-owned `macos` instructions on demand. On managed hosts, selected macuse tool declarations remain hidden until `discover_tools {enable:["macos"]}` enables the group. Without an active instruction-group manager, including official Pi, macuse supplies the same full instructions eagerly. Active selections, callable permissions, the `macuse_tools` loader, and native safety gates remain unchanged. No discovery metadata or settings inventory is required.
+
+For example, in Pi enable a status read, then call `event_stream_status` with `{}`:
+
+```json
+{ "tools": ["event_stream_status"] }
+```
+
+Record & Replay start and Computer History resume require exact user intent, `allowRecording:true`, and a non-empty `safetyNote`. Settings changes require exact approval, `allowPrivacyChange:true`, a safety note, and the complete `observation` copied from a fresh settings read with every unchanged field preserved. Stop/pause need no allow flag. Status/settings reads can reveal activity, artifact, and privacy metadata.
+
+## Saved-session recovery
+
+First installation into an existing session enables the permitted entry tools even when that session already declares unrelated tools. Once macuse initializes, saved deselections remain binding. An update does not override them.
+
+If an installed, enabled macuse package has no entry tools in a saved session, run `/macuse-enable`. The assistant can instead call `macuse_enable({})`. The tool accepts only an empty object.
+
+Both paths add only the four permitted entry tools through Pi's native tool selector. They preserve other active or temporarily suppressed groups and host restrictions. The result lists added, already-active, and unavailable tools. Recovery starts no app control, service, or recording. It leaves the eight auxiliary tools unchanged.
+
+On discovery hosts:
+
+1. Enable `macos` through `discover_tools` after recovery.
+2. Read the returned instructions.
+3. Use the revealed tools in a later turn.
+
+Discovery lists only groups with selected tools. Enabling an unavailable group cannot repair a deselected tool set. Official Pi receives the full instructions without this discovery step.
+
+The recovery tool is ungrouped and outside macuse's saved entry/auxiliary selection. Native startup, reload, and tree selection rules control its availability. Restart or reload can select it again; saved tree selections can omit it. Hard host restrictions can make it unavailable. These rules do not reactivate deselected entry or auxiliary tools. A new session is another option.
+
+## Act within the approved task
+
+`macuse` accepts `code`, optional `apps`, `allowMutating`, `safetyNote`, `timeoutMs`, `trackFocus`, and `saveImagePath`. A mutation requires an exact `apps` scope matching the identifiers used in code, `allowMutating:true`, a concrete safety note, and a prior same-app observation. A safety note names the target, intended effect, and stop boundary; mutation notes must be nonempty. Flags record authorization; they do not create user permission.
+
+For an approved dismissal of Activity Monitor's current transient UI, after inspecting it:
+
+```json
+{
+  "code": "await app.pressKey(\"Escape\"); await app.getAXState()",
+  "apps": ["Activity Monitor"],
+  "allowMutating": true,
+  "safetyNote": "Activity Monitor only: dismiss the inspected transient UI; do not stop or modify processes."
+}
+```
+
+Use native element indexes from the latest observation and the methods documented by the runtime. The guard refreshes full app state before each action, checks the document and target, and rebinds indexes internally. It tracks only app identities resolved by the native service, so a binding's native app path still matches the original exact `apps` identifier. It does not add fuzzy aliases or a selector API. Prefer accessibility `Press`, listed secondary actions, intended full-field `setValue`, keys, and element-targeted scroll. Primary `Press` may be omitted from Sky's secondary-action list; that omission alone does not require pointer fallback. Pointer clicks/drags and coordinate scrolling use the same scoped mutation authorization; coordinates use the returned screenshot's pixel space, without an inferred Retina or OS-point conversion.
+
+For Unicode insertion, observe the intended app and already-focused field, then call `macuse_insert_text`:
+
+```json
+{
+  "app": "TextEdit",
+  "text": "Hello — café",
+  "allowMutating": true,
+  "safetyNote": "TextEdit only: insert this text at the observed selection in the approved draft; do not save or send."
+}
+```
+
+Optional `expectedTitle` and `expectedUrl` pin the native insertion target. When Sky omits a focused-field marker, macuse joins fresh native AX evidence only to a unique stable field ID in the same observed document. Missing or ambiguous identity blocks insertion. Insertion uses guarded `AXSelectedText` replacement and exact readback, with no keyboard input, clipboard writes, or fallback replay. Observe again afterward. `app.setValue(index, value)` replaces an entire field and verifies that field exactly; it is not selected-range insertion. Raw `app.typeText` is ASCII-only. Native `await app.paste("Hello — café")` supports Unicode and restores the previous clipboard. Pass `{format:"md"}` or `{format:"html"}` as the second argument for Markdown or HTML; the default is `text`. Paste shortcuts are also supported. Observe afterward to verify the result; native paste does not provide the exact selected-text readback of `macuse_insert_text`.
+
+Text input and keyboard chords check the observed focused field. Standard Command shortcuts for Save, Close, New, Open, Print, Quit, Hide, and Minimize (including Shift/Option variants) do not require that field's text to remain unchanged; document checks still apply. Formatting, link, and submission chords retain focused-field checks.
+
+Never automatically replay a dispatched or unknown-outcome mutation. Timeout/abort interrupts JavaScript through the vendor's reset operation and waits for settlement; it does not undo or prove cancellation of a GUI action. Inspect partial `dispatched`/`outcome` evidence and fresh app state before continuing. Programs are not transactions, and a reset can prevent JavaScript cleanup from running.
+
+Focus tracking defaults on. Native activation/window observations report their coverage honestly; they do not attribute input or guarantee uninterrupted keyboard/mouse use. macuse never warps the user's cursor. On GPT-6-Astra, a scoped Pi hook restores original macuse screenshot bytes only when Pi resized a matching retained tool output. Astra's `auto` already means original; other models, filtered outputs, and compacted-away outputs are left alone. No host patch or settings change is needed.
+
+To save a screenshot from the bound app:
+
+```json
+{
+  "code": "await app.getScreenshot()",
+  "apps": ["Activity Monitor"],
+  "saveImagePath": ".scratch/activity-monitor.jpg"
+}
+```
+
+macuse saves the first emitted image at the exact requested path, resolves relative paths against the session working directory, expands `~`, and refuses to overwrite a file. Check the returned `savedImage` path, bytes, SHA-256, actual MIME type, and available dimensions before claiming an artifact was saved. Text output is capped after full guard state is collected; clipped output remains available in tool details.
+
+## CLI and MCP
+
+```bash
+node tools/macuse.mjs tools --pretty
+node tools/macuse.mjs call macuse '{"code":"await cua.getState()"}'
+node tools/macuse.mjs call macuse '{}' --file script.js
+node tools/macuse.mjs session
+```
+
+`session` reads one JSON object per line, such as `{"tool":"macuse","input":{"code":"await cua.getState()"}}`. Bindings and observations persist within that process; separate `call` invocations start separate sessions.
+
+Generate configuration for Cursor or another MCP client:
+
+```bash
+node tools/macuse-config.mjs cursor --pretty
+```
+
+The server is `macuse`, its entrypoint is `tools/macuse-mcp.mjs`, and its working-directory variable is `MACUSE_CWD`. See [MCP setup](cursor-mcp-setup.md).
+
+## Runtime and checks
+
+The primary GUI path uses the installed `@oai/cua-repl`, computer-only and Sky-only, through a configured trusted guard service in the normal vendor sandbox. It has no Codex app-server dependency. A separate lazy app-server hosts only Record & Replay and Computer History, preserving existing authentication and `CODEX_HOME`. macuse adds no separate evaluator or module-loader tool, and enables no browser/audio or Messages service. JavaScript runs inside the vendor runtime's sandbox.
+
+```bash
+# Offline extension checks; no live desktop access.
+node tools/validate-macuse.mjs extension
+
+# Live checks; review the scope before running.
+node tools/macuse-doctor.mjs --out .scratch/doctor
+node tools/validate-macuse.mjs read-only
+```
+
+Doctor is read-only unless `--full` is explicitly requested. The demo and mutating/focus checks use controlled Activity Monitor tab changes and restore the observed original tab in `finally`. A validation command is not a claim that this host passed it. See [validation and diagnostics](demo-and-doctor.md) for all modes and [the documentation index](../README.md) for architecture and migration details.
