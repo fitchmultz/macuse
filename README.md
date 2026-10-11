@@ -9,7 +9,7 @@ macuse connects Pi and MCP assistants to native macOS apps through the Computer 
 > [!WARNING]
 > **Experimental, unsupported integration.** OpenAI can change these private interfaces without notice. Read the [safety policy](docs/reference/codex-computer-use-safety-policy.md) before you grant permissions or use app actions.
 >
-> App observations can expose private content and open app windows. Keep app captures private unless you have permission to share them.
+> App observations can show private content from open app windows. App reads can open an app window. Keep app captures private unless you have permission to share them.
 
 ## Install in Pi
 
@@ -23,6 +23,8 @@ pi
 ```
 
 This GitHub prerelease includes the Pi extension and usage skill. npm publication is disabled. macuse supports official Pi and `fitchmultz/pi`; see the [host qualification notes](docs/pi-1.0-qualification.md) for checked versions and limits.
+
+Restart Pi after dependency or native runtime changes.
 
 ## First use
 
@@ -51,7 +53,7 @@ Pi starts with these four tools. Enable the `macos` group on Pi hosts with tool 
 
 ## App changes and limits
 
-Observe the target app before each change. Each change needs an exact `apps` scope, `allowMutating:true`, and a nonempty `safetyNote`. Describe the target, effect, and stop boundary in the safety note. These fields record the permission in your request.
+Observe the target app before each change. Each change needs an exact app scope (`apps` or `app`), `allowMutating:true`, and a nonempty `safetyNote`. Describe the target, effect, and stop boundary in the safety note. These fields record the permission in your request.
 
 Inspect fresh app state after an error. Never automatically replay a dispatched action or an action with an unknown result. Timeouts and resets do not undo app changes. macuse does not guarantee uninterrupted keyboard or mouse use.
 
@@ -64,7 +66,7 @@ Use a browser tool for ordinary web pages.
 Clone the repository for CLI or MCP use:
 
 ```bash
-git clone https://github.com/fitchmultz/macuse.git
+git clone --branch v0.6.0 https://github.com/fitchmultz/macuse.git
 cd macuse
 npm ci --ignore-scripts
 node tools/macuse.mjs tools --pretty
@@ -73,11 +75,9 @@ node tools/macuse-config.mjs cursor --pretty
 
 Copy the generated config into your MCP client. Keep this checkout in place; the config uses its paths. Follow [MCP setup](docs/reference/cursor-mcp-setup.md) for client configuration.
 
-Use `node tools/macuse.mjs session` for calls that share bindings. Each input line contains a JSON request. Separate `call` processes do not share bindings.
+Use `node tools/macuse.mjs session` for calls that share bindings. Each input line contains a JSON request. Separate `call` processes do not share bindings. Restart CLI and MCP processes after updates.
 
 ## Further reading
-
-Restart Pi after dependency or native runtime changes. Restart CLI and MCP processes after updates.
 
 - [Tool reference](docs/reference/usage.md): full examples and session behavior.
 - [Local requirements](docs/reference/codex-computer-use-local-install.md): permissions, updates, and SDK setup.
