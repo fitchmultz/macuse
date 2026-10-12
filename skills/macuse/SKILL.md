@@ -3,7 +3,7 @@ name: macuse
 description: "Use macuse to inspect, QA, dogfood, or operate local macOS app UI with persistent Computer Use JavaScript, guarded actions, selected-text insertion, and focus observations. Use for requested Record & Replay or Computer History operations too. Prefer browser tools for ordinary web DOM automation; not for generic Pi development or raw MCP protocol probes."
 compatibility: macOS with the macuse Pi package or MCP server, installed ChatGPT Computer Use, existing authentication/permissions, and installed xcrun swiftc plus Accessibility access for native AX features.
 metadata:
-  version: "0.5.0"
+  version: "0.6.1"
   owner: "macuse"
 ---
 
@@ -13,7 +13,9 @@ Inspect and operate native macOS apps with short adaptive JavaScript programs. P
 
 ## Bootstrap and routing
 
-Ordinary Pi starts with four tools: `macuse`, `macuse_insert_text`, `macuse_reset`, and `macuse_tools`. On discovery-capable hosts, enable the source-owned `macos` group to reveal those entry tools; no `toolDiscovery` settings inventory is required. Official Pi ignores the optional discovery metadata. Explicit tool selections and exclusions remain binding. The MCP server exposes the first three plus eight auxiliary tools directly, without a loader.
+Ordinary Pi starts with four entry tools: `macuse`, `macuse_insert_text`, `macuse_reset`, and `macuse_tools`. On discovery-capable hosts, enable the source-owned `macos` group to reveal those entry tools; no `toolDiscovery` settings inventory is required. Official Pi ignores the optional discovery metadata. Explicit tool selections and exclusions remain binding. Pi also starts with the ungrouped `macuse_enable` recovery tool. It follows native default-active behavior: restart/reload can select it again, saved tree selections can omit it, and hard restrictions can exclude it. The MCP server exposes the first three plus eight auxiliary tools directly, without a loader or recovery tool.
+
+If the package is enabled but `macos` is unavailable in a saved session, call `macuse_enable({})`, or run `/macuse-enable` through Pi's command interface. It explicitly adds only the four permitted entry tools, preserving other selections and exclusions, and reports unavailable names rather than bypassing restrictions. It starts no app control, service, or recording and does not activate auxiliary tools. Then enable `macos` on discovery hosts and read its full instructions before using the revealed tools in a later turn; group enable alone cannot repair a deselected tool set.
 
 Start by calling `macuse` with one of:
 
@@ -107,4 +109,4 @@ Focus tracking defaults on; `apps` also scopes native window observations. Repor
 
 For a screenshot artifact, call `macuse` with a screenshot observation and `saveImagePath`. It saves the first emitted image at the exact requested path and refuses overwrite. Verify `savedImage` path/bytes/hash/MIME/dimensions before claiming a file was saved. Astra's Pi hook preserves original macuse screenshots only for matching retained outputs that Pi resized; it does not override filtering/compaction or other models.
 
-Report the target app/window, actions actually dispatched, verified final state, focus coverage, artifacts, and any uncertain outcome or failed cleanup. Keep reports brief. Restart the full Pi/CLI/MCP process after code/dependency updates; `/reload` does not update loaded extension code.
+Report the target app/window, actions actually dispatched, verified final state, focus coverage, artifacts, and any uncertain outcome or failed cleanup. Keep reports brief. Use extension-code `/reload` only on a host qualified for disposal and reinitialization of the affected resources. Use a new Pi process after dependency/native-runtime updates or on an unqualified host; restart affected CLI/MCP processes too.

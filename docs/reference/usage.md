@@ -32,8 +32,9 @@ Bindings persist in that session. The next call can use them:
 | `macuse_insert_text` | Replace only the current selection in an already-focused field through native Accessibility, preserving unselected text. |
 | `macuse_reset` | Clear JavaScript bindings and app observations; it does not undo GUI actions. |
 | `macuse_tools` | Pi-only activation of the eight recording/history tools below. It starts no recording. |
+| `macuse_enable` | Pi-only recovery: select the four permitted entry tools. |
 
-These four tools start active on ordinary Pi. Eight auxiliary tools are registered but inactive until requested through `macuse_tools`: `event_stream_start`, `event_stream_status`, `event_stream_stop`, `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, and `computer_history_update_settings`. Pi's live tool selection survives reload, including newly added `defaultTools` on hosts supporting that behavior. Saved declarations survive resume, fork and compaction; owned runtime bindings and observations still reset at lifecycle boundaries. Host allowlists/exclusions are never widened, and explicit CLI `--tools` selections take precedence over saved declarations. SDK callers replacing a saved selection must apply their final selection after binding extensions; see [SDK selection](codex-computer-use-local-install.md#sdk-tool-selection). The MCP server exposes eleven tools: the three primary tools plus all eight auxiliary tools.
+The four entry tools and the separate `macuse_enable` recovery tool start active on ordinary Pi. Eight auxiliary tools are registered but inactive until requested through `macuse_tools`: `event_stream_start`, `event_stream_status`, `event_stream_stop`, `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, and `computer_history_update_settings`. Pi's live entry/auxiliary selection survives reload, including newly added `defaultTools` on hosts supporting that behavior. Saved declarations survive resume, fork and compaction; owned runtime bindings and observations still reset at lifecycle boundaries. Host allowlists/exclusions are never widened, and explicit CLI `--tools` selections take precedence over saved declarations. SDK callers replacing a saved selection must apply their final selection after binding extensions; see [SDK selection](codex-computer-use-local-install.md#sdk-tool-selection). The MCP server exposes eleven tools: the three primary tools plus all eight auxiliary tools.
 
 Hosts managing the public `pi:instruction-groups` event bus receive the complete extension-owned `macos` instructions on demand. On managed hosts, selected macuse tool declarations remain hidden until `discover_tools {enable:["macos"]}` enables the group. Without an active instruction-group manager, including official Pi, macuse supplies the same full instructions eagerly. Active selections, callable permissions, the `macuse_tools` loader, and native safety gates remain unchanged. No discovery metadata or settings inventory is required.
 
@@ -44,6 +45,24 @@ For example, in Pi enable a status read, then call `event_stream_status` with `{
 ```
 
 Record & Replay start and Computer History resume require exact user intent, `allowRecording:true`, and a non-empty `safetyNote`. Settings changes require exact approval, `allowPrivacyChange:true`, a safety note, and the complete `observation` copied from a fresh settings read with every unchanged field preserved. Stop/pause need no allow flag. Status/settings reads can reveal activity, artifact, and privacy metadata.
+
+## Saved-session recovery
+
+First installation into an existing session enables the permitted entry tools even when that session already declares unrelated tools. Once macuse initializes, saved deselections remain binding. An update does not override them.
+
+If an installed, enabled macuse package has no entry tools in a saved session, run `/macuse-enable`. The assistant can instead call `macuse_enable({})`. The tool accepts only an empty object.
+
+Both paths add only the four permitted entry tools through Pi's native tool selector. They preserve other active or temporarily suppressed groups and host restrictions. The result lists added, already-active, and unavailable tools. Recovery starts no app control, service, or recording. It leaves the eight auxiliary tools unchanged.
+
+On discovery hosts:
+
+1. Enable `macos` through `discover_tools` after recovery.
+2. Read the returned instructions.
+3. Use the revealed tools in a later turn.
+
+Discovery lists only groups with selected tools. Enabling an unavailable group cannot repair a deselected tool set. Official Pi receives the full instructions without this discovery step.
+
+The recovery tool is ungrouped and outside macuse's saved entry/auxiliary selection. Native startup, reload, and tree selection rules control its availability. Restart or reload can select it again; saved tree selections can omit it. Hard host restrictions can make it unavailable. These rules do not reactivate deselected entry or auxiliary tools. A new session is another option.
 
 ## Act within the approved task
 

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.1 — Experimental prerelease — 2026-10-02
+
+- Initialize permitted entry tools when macuse first loads on resume or fork into an existing session. Unrelated saved tool declarations no longer hide the `macos` discovery group; previously initialized selections and host restrictions remain binding.
+- Add ungrouped, default-active `macuse_enable({})` and `/macuse-enable` sharing explicit recovery of already-initialized empty selections. It adds only the four permitted entry tools, preserves other active and temporarily suppressed groups, reports unavailable names, and starts no app control or recording. The eight auxiliary tools and all safety/privacy gates remain unchanged.
+
 ## 0.6.0 — Experimental prerelease — 2026-10-01
 
 - Set the supported Pi floor and development cohort to 1.0.0. Keep native persistent JavaScript, guards, focus, selected-text insertion, recording/history, and enable-first auxiliary tools; the minimal 1.0 fork requires its own qualification before activation.
