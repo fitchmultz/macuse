@@ -22,7 +22,7 @@ Bindings persist in that session. The next call can use them:
 { "code": "await app.getAXStateAndScreenshot()", "apps": ["Activity Monitor"] }
 ```
 
-`getAXState()`, `getScreenshot()`, and `getAXStateAndScreenshot()` emit their results automatically. Do not print or emit them again. Use short adaptive programs, await every action, and inspect the resulting state before deciding the next action. Prefer purpose-built APIs and `agent_browser` for ordinary web-page work.
+`getAXState()`, `getScreenshot()`, and `getAXStateAndScreenshot()` emit their results automatically. Do not print or emit them again. Use short adaptive programs, await every action, and inspect the resulting state before deciding the next action. Prefer available purpose-built APIs or browser tools for ordinary web pages. `agent_browser` is supplied separately by `pi-agent-browser-native`; use it only when actually available. If no suitable browser capability is available, state that limitation rather than assuming one is installed.
 
 ## Tools
 

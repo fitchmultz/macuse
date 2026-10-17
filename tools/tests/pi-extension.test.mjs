@@ -65,6 +65,9 @@ test('full macOS instructions are bus-owned when managed and eager on stock or d
   const stock = prepare();
   assert.equal(stock.existing, 'Preserve other instructions.');
   for (const instruction of [
+    'Prefer available purpose-built APIs or browser tools for ordinary web pages',
+    'agent_browser is supplied separately by pi-agent-browser-native; use it only when actually available',
+    'If no suitable browser capability is available, state that limitation rather than assuming one is installed',
     'Begin with cua.getState()', 'await every action', 'allowMutating:true',
     'performSecondaryAction(index, "Press")', 'Pointer coordinates use returned screenshot pixels',
     'selected-range Unicode insertion with exact readback', 'Raw typeText is ASCII-only',

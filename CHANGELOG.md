@@ -2,6 +2,7 @@
 
 ## 0.6.1 — Experimental prerelease — 2026-10-02
 
+- Treat `agent_browser` as optional and separately supplied by `pi-agent-browser-native`; use it only when available and state the limitation otherwise. macuse itself remains independently usable.
 - Initialize permitted entry tools when macuse first loads on resume or fork into an existing session. Unrelated saved tool declarations no longer hide the `macos` discovery group; previously initialized selections and host restrictions remain binding.
 - Add ungrouped, default-active `macuse_enable({})` and `/macuse-enable` sharing explicit recovery of already-initialized empty selections. It adds only the four permitted entry tools, preserves other active and temporarily suppressed groups, reports unavailable names, and starts no app control or recording. The eight auxiliary tools and all safety/privacy gates remain unchanged.
 
