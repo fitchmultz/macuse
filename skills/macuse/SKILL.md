@@ -1,6 +1,6 @@
 ---
 name: macuse
-description: "Use macuse to inspect, QA, dogfood, or operate local macOS app UI with persistent Computer Use JavaScript, guarded actions, selected-text insertion, and focus observations. Use for requested Record & Replay or Computer History operations too. Prefer browser tools for ordinary web DOM automation; not for generic Pi development or raw MCP protocol probes."
+description: "Use macuse to inspect, QA, dogfood, or operate local macOS app UI with persistent Computer Use JavaScript, guarded actions, selected-text insertion, and focus observations. Use for requested Record & Replay or Computer History operations too. Prefer available browser tools for ordinary web DOM automation; not for generic Pi development or raw MCP protocol probes."
 compatibility: macOS with the macuse Pi package or MCP server, installed ChatGPT Computer Use, existing authentication/permissions, and installed xcrun swiftc plus Accessibility access for native AX features.
 metadata:
   version: "0.6.1"
@@ -9,7 +9,7 @@ metadata:
 
 # macuse
 
-Inspect and operate native macOS apps with short adaptive JavaScript programs. Prefer a purpose-built API/CLI when it covers the task, and `agent_browser` for ordinary web pages. Background-oriented actions minimize interruption but do not guarantee focus/input isolation.
+Inspect and operate native macOS apps with short adaptive JavaScript programs. Prefer available purpose-built APIs/CLIs when they cover the task, or available browser tools for ordinary web pages. `agent_browser` is supplied separately by `pi-agent-browser-native`; use it only when actually available. If no suitable browser capability is available, state that limitation rather than assuming one is installed. Background-oriented actions minimize interruption but do not guarantee focus/input isolation.
 
 ## Bootstrap and routing
 

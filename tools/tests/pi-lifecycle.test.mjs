@@ -33,7 +33,7 @@ async function fixture(t, options = {}, manager) {
   const settingsManager = SettingsManager.create(dir, dir);
   const resourceLoader = new DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager,
     noExtensions: installed, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
-    additionalExtensionPaths: installed ? [fileURLToPath(new URL('../../extensions/macuse.ts', import.meta.url))] : [],
+    additionalExtensionPaths: installed ? [fileURLToPath(new URL('../../', import.meta.url))] : [],
     extensionFactories: [...(discovery && instructionGroupsExtension ? [instructionGroupsExtension] : []), ...extensionFactories],
   });
   await resourceLoader.reload();
@@ -45,7 +45,8 @@ async function fixture(t, options = {}, manager) {
   t.after(() => session.dispose());
   const errors = [];
   await session.bindExtensions({ onError: error => errors.push(error) });
-  return { session, sessionManager, errors, dir };
+  assert.deepEqual(errors, []);
+  return { session, sessionManager, resourceLoader, discovery, errors, dir };
 }
 
 function declare(f) {
@@ -60,6 +61,36 @@ async function callTool(f, name, args = {}) {
   f.session.refreshContext();
   return f.session.extensionRunner.createToolContext(id, undefined).executeTool(name, args);
 }
+
+function beforeAgentStart(f, prompt) {
+  const runner = f.session.extensionRunner;
+  // Managed runs may defer group tools; inspect reload selection before this boundary.
+  if (f.discovery && instructionGroupsExtension) f.session.setActiveToolsByName([...f.session.getActiveToolNames(), 'discover_tools']);
+  const options = { cwd: f.dir, selectedTools: f.session.getActiveToolNames() };
+  // Locked Pi 1.0 uses three arguments; the selected 1.3 hosts use a trigger object.
+  return runner.emitBeforeAgentStart.length === 3
+    ? runner.emitBeforeAgentStart(prompt, undefined, options)
+    : runner.emitBeforeAgentStart({ messageType: 'user', prompt }, options);
+}
+
+test('macuse-only loading delivers standalone guidance and lazy loaders without browser resources', async t => {
+  const f = await fixture(t);
+  assert.deepEqual(f.resourceLoader.getExtensions().extensions.map(extension => extension.path),
+    [fileURLToPath(new URL('../../extensions/macuse.ts', import.meta.url))]);
+  assert.deepEqual(f.resourceLoader.getSkills().skills.map(skill => skill.name), ['macuse']);
+  for (const name of [...entries, 'macuse_enable']) assert.ok(f.session.getActiveToolNames().includes(name), name);
+  const start = await beforeAgentStart(f, 'Offline standalone guidance');
+  assert.match(start.systemPromptOptions.sections.macos, /If no suitable browser capability is available, state that limitation/);
+  assert.equal((await callTool(f, 'macuse_enable')).isError, false);
+  const loaded = await callTool(f, 'macuse_tools', { tools: ['computer_history_status'] });
+  assert.equal(loaded.isError, false);
+  assert.deepEqual(loaded.result.details.added, ['computer_history_status']);
+  assert.ok(!f.session.getActiveToolNames().includes('event_stream_start'));
+  let status;
+  await f.session.extensionRunner.getCommand('macuse-status').handler('', { hasUI: true, ui: { notify: text => { status = text; } } });
+  assert.match(status, /macuse is stopped/, 'Loading tools must not start native or auxiliary services');
+  assert.deepEqual(f.errors, []);
+});
 
 test('native defaults can select auxiliary tools at startup without activating their siblings', async t => {
   const f = await fixture(t, { settings: { defaultTools: ['+computer_history_status'] } });
@@ -94,10 +125,8 @@ for (const boundary of ['resume', 'fork']) test(`first installation on ${boundar
   if (instructionGroupsExtension) {
     const discover = () => next.session.getToolDefinition('discover_tools');
     const context = () => next.session.extensionRunner.createContext();
+    await beforeAgentStart(next, 'Offline discovery');
     assert.match((await discover().execute('list', {}, undefined, undefined, context())).content[0].text, /macos:/);
-    await next.session.extensionRunner.emitBeforeAgentStart('Offline discovery', undefined, {
-      cwd: next.dir, selectedTools: next.session.getActiveToolNames(),
-    });
     assert.ok(!next.session.getActiveToolNames().includes('macuse'));
     await next.session.reload();
     const result = await discover().execute('enable', { enable: ['macos'] }, undefined, undefined, context());
@@ -105,9 +134,7 @@ for (const boundary of ['resume', 'fork']) test(`first installation on ${boundar
     assert.ok(next.session.getActiveToolNames().includes('macuse'));
     assert.ok(!next.session.getActiveToolNames().includes('computer_history_status'));
   } else {
-    const start = await next.session.extensionRunner.emitBeforeAgentStart('Offline discovery', undefined, {
-      cwd: next.dir, selectedTools: next.session.getActiveToolNames(),
-    });
+    const start = await beforeAgentStart(next, 'Offline discovery');
     assert.match(start.systemPromptOptions.sections.macos, /allowMutating:true/);
     assert.match(start.systemPromptOptions.sections.macos, /allowPrivacyChange:true/);
   }
@@ -134,7 +161,8 @@ for (const frontDoor of ['command', 'tool']) for (const [policy, permitted] of [
   const f = await fixture(t, { ...policy, discovery: true, sessionStartEvent: { type: 'session_start', reason: 'resume' } }, old.sessionManager);
   assert.deepEqual(f.session.getActiveToolNames().filter(name => entries.includes(name)), []);
   await f.session.reload();
-  await f.session.extensionRunner.emitBeforeAgentStart('Offline explicit recovery', undefined, { cwd: f.dir, selectedTools: f.session.getActiveToolNames() });
+  assert.deepEqual(f.session.getActiveToolNames().filter(name => entries.includes(name)), policy.tools ? permitted : [], 'Reload must not reinitialize a marker-only selection');
+  await beforeAgentStart(f, 'Offline explicit recovery');
   const before = f.session.getActiveToolNames();
   assert.deepEqual(before.filter(name => entries.includes(name)), policy.tools ? permitted : [], 'Only explicit policy may select entries before recovery');
   if (frontDoor === 'tool' && !f.session.getToolDefinition('macuse_enable')) {
@@ -180,7 +208,7 @@ test('model recovery preserves another suppressed group and retains the macos in
       instructions: () => 'Synthetic read instructions: inspect only the approved fixture.',
     }));
   }] });
-  await f.session.extensionRunner.emitBeforeAgentStart('Offline group recovery', undefined, { cwd: f.dir, selectedTools: f.session.getActiveToolNames() });
+  await beforeAgentStart(f, 'Offline group recovery');
   const before = f.session.getActiveToolNames();
   assert.equal((await callTool(f, 'macuse_enable')).isError, false);
   assert.deepEqual(f.session.getActiveToolNames().filter(name => !entries.includes(name)), before.filter(name => !entries.includes(name)));

@@ -47,3 +47,11 @@ node tools/macuse-doctor.mjs --out .scratch/doctor
 ```
 
 `extension` is offline; other modes may access the live desktop/services. Doctor remains read-only unless `--full` is explicit. Mutating/focus/demo checks must capture Activity Monitor's actual original tab, restore it in `finally`, and verify restoration. Run `focus` after focus-related changes when that controlled UI check is covered by requested or standing authorization; ask only if it is not covered. Raw MCP probes remain non-mutating diagnostics, separate from focus validation. Report actual check results; do not turn historical probes into current certification.
+
+## Dependency maintenance
+
+- Frequently review and proactively update maintained packages and all runtime, development, build, test, and tooling dependencies. Routine in-scope updates are authorized; do not wait for breakage. Prioritize Pi, reviewing the latest stable official release and the intended `fitchmultz/pi` revision separately.
+- Read release, changelog, migration, and security notes across the upgrade range. Verify actual supported APIs and behavior, including the vendor Computer Use contract, rather than relying on version numbers. Preserve support floors, standalone installation, and safety boundaries; use npm and compatible manifest/lockfile cohorts.
+- Adopt beneficial current APIs, conventions, patterns, and functionality instead of extending deprecated or outdated approaches. Align callers, public schemas, skills, documentation, configuration, and validation with the owning contract.
+- Carry updates through the existing validation, `npm run check:compat`, package, exact-host, review, and CI gates as applicable. Keep live desktop/privacy checks within their existing authorization. Report exact target identities, failures, skips, and limits; never relax checkers, safety, or support floors to pass an update.
+- Roll out through existing approval, release, and installation gates with a recoverable prior version and rollback plan; honor explicit holds and the fresh-process requirements above. This maintenance authorization does not itself authorize publication, active-runtime installation/restarts, private-data disclosure, or global model/auth changes.
