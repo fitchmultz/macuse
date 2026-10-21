@@ -54,7 +54,7 @@ Pi starts with four entry tools and the separate recovery tool. Enable the `maco
 
 ### Saved-session recovery
 
-If macuse tools are missing from a saved session, run `/macuse-enable`. The assistant can also call `macuse_enable({})`.
+If macuse tools are missing from a saved session, run `/macuse-enable`. The assistant can also call `macuse_enable({})` when that recovery tool is active. Saved loadouts can omit it; reloading an already registered tool does not explicitly select it.
 
 Recovery preserves other tool selections and host restrictions. It starts no app control or service. See [saved-session recovery](docs/reference/usage.md#saved-session-recovery) for discovery steps and selection limits.
 

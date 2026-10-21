@@ -50,7 +50,7 @@ Record & Replay start and Computer History resume require exact user intent, `al
 
 First installation into an existing session enables the permitted entry tools even when that session already declares unrelated tools. Once macuse initializes, saved deselections remain binding. An update does not override them.
 
-If an installed, enabled macuse package has no entry tools in a saved session, run `/macuse-enable`. The assistant can instead call `macuse_enable({})`. The tool accepts only an empty object.
+If an installed, enabled macuse package has no entry tools in a saved session, run `/macuse-enable`. When the recovery tool is active, the assistant can instead call `macuse_enable({})`. The tool accepts only an empty object.
 
 Both paths add only the four permitted entry tools through Pi's native tool selector. They preserve other active or temporarily suppressed groups and host restrictions. The result lists added, already-active, and unavailable tools. Recovery starts no app control, service, or recording. It leaves the eight auxiliary tools unchanged.
 
@@ -62,7 +62,7 @@ On discovery hosts:
 
 Discovery lists only groups with selected tools. Enabling an unavailable group cannot repair a deselected tool set. Official Pi receives the full instructions without this discovery step.
 
-The recovery tool is ungrouped and outside macuse's saved entry/auxiliary selection. Native startup, reload, and tree selection rules control its availability. Restart or reload can select it again; saved tree selections can omit it. Hard host restrictions can make it unavailable. These rules do not reactivate deselected entry or auxiliary tools. A new session is another option.
+The recovery tool is ungrouped and outside macuse's saved entry/auxiliary selection. Native startup, reload, resume, and tree selection rules control its availability. Installing the recovery tool for the first time on reload can activate its default. Once registered, reload preserves its live selection; resuming or navigating to a saved loadout can omit it. Reloading an omitted tool is not an explicit selection: use `/macuse-enable` when model recovery is unavailable, or explicitly select the recovery tool through the host. Hard host restrictions can make it unavailable. These rules do not reactivate deselected entry or auxiliary tools. A new session is another option.
 
 ## Act within the approved task
 

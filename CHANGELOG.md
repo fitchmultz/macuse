@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Correct the offline recovery fixture to install the new default-active tool on reload. Resuming an already registered tool from an older saved loadout is not new registration, and reload does not explicitly reselect it. Clarify command recovery when a saved loadout omits the model recovery tool; production selection and safety gates are unchanged.
+- Run the existing shared latest-official/fork macOS qualification on package PRs, including the full lifecycle contracts and fresh Git/CLI consumer, while retaining the existing pinned-floor/native checks.
+
 ## 0.6.1 — Experimental prerelease — 2026-10-02
 
 - Treat `agent_browser` as optional and separately supplied by `pi-agent-browser-native`; use it only when available and state the limitation otherwise. macuse itself remains independently usable.
