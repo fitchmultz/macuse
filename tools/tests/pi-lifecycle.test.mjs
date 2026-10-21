@@ -158,8 +158,18 @@ for (const frontDoor of ['command', 'tool']) for (const [policy, permitted] of [
   const old = await fixture(t, { installed: false });
   declare(old);
   old.sessionManager.appendCustomEntry('macuse-initialized', {});
-  const f = await fixture(t, { ...policy, discovery: true, sessionStartEvent: { type: 'session_start', reason: 'resume' } }, old.sessionManager);
+  // A saved loadout owns resume selection. To exercise default activation of a
+  // newly installed recovery tool, install it on reload rather than registering
+  // it before resume and expecting reload to undo the restored deselection.
+  const settings = { extensions: ['-builtin:mcp', '-builtin:llama.cpp', '-builtin:codemode', '-builtin:tool-search'] };
+  const f = await fixture(t, { ...policy, discovery: true, installed: frontDoor !== 'tool', settings,
+    sessionStartEvent: { type: 'session_start', reason: 'resume' } }, old.sessionManager);
   assert.deepEqual(f.session.getActiveToolNames().filter(name => entries.includes(name)), []);
+  if (frontDoor === 'tool') {
+    assert.equal(f.session.getToolDefinition('macuse_enable'), undefined);
+    settings.extensions.push(fileURLToPath(new URL('../../extensions/macuse.ts', import.meta.url)));
+    await writeFile(join(f.dir, 'settings.json'), JSON.stringify(settings));
+  }
   await f.session.reload();
   assert.deepEqual(f.session.getActiveToolNames().filter(name => entries.includes(name)), policy.tools ? permitted : [], 'Reload must not reinitialize a marker-only selection');
   await beforeAgentStart(f, 'Offline explicit recovery');
