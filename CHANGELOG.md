@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Record native tool-state deltas in the branch/compaction fixture, including the initial recovery-tool declaration and its explicit deselection. Pi 1.4 correctly activates default-active extension tools a branch never mentioned; the exact deselection assertions and production activation/safety policy are unchanged.
+
 - Correct the offline recovery fixture to install the new default-active tool on reload. Resuming an already registered tool from an older saved loadout is not new registration, and reload does not explicitly reselect it. Clarify command recovery when a saved loadout omits the model recovery tool; production selection and safety gates are unchanged.
 - Run the existing shared latest-official/fork macOS qualification on package PRs, including the full lifecycle contracts and fresh Git/CLI consumer, while retaining the existing pinned-floor/native checks.
 
