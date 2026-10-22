@@ -21,7 +21,7 @@ const { SessionManager } = await load('session-manager.js');
 const { ModelRuntime } = await load('model-runtime.js');
 const { instructionGroupsExtension } = await import(pathToFileURL(join(root, 'dist/index.js')).href);
 const ai = dirname(findPackageJSON('@earendil-works/pi-ai', pathToFileURL(join(root, 'package.json')).href));
-const { fauxAssistantMessage } = await import(pathToFileURL(join(ai, 'dist/index.js')).href);
+const { fauxAssistantMessage, getCurrentTools, getToolStateChanges } = await import(pathToFileURL(join(ai, 'dist/index.js')).href);
 const hostVersion = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).version;
 const entries = ['macuse', 'macuse_insert_text', 'macuse_reset', 'macuse_tools'];
 
@@ -50,9 +50,13 @@ async function fixture(t, options = {}, manager) {
 }
 
 function declare(f) {
-  const names = f.session.getActiveToolNames();
+  const tools = f.session.getActiveToolNames().map(name => {
+    const tool = f.session.getToolDefinition(name);
+    return { name, description: tool.description, parameters: tool.parameters };
+  });
+  const previous = getCurrentTools(f.sessionManager.buildSessionContext().messages);
   f.sessionManager.appendMessage({ role: 'system', content: '', timestamp: 0,
-    toolsAdded: names.map(name => { const tool = f.session.getToolDefinition(name); return { name, description: tool.description, parameters: tool.parameters }; }) });
+    ...getToolStateChanges(previous, tools) });
 }
 
 async function callTool(f, name, args = {}) {
@@ -297,6 +301,9 @@ for (const options of [
 
 test('native projection respects removed tools, empty selection, branches and compaction', async t => {
   const f = await fixture(t);
+  // Record the initial loadout before deselecting it. Pi 1.4 treats an unmentioned
+  // default-active tool as newly registered, not as an explicitly removed tool.
+  declare(f);
   f.session.setActiveToolsByName(['macuse_tools', 'computer_history_status']);
   declare(f);
   const selected = f.sessionManager.getLeafId();
