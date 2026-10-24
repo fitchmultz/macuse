@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { isAbsolute } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 
@@ -60,10 +61,10 @@ function screenshotEvidence(result, window) {
 }
 
 /** A bounded live proof, not full native or execution qualification. The caller owns stop(). */
-async function qualifyTabs(actuator, { app, safetyNote, scope, expectedPid, expectedTitle }) {
+async function qualifyTabs(actuator, { app, safetyNote, scope, expectedPid, expectedPath, expectedTitle }) {
   const checks = [], failures = [];
   let original, mutationRequested = false;
-  const observe = () => actuator.observe({ app });
+  const observe = () => actuator.observe({ app, ...(expectedPath ? { expectedPid, expectedPath } : {}) });
   const request = (observation, element, allowMutating = true) => ({ app,
     observationId: observation.observationId, elementToken: element.token, action: 'press', allowMutating, safetyNote });
   const press = async (observation, name) => {
@@ -79,6 +80,7 @@ async function qualifyTabs(actuator, { app, safetyNote, scope, expectedPid, expe
     let observation = await observe();
     const selected = observedTab(observation, undefined, app);
     if (expectedPid !== undefined) assert.equal(observation.app.pid, expectedPid, 'Fixture process identity changed');
+    if (expectedPath !== undefined) assert.equal(observation.app.path, expectedPath, 'Fixture app path changed');
     if (expectedTitle !== undefined) assert.equal(selected.window.title, expectedTitle, 'Fixture window identity changed');
     original = { name: selected.name, pid: observation.app.pid, window: selected.window };
     checks.push({ name: 'complete observation and known original tab', status: 'pass', originalTab: original.name });
@@ -138,16 +140,18 @@ export function qualifyActivityMonitor(actuator) {
 async function qualifyFixtureText(actuator, challenger, fixture) {
   const checks = [];
   const replacement = 'prefix 独立 👩🏽‍💻 e\u0301 suffix';
+  const contextReplacement = 'postwrite MUTATED 🧪';
   let original;
-  const observe = () => actuator.observe({ app: fixture.app });
-  const field = observation => {
-    const matches = observation.elements.filter(element => element.identifier === 'macuse-fixture-field'
+  const observe = () => actuator.observe({ app: fixture.app, expectedPid: fixture.pid, expectedPath: fixture.path });
+  const field = (observation, identifier = 'macuse-fixture-field') => {
+    const matches = observation.elements.filter(element => element.identifier === identifier
       && element.windowToken === original.window.token);
     assert.equal(matches.length, 1, 'Expected one owned fixture text field');
     assert.equal(matches[0].role, 'AXTextField');
     assert.equal(matches[0].valueSettable, true);
     assert.equal(typeof matches[0].value, 'string');
-    if (original.field) assert.equal(matches[0].token, original.field.token, 'Fixture text field identity changed');
+    const saved = identifier === 'macuse-fixture-field' ? original.field : original.contextField;
+    if (saved) assert.equal(matches[0].token, saved.token, 'Fixture text field identity changed');
     return matches[0];
   };
   const setValue = (observation, target, value) => actuator.act({ app: fixture.app,
@@ -160,7 +164,8 @@ async function qualifyFixtureText(actuator, challenger, fixture) {
     assert.equal(selected.window.title, fixture.title, 'Fixture window identity changed');
     original = { name: selected.name, pid: fixture.pid, window: selected.window };
     original.field = field(observation);
-    const challenge = await challenger.observe({ app: fixture.app });
+    original.contextField = field(observation, 'macuse-fixture-context-field');
+    const challenge = await challenger.observe({ app: fixture.app, expectedPid: fixture.pid, expectedPath: fixture.path });
     const challengeTab = observedTab(challenge, undefined, fixture.app);
     assert.equal(challenge.app.pid, fixture.pid);
     assert.equal(challengeTab.window.title, fixture.title);
@@ -184,21 +189,34 @@ async function qualifyFixtureText(actuator, challenger, fixture) {
     observedTab(observation, original, fixture.app);
     assert.equal(field(observation).value, replacement, 'Unicode whole-field readback differs');
     checks.push({ name: 'Unicode whole-field value independently observed', status: 'pass', selectedRangeQualified: false });
+    const changed = await setValue(observation, field(observation, 'macuse-fixture-context-field'), contextReplacement);
+    assert.equal(changed.mutationAttempted, true);
+    assert.equal(changed.nativeAccepted, true);
+    assert.equal(changed.status, 'unverified', 'Context drift during the setter must not be reported as a verified edit');
+    assert.equal(changed.verified, false);
+    assert.equal(changed.outcome, 'unknown');
+    observation = await observe();
+    assert.equal(observedTab(observation, original, fixture.app).name, 'CPU', 'Adversarial setter did not change the actual fixture context');
+    assert.equal(field(observation, 'macuse-fixture-context-field').value, contextReplacement);
+    checks.push({ name: 'context drift during AX write retained as attempted and unknown', status: 'pass' });
   } catch (error) { checks.push({ name: 'fixture text qualification failure', status: 'fail', detail: error.message }); }
   finally {
     if (original?.field) {
       try {
         let observation = await observe();
         observedTab(observation, original, fixture.app);
-        const current = field(observation);
-        assert.ok([original.field.value, replacement].includes(current.value), 'Fixture field changed to an unexpected value; refusing cleanup overwrite');
-        if (current.value !== original.field.value) {
-          const restored = await setValue(observation, current, original.field.value);
-          assert.equal(restored.verified, true);
-          observation = await observe();
-          observedTab(observation, original, fixture.app);
+        for (const [saved, planned] of [[original.field, replacement], [original.contextField, contextReplacement]]) {
+          if (!saved) continue;
+          const current = field(observation, saved.identifier);
+          assert.ok([saved.value, planned].includes(current.value), 'Fixture field changed to an unexpected value; refusing cleanup overwrite');
+          if (current.value !== saved.value) {
+            const restored = await setValue(observation, current, saved.value);
+            assert.equal(restored.verified, true);
+            observation = await observe();
+            observedTab(observation, original, fixture.app);
+          }
+          assert.equal(field(observation, saved.identifier).value, saved.value, 'Original fixture field value was not restored');
         }
-        assert.equal(field(observation).value, original.field.value, 'Original fixture field value was not restored');
         if (observedTab(observation, original, fixture.app).name !== original.name) {
           const restored = await actuator.act({ app: fixture.app, observationId: observation.observationId,
             elementToken: tabTarget(observation, original.name, original.window.token).token, action: 'press',
@@ -208,6 +226,7 @@ async function qualifyFixtureText(actuator, challenger, fixture) {
         }
         assert.equal(observedTab(observation, original, fixture.app).name, original.name);
         assert.equal(field(observation).value, original.field.value);
+        if (original.contextField) assert.equal(field(observation, original.contextField.identifier).value, original.contextField.value);
         checks.push({ name: 'original fixture text and radio state independently verified', status: 'pass' });
       } catch (error) { checks.push({ name: 'fixture text cleanup failure', status: 'fail', detail: error.message }); }
     }
@@ -218,10 +237,18 @@ async function qualifyFixtureText(actuator, challenger, fixture) {
 export async function qualifyActuatorFixture(actuator, fixture, { challenger } = {}) {
   assert.match(fixture.app, /^com\.macuse\.actuator-fixture\.[0-9a-f-]{36}$/, 'An exact task-owned fixture identity is required');
   assert.ok(Number.isSafeInteger(fixture.pid) && fixture.pid > 0, 'Fixture PID is required');
+  assert.ok(typeof fixture.path === 'string' && isAbsolute(fixture.path), 'An absolute owned fixture app path is required');
   assert.equal(fixture.title, 'macuse disposable actuator fixture');
-  const report = await qualifyTabs(actuator, { app: fixture.app, expectedPid: fixture.pid, expectedTitle: fixture.title,
+  for (const expected of [{ expectedPid: fixture.pid + 1, expectedPath: fixture.path },
+    { expectedPid: fixture.pid, expectedPath: `${fixture.path}.must-not-match` }]) {
+    await assert.rejects(actuator.observe({ app: fixture.app, ...expected }), error =>
+      error.dispatched === false && error.mutationAttempted === false && /Trusted app PID\/path identity mismatch/.test(error.message),
+    'Wrong trusted fixture PID/path must refuse before reading AX content');
+  }
+  const report = await qualifyTabs(actuator, { app: fixture.app, expectedPid: fixture.pid, expectedPath: fixture.path, expectedTitle: fixture.title,
     safetyNote: 'Task-owned disposable macuse fixture only: select an alternate radio control and restore its actual original selection. No user apps or documents.',
     scope: 'experimental-owned-native-fixture-slice' });
+  report.checks.unshift({ name: 'wrong trusted PID/path refused before AX content', status: 'pass' });
   if (report.ok && challenger) {
     report.checks.push(...await qualifyFixtureText(actuator, challenger, fixture));
     report.ok = report.checks.every(check => check.status === 'pass');
