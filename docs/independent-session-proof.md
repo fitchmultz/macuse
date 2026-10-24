@@ -5,9 +5,10 @@ to the source-owned AX actuator. It is a separate, explicitly opt-in research
 session, not the backend for `macuse` or a claim of arbitrary-app/API parity.
 The production Pi manifest, CLI, MCP tools, recording, and history are unchanged.
 
-The separate optional proof transports use distinct `macuse_independent_proof`
-and `macuse_independent_proof_reset` names. Loading the module does not launch a
-native process. A pure JavaScript expression needs no configured app target.
+This class registers no tools. Optional transports are a separate integration
+and must use distinct names without changing production defaults. Loading the
+module does not launch a native process. A pure JavaScript expression needs no
+configured app target.
 System JavaScriptCore follows macOS updates; this does not independently pin
 Apple's engine or frameworks.
 
