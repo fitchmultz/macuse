@@ -27,6 +27,10 @@ jobs:
         with:
           node-version: 24.21.0
           package-manager-cache: false
+      - name: Use the reviewed npm resolver
+        run: |
+          PM="$(node -p 'require("./package.json").packageManager')"
+          npm exec --yes --package="$PM" -- npm install --global "$PM"
       - run: npm ci --ignore-scripts
       - run: npm run check:compat
         env:
@@ -54,6 +58,10 @@ jobs:
           node-version: 24.21.0
           package-manager-cache: false
       - run: node --test tools/tests/macos-focus.test.mjs
+      - name: Use the reviewed npm resolver
+        run: |
+          PM="$(node -p 'require("./package.json").packageManager')"
+          npm exec --yes --package="$PM" -- npm install --global "$PM"
       - run: npm ci --ignore-scripts
       - name: Official Pi host and CLI
         run: |
