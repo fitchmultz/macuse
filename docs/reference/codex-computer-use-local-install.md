@@ -59,8 +59,11 @@ Default paths are resolved from the local installation rather than copied versio
 | Native runtime launch manifest | `/Applications/ChatGPT.app/Contents/Resources/cua_node/manifest.json` |
 | Vendor Node packages | The manifest's `node_modules` directory, containing `@oai/cua-repl` and `@oai/sky` |
 | Computer Use service | `$CODEX_HOME/computer-use/Codex Computer Use.app` |
-| Auxiliary Codex binary | `/Applications/ChatGPT.app/Contents/Resources/codex` |
+| Codex package descriptor | ChatGPT resources under `codex-cli/codex-package.json` (layout version 1) |
+| Codex executable | The descriptor's package-relative `entrypoint`; older installations without a descriptor use resources under `codex` |
 | Auxiliary plugin roots | ChatGPT resources under `plugins/openai-bundled/plugins/record-and-replay` and `computer-history` |
+
+Both the sandboxed primary runtime and the auxiliary app-server resolve the selected installation's Codex executable. A present package descriptor takes precedence over the legacy path. Invalid descriptors, unsupported layouts, escaping entrypoints, and missing/non-executable targets fail before launch; macuse never silently selects a stale legacy binary or searches `PATH`. Auxiliary resolution stays lazy, so unavailable optional recording/history software does not prevent loading the extension or reading session status. Until that runtime starts, its status reports `codexBin:null` unless an explicit override was supplied.
 
 `CODEX_HOME` retains its existing scope, normally `~/.codex`. `MACUSE_CHATGPT_RESOURCES` selects resources for both runtimes; `CODEX_BIN` can override the auxiliary app-server executable. MCP's `MACUSE_CWD` selects its session working directory. Do not point these at untrusted code or discard authentication context to make a probe pass.
 
