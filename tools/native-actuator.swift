@@ -125,6 +125,13 @@ func observe(_ request: [String: Any]) throws -> [String: Any] {
     observed = nil
     guard let identifier = request["app"] as? String, !identifier.isEmpty else { throw Failure(message: "Exact app bundle ID is required") }
     let app = try resolve(identifier)
+    if request.keys.contains("expectedPid") || request.keys.contains("expectedPath") {
+        guard let expectedPid = request["expectedPid"] as? Int32, expectedPid > 0,
+              let expectedPath = request["expectedPath"] as? String, expectedPath.hasPrefix("/"),
+              app.processIdentifier == expectedPid, app.bundleURL?.path == expectedPath else {
+            throw Failure(message: "Trusted app PID/path identity mismatch; no AX content was read")
+        }
+    }
     let (data, elements, windows) = try state(app)
     let observation = Observation(id: UUID().uuidString, app: app, state: data, elements: elements, windows: windows)
     observed = observation
@@ -153,11 +160,30 @@ func act(_ request: [String: Any]) throws -> [String: Any] {
         error = AXUIElementSetAttributeValue(element, kAXValueAttribute as CFString, value as CFString)
     default: throw Failure(message: "Unsupported proof action; only press and setValue are implemented")
     }
-    let verified = error == .success && (action != "setValue" || string(element, kAXValueAttribute)?.utf16.elementsEqual((request["value"] as! String).utf16) == true)
-    return ["status": verified ? "applied" : "unverified", "mutationAttempted": true,
+    var verified = error == .success
+    var verificationError: String?
+    if action == "setValue" && verified {
+        do {
+            var expected = saved.state
+            var elements = expected["elements"] as! [[String: Any]]
+            let index = elements.firstIndex { $0["token"] as? String == id }!
+            elements[index]["value"] = request["value"]
+            expected["elements"] = elements
+            let (fresh, _, _) = try state(saved.app)
+            verified = try canonical(fresh) == canonical(expected)
+                && string(element, kAXValueAttribute)?.utf16.elementsEqual((request["value"] as! String).utf16) == true
+            if !verified { verificationError = "Post-write app context or exact target readback changed; do not replay" }
+        } catch {
+            verified = false
+            verificationError = "Post-write verification failed: \(error); do not replay"
+        }
+    }
+    var result: [String: Any] = ["status": verified ? "applied" : "unverified", "mutationAttempted": true,
             "verified": action == "setValue" && verified, "nativeAccepted": error == .success,
             "axError": error.rawValue, "focusBefore": before, "focusAfter": focus(),
-            "outcome": action == "press" ? "requires-fresh-observation" : verified ? "verified" : "unknown"]
+            "outcome": verified ? (action == "press" ? "requires-fresh-observation" : "verified") : "unknown"]
+    if let verificationError { result["verificationError"] = verificationError }
+    return result
 }
 func screenshot(_ request: [String: Any]) async throws -> [String: Any] {
     let saved = try current(request)

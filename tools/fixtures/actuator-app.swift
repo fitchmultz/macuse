@@ -2,6 +2,13 @@ import AppKit
 import Foundation
 
 // A real disposable AppKit app, not an Accessibility or screenshot mock.
+final class ContextChangingField: NSTextField {
+    var onWrite: (() -> Void)?
+    override func setAccessibilityValue(_ accessibilityValue: Any?) {
+        if let value = accessibilityValue as? String { stringValue = value }
+        onWrite?()
+    }
+}
 final class FixtureDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
     var radios: [NSButton] = []
@@ -22,6 +29,14 @@ final class FixtureDelegate: NSObject, NSApplicationDelegate {
         field.setAccessibilityIdentifier("macuse-fixture-field")
         field.widthAnchor.constraint(equalToConstant: 420).isActive = true
         stack.addArrangedSubview(field)
+        let changing = ContextChangingField(string: "postwrite ORIGINAL")
+        changing.setAccessibilityIdentifier("macuse-fixture-context-field")
+        changing.widthAnchor.constraint(equalToConstant: 420).isActive = true
+        changing.onWrite = { [weak self] in
+            guard let self, let cpu = self.radios.first else { return }
+            self.selectTab(cpu)
+        }
+        stack.addArrangedSubview(changing)
         window.contentView!.addSubview(stack)
         NSLayoutConstraint.activate([stack.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor, constant: 24),
                                      stack.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 20)])
