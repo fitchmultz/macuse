@@ -18,9 +18,11 @@ Use macOS, Pi 1.0.0 or later, and Node 24.21.0 or later. Set up ChatGPT Computer
 Native focus checks and selected-text insertion also require Accessibility access and `xcrun swiftc`. See [local requirements](docs/reference/codex-computer-use-local-install.md) for setup details.
 
 ```bash
-pi install git:github.com/fitchmultz/macuse
+npm exec --yes --package=npm@12.2.1 -- pi install git:github.com/fitchmultz/macuse
 pi
 ```
+
+The install command puts the reviewed npm resolver on Pi's subprocess path without replacing your global npm. Direct Git installs also require npm 12.2.0 or later in the 12.x series; older resolvers are rejected rather than silently regenerating a vulnerable development lockfile.
 
 The package includes the Pi extension and usage skill. npm publication is disabled. macuse supports official Pi and `fitchmultz/pi`; see the [host qualification notes](docs/pi-1.0-qualification.md) for checked versions and limits.
 
@@ -74,13 +76,15 @@ Clone the repository for CLI or MCP use:
 
 ```bash
 git clone https://github.com/fitchmultz/macuse.git
+npm exec --yes --package=npm@12.2.1 -- npm ci --prefix ./macuse --ignore-scripts
 cd macuse
-npm ci --ignore-scripts
 node tools/macuse.mjs tools --pretty
 node tools/macuse-config.mjs cursor --pretty
 ```
 
 Copy the generated config into your MCP client. Keep this checkout in place; the config uses its paths. Follow [MCP setup](docs/reference/cursor-mcp-setup.md) for client configuration.
+
+Use npm 12.2.0 or later in the 12.x series for source installs and development. Run the bootstrap above from outside the checkout: an older npm also rejects `npm exec` from inside this guarded project. The command uses the pinned resolver without replacing your global npm. Older npm versions can silently ignore the Pi development dependency's security override when regenerating the lockfile; `devEngines` rejects them before installation. For development commands, use a supported npm version. Node and Pi support floors are unchanged.
 
 Use `node tools/macuse.mjs session` for calls that share bindings. Each input line contains a JSON request. Separate `call` processes do not share bindings. Restart CLI and MCP processes after updates.
 
