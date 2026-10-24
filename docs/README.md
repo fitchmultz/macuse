@@ -10,6 +10,7 @@ macuse v0.6.1 uses the installed native Computer Use JavaScript runtime for macO
 - [MCP setup](reference/cursor-mcp-setup.md) — Cursor and other standard MCP clients.
 - [Validation and diagnostics](reference/demo-and-doctor.md) — offline/live check scopes, doctor, demo, and permission troubleshooting.
 - [Pi host qualification](pi-1.0-qualification.md) — image behavior, historical evidence, current hosted checks, and live-check limits.
+- [Independent core qualification](reference/independent-proof-qualification.md) — research-only owned-fixture checks through CLI, MCP, and exact Pi hosts; not complete independence or a production backend switch.
 - [Agent usage skill](../skills/macuse/SKILL.md) — tool routing and task workflow.
 - [Changelog](../CHANGELOG.md) — breaking v0.5.0 migration and earlier releases.
 
