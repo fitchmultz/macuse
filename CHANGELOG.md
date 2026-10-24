@@ -6,6 +6,8 @@
 - Add a separate opt-in independent JavaScriptCore executor proof with deny-default OS sandbox probes, trusted capability RPC, persistent bindings, interruption evidence, and process/resource checks. Production Pi/CLI/MCP and the vendor backend are unchanged; this is not a full independence or hard memory-isolation claim.
 - Add `macuse runtime`, a read-only selected-launch-file version/path/SHA-256 inventory for diagnosing vendor updates without starting services.
 
+- Add explicit opt-in disposable-fixture proof transports for Pi, CLI, and MCP. Normal installation and production tools remain vendor-backed; native outcome/image evidence is not inferred from RPC completion.
+
 - Resolve ChatGPT's packaged Codex executable from its versioned layout descriptor for both the sandboxed primary runtime and lazy auxiliary app-server. Keep older descriptor-free installations, explicit auxiliary overrides, authentication, and the normal sandbox; reject malformed or unavailable selected packages rather than running a stale fallback.
 
 - Record native tool-state deltas in the branch/compaction fixture, including the initial recovery-tool declaration and its explicit deselection. Pi 1.4 correctly activates default-active extension tools a branch never mentioned; the exact deselection assertions and production activation/safety policy are unchanged.
