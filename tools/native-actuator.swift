@@ -26,6 +26,15 @@ func focus() -> [String: Any] {
             "inputAttribution": false]
 }
 func canonical(_ value: Any) throws -> Data { try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) }
+func processStartToken(_ pid: pid_t) throws -> String {
+    var info = proc_bsdinfo()
+    let size = Int32(MemoryLayout<proc_bsdinfo>.stride)
+    guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size,
+          info.pbi_pid == UInt32(pid), info.pbi_start_tvsec > 0 else {
+        throw Failure(message: "Cannot verify native process birth identity (errno \(errno))")
+    }
+    return "\(info.pbi_start_tvsec):\(info.pbi_start_tvusec)"
+}
 var identities: [(AXUIElement, String)] = []
 func token(_ element: AXUIElement) -> String {
     if let found = identities.first(where: { CFEqual($0.0, element) }) { return found.1 }
@@ -40,6 +49,7 @@ struct Observation {
 }
 var observed: Observation?
 func state(_ app: NSRunningApplication) throws -> ([String: Any], [String: AXUIElement], [String: AXUIElement]) {
+    let start = try processStartToken(app.processIdentifier)
     guard AXIsProcessTrusted() else { throw Failure(message: "Accessibility permission is unavailable; use supported System Settings permission flow") }
     let root = AXUIElementCreateApplication(app.processIdentifier)
     AXUIElementSetMessagingTimeout(root, 1)
@@ -91,8 +101,9 @@ func state(_ app: NSRunningApplication) throws -> ([String: Any], [String: AXUIE
         try walk(window, id, nil, 0)
     }
     let data: [String: Any] = ["app": ["bundleId": app.bundleIdentifier ?? "", "pid": app.processIdentifier,
-        "path": app.bundleURL?.path ?? "", "launchDate": app.launchDate?.timeIntervalSince1970 ?? 0],
+        "path": app.bundleURL?.path ?? "", "launchDate": app.launchDate?.timeIntervalSince1970 ?? 0, "processStartToken": start],
         "windows": windowData, "elements": elementData]
+    guard try processStartToken(app.processIdentifier) == start else { throw Failure(message: "App process changed during snapshot") }
     guard try canonical(data).count <= 1_000_000 else { throw Failure(message: "Full AX snapshot exceeds one megabyte; no partial observation admitted") }
     identities.removeAll { identity in !visited.contains { CFEqual(identity.0, $0) } }
     return (data, elements, refs)
@@ -106,8 +117,10 @@ func current(_ request: [String: Any]) throws -> Observation {
     guard let saved = observed, request["observationId"] as? String == saved.id,
           request["app"] as? String == saved.app.bundleIdentifier else { throw Failure(message: "Fresh same-app observation is required") }
     let app = try resolve(saved.app.bundleIdentifier!)
-    guard app.processIdentifier == saved.app.processIdentifier, app.launchDate == saved.app.launchDate,
-          app.bundleURL == saved.app.bundleURL else { throw Failure(message: "Observed app process changed") }
+    guard app.processIdentifier == saved.app.processIdentifier, app.bundleURL == saved.app.bundleURL,
+          try processStartToken(app.processIdentifier) == (saved.state["app"] as? [String: Any])?["processStartToken"] as? String else {
+        throw Failure(message: "Observed app process changed")
+    }
     let (fresh, _, _) = try state(app)
     guard try canonical(fresh["windows"]!) == canonical(saved.state["windows"]!) else {
         observed = nil; throw Failure(message: "Observed window/document identity changed; observe again")
@@ -125,11 +138,17 @@ func observe(_ request: [String: Any]) throws -> [String: Any] {
     observed = nil
     guard let identifier = request["app"] as? String, !identifier.isEmpty else { throw Failure(message: "Exact app bundle ID is required") }
     let app = try resolve(identifier)
-    if request.keys.contains("expectedPid") || request.keys.contains("expectedPath") {
+    if request.keys.contains("expectedPid") || request.keys.contains("expectedPath") || request.keys.contains("expectedProcessStartToken") {
         guard let expectedPid = request["expectedPid"] as? Int32, expectedPid > 0,
               let expectedPath = request["expectedPath"] as? String, expectedPath.hasPrefix("/"),
               app.processIdentifier == expectedPid, app.bundleURL?.path == expectedPath else {
             throw Failure(message: "Trusted app PID/path identity mismatch; no AX content was read")
+        }
+        if request.keys.contains("expectedProcessStartToken") {
+            guard let expected = request["expectedProcessStartToken"] as? String,
+                  try processStartToken(app.processIdentifier) == expected else {
+                throw Failure(message: "Trusted app process birth identity changed; no AX content was read")
+            }
         }
     }
     let (data, elements, windows) = try state(app)
