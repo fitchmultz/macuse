@@ -4,13 +4,14 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { MacuseSession } from '../lib/macuse-session.mjs';
 import { tools } from '../lib/tools.mjs';
+import { runtimeInventory } from '../lib/runtime-inventory.mjs';
 import { VERSION } from './macuse-utils.mjs';
 
 async function main() {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: { help: { type: 'boolean', short: 'h' }, pretty: { type: 'boolean' }, file: { type: 'string' }, out: { type: 'string' } } });
   const [command = 'help', tool = 'macuse', json = '{}'] = positionals;
   if (values.help || command === 'help') {
-    console.log(`macuse ${VERSION}\n\nUsage:\n  macuse tools [--pretty]\n  macuse status\n  macuse call <tool> '<JSON arguments>' [--file code.js] [--out result.json]\n  macuse session\n\nSession input: one {"tool":"macuse","input":{"code":"await cua.getState()"}} per line.\nBindings and observations persist only within that process. --file supplies macuse's code.\nTool schemas describe mutation gates; no automatic replay after cancellation.\n`);
+    console.log(`macuse ${VERSION}\n\nUsage:\n  macuse tools [--pretty]\n  macuse status\n  macuse runtime [--pretty] [--out inventory.json]\n  macuse call <tool> '<JSON arguments>' [--file code.js] [--out result.json]\n  macuse session\n\nSession input: one {"tool":"macuse","input":{"code":"await cua.getState()"}} per line.\nBindings and observations persist only within that process. --file supplies macuse's code.\nTool schemas describe mutation gates; no automatic replay after cancellation.\n`);
     return;
   }
   const print = async value => {
@@ -19,6 +20,13 @@ async function main() {
     else process.stdout.write(text);
   };
   if (command === 'tools') return print(tools);
+  if (command === 'runtime') {
+    if (values.file) throw new Error('runtime does not accept --file');
+    const inventory = await runtimeInventory();
+    await print(inventory);
+    if (!inventory.ok) process.exitCode = 1;
+    return;
+  }
   if (!['call', 'session', 'status'].includes(command)) throw new Error(`Unknown command: ${command}`);
   if (command === 'session' && (values.out || values.file)) throw new Error('session does not accept --out or --file');
   const session = new MacuseSession();

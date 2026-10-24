@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add `macuse runtime`, a read-only selected-launch-file version/path/SHA-256 inventory for diagnosing vendor updates without starting services.
+
 - Resolve ChatGPT's packaged Codex executable from its versioned layout descriptor for both the sandboxed primary runtime and lazy auxiliary app-server. Keep older descriptor-free installations, explicit auxiliary overrides, authentication, and the normal sandbox; reject malformed or unavailable selected packages rather than running a stale fallback.
 
 - Record native tool-state deltas in the branch/compaction fixture, including the initial recovery-tool declaration and its explicit deselection. Pi 1.4 correctly activates default-active extension tools a branch never mentioned; the exact deselection assertions and production activation/safety policy are unchanged.
