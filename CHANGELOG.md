@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add a separate opt-in independent JavaScriptCore executor proof with deny-default OS sandbox probes, trusted capability RPC, persistent bindings, interruption evidence, and process/resource checks. Production Pi/CLI/MCP and the vendor backend are unchanged; this is not a full independence or hard memory-isolation claim.
 - Add `macuse runtime`, a read-only selected-launch-file version/path/SHA-256 inventory for diagnosing vendor updates without starting services.
 
 - Resolve ChatGPT's packaged Codex executable from its versioned layout descriptor for both the sandboxed primary runtime and lazy auxiliary app-server. Keep older descriptor-free installations, explicit auxiliary overrides, authentication, and the normal sandbox; reject malformed or unavailable selected packages rather than running a stale fallback.
