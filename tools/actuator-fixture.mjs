@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -33,7 +33,7 @@ export async function startActuatorFixture() {
       compiler.once('error', error => { clearTimeout(timer); reject(error); });
       compiler.once('close', code => { clearTimeout(timer); code === 0 ? resolve() : reject(new Error(`Fixture compilation failed: ${stderr}`)); });
     });
-    child = spawn(binary, [], { stdio: ['ignore', 'pipe', 'pipe'] });
+    child = spawn(await realpath(binary), [], { stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-4000); });
     await new Promise((resolve, reject) => {
@@ -53,6 +53,6 @@ export async function startActuatorFixture() {
         }
       });
     });
-    return { app, pid: child.pid, title: 'macuse disposable actuator fixture', stop };
+    return { app, pid: child.pid, path: await realpath(join(directory, 'ActuatorFixture.app')), title: 'macuse disposable actuator fixture', stop };
   } catch (error) { await stop(); throw error; }
 }
