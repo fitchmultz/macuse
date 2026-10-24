@@ -53,8 +53,9 @@ jobs:
         with:
           node-version: 24.21.0
           package-manager-cache: false
-      - run: node --test tools/tests/macos-focus.test.mjs
       - run: npm ci --ignore-scripts
+      - name: Native and offline behavior contracts
+        run: npm test
       - name: Official Pi host and CLI
         run: |
           node tools/validate-pi-host.mjs
