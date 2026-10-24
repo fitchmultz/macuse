@@ -65,6 +65,14 @@
   "engines": {
     "node": ">=24.21.0"
   },
+  "packageManager": "npm@12.2.1",
+  "devEngines": {
+    "packageManager": {
+      "name": "npm",
+      "version": "^12.2.0",
+      "onFail": "error"
+    }
+  },
   "devDependencies": {
     "@earendil-works/pi-ai": "1.0.0",
     "@earendil-works/pi-coding-agent": "1.0.0",
@@ -91,5 +99,10 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.1"
+  },
+  "overrides": {
+    "@earendil-works/pi-coding-agent": {
+      "undici": "8.12.3"
+    }
   }
 }
