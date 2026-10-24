@@ -464,13 +464,57 @@ test("keyboard input rejects focus drift before dispatch", async () => {
   assert.equal(f.actions()[0].outcome, "not_dispatched");
 });
 
-test("keyboard input preserves unchanged focus and window-level shortcuts without a focused field", async () => {
-  for (const state of [tree(), tree().replace(/\nThe focused UI element.*$/, "")]) {
-    const f = fixture({ states: [state] });
-    await f.observe();
-    await f.guard(request("press_key", { key: "super+w" }));
-    assert.equal(f.calls.at(-1).method, "press_key");
-    assert.equal(f.actions()[0].outcome, "completed");
+test("missing focus evidence never authorizes keyboard editing or submission", async () => {
+  const before = tree().replace("\t3 button", "\t2 text field (settable) ID: notes, Value: notes\n\t3 button");
+  const missing = before.replace(/\nThe focused UI element.*$/, "");
+  for (const key of ["a", "Backspace", "Delete", "Tab", "shift+Tab", "space", "Insert", "super+v", "cmd+v", "command+shift+v", "meta+alt+shift+v", "ctrl+v", "shift+insert", "super+x", "super+z", "super+a", "super+b", "cmd+i", "command+k", "Return", "Enter", "KP_Enter", "meta+Return", "Super_L+Enter", "Super_R+KP_Enter", "command+shift+Return", "super+Left", "shift+Right", "ctrl+Left", "alt+Down", "ctrl+Escape", "super+f12", "ctrl+super+s"]) {
+    for (const fresh of [missing, before, before.replace("focused UI element is 1", "focused UI element is 2")]) {
+      const f = fixture({ states: [missing, fresh] });
+      await f.observe();
+      const error = await f.guard(request("press_key", { key })).then(() => undefined, error => error);
+      assert.equal(f.calls.filter(call => call.method === "press_key").length, 0, key);
+      assert.match(error?.message ?? "", /Focused field changed or is unavailable/, key);
+      assert.equal(f.actions()[0].dispatched, false, key);
+      assert.equal(f.actions()[0].outcome, "not_dispatched", key);
+      assert.equal(f.actions()[0].verification, "none", key);
+    }
+    const unchanged = fixture({ states: [before] });
+    await unchanged.observe();
+    await unchanged.guard(request("press_key", { key }));
+    assert.deepEqual(unchanged.calls.filter(call => call.method === "press_key"), [request("press_key", { key })]);
+    assert.equal(unchanged.actions()[0].outcome, "completed", key);
+  }
+});
+
+test("bare Escape and directional navigation preserve focusless dispatch without ignoring known focus drift", async () => {
+  const missing = tree().replace(/\nThe focused UI element.*$/, "");
+  for (const key of ["Escape", "Left", "Right", "Up", "Down"]) {
+    for (const fresh of [missing, tree()]) {
+      const f = fixture({ states: [missing, fresh] });
+      await f.observe();
+      await f.guard(request("press_key", { key }));
+      assert.deepEqual(f.calls.filter(call => call.method === "press_key"), [request("press_key", { key })]);
+      assert.equal(f.actions()[0].outcome, "completed", key);
+    }
+    for (const fresh of [missing, tree({ value: "external edit" }), tree({ focus: 3 })]) {
+      const f = fixture({ states: [tree(), fresh] });
+      await f.observe();
+      await assert.rejects(f.guard(request("press_key", { key })), /Focused field changed/, key);
+      assert.equal(f.calls.some(call => call.method === "press_key"), false, key);
+      assert.equal(f.actions()[0].outcome, "not_dispatched", key);
+    }
+  }
+});
+
+test("window-level shortcuts preserve dispatch without prior focused-field evidence", async () => {
+  for (const key of ["super+w", "super+s", "cmd+s", "command+shift+s", "meta+alt+s"]) {
+    for (const before of [tree(), tree().replace(/\nThe focused UI element.*$/, "")]) {
+      const f = fixture({ states: [before, tree({ value: "edited draft", focus: 3 })] });
+      await f.observe();
+      await f.guard(request("press_key", { key }));
+      assert.deepEqual(f.calls.filter(call => call.method === "press_key"), [request("press_key", { key })]);
+      assert.equal(f.actions()[0].outcome, "completed");
+    }
   }
 });
 
