@@ -285,6 +285,7 @@ async function qualify(spec, root, NativeActuator, startFixture) {
     assert.equal(unchanged.name, alternate);
     assert.equal(unchanged.fields[ordinaryField].value, unicode);
     observation = await observe();
+    assert.equal(value(await run('retainedProof+1')), 42, 'Native observation must retain bindings before reset');
     const beforeReset = { observationId: observation.observationId, elementToken: tab(observation, alternate).token };
     assert.equal((await client.call(resetTool, {})).isError, false);
     assert.equal(value(await run('typeof retainedProof')), 'undefined');
