@@ -14,13 +14,16 @@ const tool = 'macuse_independent_proof';
 const reset = 'macuse_independent_proof_reset';
 const env = { ...process.env, PI_OFFLINE: '1', MACUSE_INDEPENDENT_PROOF_TARGET: '', MACUSE_CHATGPT_RESOURCES: '/no-vendor-installation-in-proof' };
 const value = result => result.details.independent.execution.value;
+const targetless = { code: "macuse.call('observe',{app:'com.macuse.actuator-fixture.11111111-1111-4111-8111-111111111111'})" };
+const invalidAdmission = { code: '1', allowMutating: true };
 const requests = [
   { tool, input: { code: 'var retained=41; retained' } },
   { tool: reset, input: { unexpected: true } },
   { tool, input: { code: "({counter:++retained,text:'独立\u2028é'})" } },
   { tool: reset, input: {} },
   { tool, input: { code: 'typeof retained' } },
-  { tool, input: { code: "macuse.call('observe',{app:'com.macuse.actuator-fixture.11111111-1111-4111-8111-111111111111'})" } },
+  { tool, input: targetless },
+  { tool, input: invalidAdmission },
 ];
 
 async function sessionProcess(script, args = [], expectedExit = 0, hostValidatesSchema = false) {
@@ -52,6 +55,9 @@ async function sessionProcess(script, args = [], expectedExit = 0, hostValidates
   assert.equal(value(result[4]), 'undefined');
   assert.equal(result[5].isError, true, 'Targetless native read must remain an error across the transport');
   assert.equal(result[5].details.independent.isError, true);
+  assert.equal(result[6].isError, true);
+  assert.equal(result[6].details.independent.outcome, 'not-dispatched');
+  assert.equal(result[6].details.independent.dispatched, false);
 }
 
 test('actual CLI preserves JSONL Unicode, bindings, predispatch reset refusal, reset and targetless native failure', mac, async () => {
@@ -75,9 +81,13 @@ test('actual MCP preserves proof results, failure metadata and reset through the
     assert.equal(refused.isError, true);
     assert.equal(refused._meta.independent.outcome, 'not-dispatched');
     assert.equal(refused._meta.independent.dispatched, false);
-    const denied = await client.callTool({ name: tool, arguments: requests.at(-1).input });
+    const denied = await client.callTool({ name: tool, arguments: targetless });
     assert.equal(denied.isError, true);
     assert.equal(denied._meta.independent.isError, true);
+    const invalid = await client.callTool({ name: tool, arguments: invalidAdmission });
+    assert.equal(invalid.isError, true);
+    assert.equal(invalid._meta.independent.outcome, 'not-dispatched');
+    assert.equal(invalid._meta.independent.dispatched, false);
     const cleared = await client.callTool({ name: reset, arguments: {} });
     assert.equal(cleared.isError, false);
     const fresh = await client.callTool({ name: tool, arguments: { code: 'typeof retained' } });
