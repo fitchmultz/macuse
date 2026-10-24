@@ -44,6 +44,35 @@ Hosted CI does not use the installed ChatGPT runtime or prove macOS privacy perm
 
 ## Doctor
 
+### Installed launch-file inventory
+
+```bash
+node tools/macuse.mjs runtime --pretty
+node tools/macuse.mjs runtime --pretty --out .scratch/runtime-before.json
+```
+
+This read-only diagnostic resolves the selected `MACUSE_CHATGPT_RESOURCES`
+installation using the same primary launch resolver. It reports declared
+versions, absolute and real paths, byte sizes, and streaming SHA-256 hashes of
+the runtime manifest, Node, `node_repl`, `cua-repl` entry/package, Sky
+service/package, and Codex entry/descriptor. A missing or unreadable selected
+artifact produces `ok:false` and exit status 1; it never substitutes another
+installation. `--out` creates a new file and refuses to overwrite one.
+
+Save inventories before and after vendor updates and compare their JSON to
+identify changed launch files even when declared versions stay the same. This
+does not execute vendor code, start a service, read authentication state, or
+inspect the desktop. Hashing large binaries reads their contents from disk.
+
+This is **not** a recursive dependency lock, signature verification, atomic
+installation snapshot, compatibility certification, or isolation guarantee.
+Transitive modules, the running/shared native helper, recording/history's
+`CODEX_BIN` override, and Apple's system frameworks are outside this inventory.
+A pre-existing shared socket can select a helper unrelated to these files.
+Do not infer the running helper's identity or full macuse independence from this
+report; stop updates before collecting an inventory and qualify the actual host
+separately.
+
 ```bash
 node tools/macuse-doctor.mjs --out .scratch/doctor
 ```
