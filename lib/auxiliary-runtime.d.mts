@@ -35,12 +35,12 @@ export const auxiliaryTools: AuxiliaryToolDescriptor[];
 /** Validates local safety flags/settings and returns a detached upstream-only argument object. Throws on invalid input. */
 export function validateAuxiliaryArguments(tool: string, input?: unknown): { observation?: ObservationSettings };
 export class AuxiliaryRuntime {
-  constructor(options?: { cwd?: string; codexBin?: string });
+  constructor(options?: { cwd?: string; codexBin?: string | null });
   readonly cwd: string;
-  readonly codexBin: string;
+  readonly codexBin: string | null;
   /** Settings updates replace the complete observation: callers must preserve unchanged freshly read fields. */
   callTool(tool: string, input?: unknown, options?: { signal?: AbortSignal; timeoutMs?: number }): Promise<AuxiliaryResult>;
-  status(): { running: boolean; processPid: number | null; threadId: string | null; pendingRequests: number; cwd: string; codexBin: string; stderrTail: string };
+  status(): { running: boolean; processPid: number | null; threadId: string | null; pendingRequests: number; cwd: string; codexBin: string | null; stderrTail: string };
   /** Stops only the owned transport and awaits its exit; the next call can start lazily. */
   stop(): Promise<void>;
 }
