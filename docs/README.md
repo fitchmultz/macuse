@@ -12,6 +12,7 @@ macuse v0.6.1 uses the installed native Computer Use JavaScript runtime for macO
 - [Validation and diagnostics](reference/demo-and-doctor.md) — offline/live check scopes, doctor, demo, and permission troubleshooting.
 - [Pi host qualification](pi-1.0-qualification.md) — image behavior, historical evidence, current hosted checks, and live-check limits.
 - [Independent executor proof](isolated-executor-proof.md) — opt-in source-owned JSC/OS sandbox research, capability authority, interruption evidence, and production gaps.
+- [Owned-fixture session proof](independent-session-proof.md) — trusted executor/actuator integration, exact operator-owned target, parent image transport, and native outcome semantics.
 - [Agent usage skill](../skills/macuse/SKILL.md) — tool routing and task workflow.
 - [Changelog](../CHANGELOG.md) — breaking v0.5.0 migration and earlier releases.
 
