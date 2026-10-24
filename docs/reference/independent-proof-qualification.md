@@ -64,7 +64,7 @@ Each transport delivered two 43,856-byte PNGs at 960×504 pixels, with a 480×25
 
 The Pi image proof is exact bytes in the real stored tool-result channel. It does **not** certify subsequent provider/network request bytes. Auto-resize was disabled only in the isolated qualification profiles; current user settings were not changed.
 
-This result is tied to the recorded source cohort and host paths/manifests, not blanket qualification of subsequent commits, dependency updates, reloads, or arbitrary package directories. The run's full metadata belongs in its delivery evidence.
+This live run used the pre-PR #72 development manifest/lockfile cohort. It qualifies the recorded independent runtime cohort, not that later dependency repair or an installed deployment. This result is tied to the recorded source cohort and host paths/manifests, not blanket qualification of subsequent commits, dependency updates, reloads, or arbitrary package directories. The run's full metadata belongs in its delivery evidence.
 
 ## Deliberate limits
 
