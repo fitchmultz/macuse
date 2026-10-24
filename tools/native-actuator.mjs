@@ -32,7 +32,7 @@ async function executable() {
   try { return await compiling; } catch (error) { compiling = undefined; throw error; }
 }
 
-/** Opt-in feasibility adapter, not selected by Pi, CLI, MCP, or MacuseSession. */
+/** Opt-in feasibility adapter, not selected by production MacuseSession/backend defaults. */
 export class NativeActuator {
   #child;
   #pending;

@@ -16,9 +16,9 @@ All entrypoints share two tools:
 The guest has only `macuse.call('observe'|'screenshot'|'act', params)`. Parent-side
 native receipts remain distinct from successful RPC delivery. Screenshots travel
 as bounded parent-owned image blocks; guest code receives handles/metadata, not
-image bytes or file authority. The session's documented safety and qualification
-limits still apply. Flags are not user permission; never replay dispatched or
-unknown-outcome calls.
+image bytes or file authority. The [session's safety and qualification
+limits](independent-session-proof.md) still apply. Flags are not user permission;
+never replay dispatched or unknown-outcome calls.
 
 Code runs as JavaScriptCore scripts or expressions. Promise expressions, including
 an async function expression, are supported. **Top-level `await` and the vendor
@@ -31,8 +31,11 @@ The operator supplies `MACUSE_INDEPENDENT_PROOF_TARGET` as JSON containing
 `bundleId`, `pid`, `path`, and optional `windowTitle`, captured from the owned
 fixture launcher. It is not a tool parameter and guest code cannot select or
 replace it. Without a pinned target, only pure JavaScript is available; native
-reads as well as mutations are refused. Use the owned-fixture qualification
-runner for live checks rather than substituting a user app or document.
+reads as well as mutations are refused. Live research checks need an owned
+fixture launcher (`startActuatorFixture()` in `tools/actuator-fixture.mjs`) that
+retains its stop handle, captures and restores original state, and awaits cleanup.
+A dedicated end-to-end runner is a separate integration. Never substitute a user
+app or document.
 
 ## CLI
 
@@ -83,8 +86,8 @@ unchanged extension/session sources into a disposable consumer, binds the
 selected host's actual public SDK, scripts only model-generated tool calls,
 and returns actual correlated Pi tool results. It does **not** replace the tool,
 executor, native actuator, screenshots, or native receipts with mocks. Unexpected
-global fetch requests are rejected and model/auth stores are in memory. Only the isolated
-qualification profile disables image resizing to permit exact parent-image hash
+global fetch requests are rejected and model/auth stores are in memory. Only the
+isolated qualification profile disables image resizing to permit exact parent-image hash
 checks; the user's settings are unchanged. Normal Pi hosts may transform images.
 
 Use a new worker process for each official/fork qualification. Close stdin to
