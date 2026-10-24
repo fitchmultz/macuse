@@ -19,7 +19,6 @@ export const VERSION = (() => {
   throw new Error(`macuse: could not read version from ${resolve(REPO_ROOT, 'package.json')}`);
 })();
 export const DEFAULT_CHATGPT_RESOURCES = '/Applications/ChatGPT.app/Contents/Resources';
-export const DEFAULT_CODEX_BIN = resolve(DEFAULT_CHATGPT_RESOURCES, 'codex');
 const DEFAULT_BUNDLED_PLUGIN_ROOT = resolve(DEFAULT_CHATGPT_RESOURCES, 'plugins/openai-bundled/plugins');
 export const DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR = resolve(DEFAULT_BUNDLED_PLUGIN_ROOT, 'computer-use');
 const DEFAULT_BUNDLED_RECORD_AND_REPLAY_PLUGIN_DIR = resolve(DEFAULT_BUNDLED_PLUGIN_ROOT, 'record-and-replay');

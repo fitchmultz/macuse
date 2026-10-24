@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, chmod, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CuaRuntime, resolveLaunch, appApproval, imageMetadata } from "../../lib/cua-runtime.mjs";
@@ -219,7 +219,7 @@ test("only computer app-access elicitations inherit standing approval", () => {
   assert.equal(appApproval({ params: { ...params, _meta: undefined } }).action, "decline");
 });
 
-test("launcher resolves manifest/package exports, limits trust and preserves CODEX_HOME", async t => {
+for (const packaged of [false, true]) test(`launcher resolves ${packaged ? 'packaged' : 'legacy'} Codex, limits trust and preserves CODEX_HOME`, async t => {
   const root = await mkdtemp(join(tmpdir(), "macuse-cua-launch-"));
   t.after(() => rm(root, { recursive: true, force: true }));
   const modules = join(root, "cua_node", "custom-modules");
@@ -228,6 +228,11 @@ test("launcher resolves manifest/package exports, limits trust and preserves COD
   await writeFile(join(modules, "@oai", "cua-repl", "package.json"), JSON.stringify({ bin: { "cua-repl": "bin/launcher.mjs" } }));
   await writeFile(join(modules, "@oai", "sky", "package.json"), JSON.stringify({ name: "@oai/sky", exports: { "./service": "./native-service.js" } }));
   await writeFile(join(modules, "@oai", "sky", "native-service.js"), "");
+  const codex = join(root, packaged ? 'codex-cli/bin/codex' : 'codex');
+  await mkdir(join(root, 'codex-cli/bin'), { recursive: true });
+  await writeFile(codex, '#!/bin/sh\nexit 0\n');
+  await chmod(codex, 0o755);
+  if (packaged) await writeFile(join(root, 'codex-cli/codex-package.json'), JSON.stringify({ layoutVersion: 1, version: '0.164.0', entrypoint: 'bin/codex' }));
   const old = process.env.CODEX_HOME;
   process.env.CODEX_HOME = "/tmp/explicit-codex-home";
   try {
@@ -235,7 +240,7 @@ test("launcher resolves manifest/package exports, limits trust and preserves COD
     assert.equal(config.command, join(root, "cua_node/bin/vendor-node"));
     assert.equal(config.env.CODEX_HOME, "/tmp/explicit-codex-home");
     assert.equal(config.env.CUA_REPL_ENABLED_SURFACES, "computer");
-    assert.equal(config.env.CODEX_CLI_PATH, join(root, "codex"));
+    assert.equal(config.env.CODEX_CLI_PATH, codex);
     assert.match(config.env.MACUSE_SKY_SERVICE_URL, /native-service\.js$/);
     assert.equal(config.env.NODE_REPL_TRUSTED_CODE_PATHS.split(":").length, 2);
     assert.deepEqual(Object.keys(JSON.parse(config.env.NODE_REPL_TRUSTED_SERVICES)), ["sky"]);

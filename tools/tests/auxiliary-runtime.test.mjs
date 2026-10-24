@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -193,17 +193,23 @@ test('lazy authenticated JSONL startup isolates only auxiliary launchers and ret
   assert.equal(events().filter(row => row.event === 'spawn').length, 2);
 });
 
-test('resource install override and CODEX_HOME reach isolated launcher configuration', t => {
+for (const packaged of [false, true]) test(`${packaged ? 'packaged Codex' : 'explicit binary'} and resource override retain CODEX_HOME and isolated launchers`, t => {
   const { runtime, events } = fixture(t);
+  const resources = packaged ? runtime.cwd : '/custom/ChatGPT.app/Contents/Resources';
+  if (packaged) {
+    mkdirSync(join(resources, 'codex-cli/bin'), { recursive: true });
+    symlinkSync(runtime.codexBin, join(resources, 'codex-cli/bin/codex'));
+    writeFileSync(join(resources, 'codex-cli/codex-package.json'), JSON.stringify({ layoutVersion: 1, version: '0.164.0', entrypoint: 'bin/codex' }));
+  }
   const script = `import { AuxiliaryRuntime } from ${JSON.stringify(new URL('../../lib/auxiliary-runtime.mjs', import.meta.url).href)};
-    const runtime = new AuxiliaryRuntime(${JSON.stringify({ cwd: runtime.cwd, codexBin: runtime.codexBin })});
+    const runtime = new AuxiliaryRuntime(${JSON.stringify({ cwd: runtime.cwd, ...(packaged ? {} : { codexBin: runtime.codexBin }) })});
     try { const result = await runtime.callTool('event_stream_status'); if (result.isError) throw new Error(JSON.stringify(result)); }
     finally { await runtime.stop(); }`;
-  execFileSync(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, MACUSE_CHATGPT_RESOURCES: '/custom/ChatGPT.app/Contents/Resources', CODEX_HOME: '/preserved/codex-home' }, timeout: 5000 });
+  execFileSync(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, MACUSE_CHATGPT_RESOURCES: resources, CODEX_BIN: '', CODEX_HOME: '/preserved/codex-home' }, timeout: 5000 });
   assert.equal(events()[0].home, '/preserved/codex-home');
   const config = events().find(row => row.method === 'thread/start').params.config;
   for (const name of ['event-stream', 'computer-history']) {
-    assert.ok(config.mcp_servers[name].command.startsWith('/custom/ChatGPT.app/Contents/Resources/'));
+    assert.ok(config.mcp_servers[name].command.startsWith(`${resources}/`));
     assert.deepEqual(config.mcp_servers[name].env_vars, ['CODEX_HOME']);
   }
 });
