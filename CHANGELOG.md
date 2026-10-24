@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Resolve ChatGPT's packaged Codex executable from its versioned layout descriptor for both the sandboxed primary runtime and lazy auxiliary app-server. Keep older descriptor-free installations, explicit auxiliary overrides, authentication, and the normal sandbox; reject malformed or unavailable selected packages rather than running a stale fallback.
+
 - Record native tool-state deltas in the branch/compaction fixture, including the initial recovery-tool declaration and its explicit deselection. Pi 1.4 correctly activates default-active extension tools a branch never mentioned; the exact deselection assertions and production activation/safety policy are unchanged.
 
 - Correct the offline recovery fixture to install the new default-active tool on reload. Resuming an already registered tool from an older saved loadout is not new registration, and reload does not explicitly reselect it. Clarify command recovery when a saved loadout omits the model recovery tool; production selection and safety gates are unchanged.
