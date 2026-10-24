@@ -6,6 +6,7 @@ macuse v0.6.1 uses the installed native Computer Use JavaScript runtime for macO
 - [Tool and session reference](reference/usage.md) — complete examples, tool selection and discovery, lifecycle, text input, screenshots, and runtime boundaries.
 - [Local requirements](reference/codex-computer-use-local-install.md) — vendor runtime, host compatibility, macOS permissions, and restart requirements.
 - [Runtime and migration](reference/codex-computer-use-external-harness.md) — native/auxiliary boundaries, current paths, and dated investigation findings.
+- [Independence qualification](reference/independence-qualification.md) — experimental native proof, independent execution requirements, and release gates; not a replacement-backend certification.
 - [Safety policy](reference/codex-computer-use-safety-policy.md) — authorization, targeting, text insertion, recording, and uncertain outcomes.
 - [MCP setup](reference/cursor-mcp-setup.md) — Cursor and other standard MCP clients.
 - [Validation and diagnostics](reference/demo-and-doctor.md) — offline/live check scopes, doctor, demo, and permission troubleshooting.
