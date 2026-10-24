@@ -22,6 +22,16 @@ test('actuator rejects non-JSON and malformed Unicode before native dispatch', a
   } finally { await actuator.stop(); }
 });
 
+test('full wire framing budget refuses a near-limit act as not dispatched', async () => {
+  const actuator = new NativeActuator();
+  const args = { value: 'x'.repeat(1_000_000 - Buffer.byteLength(JSON.stringify({ value: '' }))) };
+  assert.equal(Buffer.byteLength(JSON.stringify(args)), 1_000_000);
+  try {
+    await assert.rejects(actuator.act(args), error =>
+      error instanceof RangeError && noDispatch(error) && /wire request exceeds one megabyte/.test(error.message));
+  } finally { await actuator.stop(); }
+});
+
 test('native process denies missing authority and stale observation without touching an app', { skip: process.platform !== 'darwin' }, async () => {
   const actuator = new NativeActuator();
   try {

@@ -112,6 +112,13 @@ export class NativeActuator {
     const generation = this.#generation;
     const closing = this.#closing;
     const run = this.#tail.then(async () => {
+      const id = ++this.#nextId;
+      const line = JSON.stringify({ ...saved, id, method });
+      if (Buffer.byteLength(line) > 1_000_000) {
+        throw Object.assign(new RangeError('Actuator wire request exceeds one megabyte.'), {
+          dispatched: false, mutationAttempted: false, outcome: 'not-dispatched',
+        });
+      }
       let child;
       try {
         await closing;
@@ -124,7 +131,6 @@ export class NativeActuator {
         await this.#terminate();
         throw Object.assign(new Error(error.message), { dispatched: false, mutationAttempted: false, outcome: 'not-dispatched' });
       }
-      const id = ++this.#nextId;
       return new Promise((resolve, reject) => {
         let dispatched = false;
         const finish = (error, result) => {
@@ -144,7 +150,7 @@ export class NativeActuator {
         this.#pending = { id, resolve: result => finish(null, result), reject: error => finish(error) };
         signal?.addEventListener('abort', aborted, { once: true });
         dispatched = method === 'act';
-        child.stdin.write(`${JSON.stringify({ ...saved, id, method })}\n`, error => {
+        child.stdin.write(`${line}\n`, error => {
           if (error && this.#pending?.id === id) { this.#pending.failure = error; void this.#terminate(); }
         });
       });
