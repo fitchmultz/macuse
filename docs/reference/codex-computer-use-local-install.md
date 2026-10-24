@@ -10,6 +10,7 @@ macuse v0.6.1 is an experimental GitHub prerelease installed in Pi from Git, not
 - An installed Swift compiler (`xcrun swiftc`) for macuse's native AX helper. The helper compiles lazily, caches by source hash under `~/Library/Caches/macuse/native`, and needs Accessibility access for focus/window/text operations.
 - For Pi, latest stable official Pi or the maintained `fitchmultz/pi`. The supported floor and development baseline are 1.0.0; macuse uses shared public extension APIs and Pi runtime dependencies come from the host.
 - For CLI/MCP, Node 24.21.0 or later and installed repository dependencies.
+- For Git/source dependency installs, npm 12.2.0 or later in the 12.x series. The pinned bootstrap below uses npm 12.2.1 without replacing global npm. Older npm versions are rejected because they can ignore the Pi development dependency's security override during fresh resolution.
 
 macuse does not install the vendor runtime/compiler, change user settings, grant permissions, or bypass authentication. Missing requirements should produce a concrete setup error, not a fallback input system.
 
@@ -18,10 +19,12 @@ This runtime boundary does not prohibit an agent from completing setup authorize
 ## Install in Pi
 
 ```bash
-pi install git:github.com/fitchmultz/macuse
+npm exec --yes --package=npm@12.2.1 -- pi install git:github.com/fitchmultz/macuse
 ```
 
-The package supplies `extensions/macuse.ts` and `skills/macuse/SKILL.md`. A local checkout can instead be installed with `pi install /absolute/path/to/macuse`.
+Run the bootstrap from outside a macuse checkout: an older npm also refuses `npm exec` from inside the guarded project.
+
+The package supplies `extensions/macuse.ts` and `skills/macuse/SKILL.md`. After installing a local checkout's dependencies with the [source-install procedure](../../README.md#cli-and-mcp), load it with `pi install /absolute/path/to/macuse`. Pi registers that local path without installing or changing its dependencies; the checkout owner maintains them.
 
 Official Pi 1.0.0's `/reload` replaces extension code, disposes macuse's owned session, and preserves the live permitted tool selection. On hosts supporting it, tools newly added to `defaultTools` are enabled; unchanged defaults do not resurrect tools you deselected. Quit Pi and start a new process after dependency/native-runtime updates, or on older hosts whose code reload is unqualified. Restart CLI/MCP processes after changes too; a new process picks up native helper source changes through the source-hash cache.
 

@@ -27,7 +27,19 @@ jobs:
         with:
           node-version: 24.21.0
           package-manager-cache: false
+      - name: Use the reviewed npm resolver
+        working-directory: ${{ runner.temp }}
+        run: |
+          PM="$(node -p 'require(process.env.GITHUB_WORKSPACE + "/package.json").packageManager')"
+          npm exec --yes --package="$PM" -- npm install --global "$PM"
       - run: npm ci --ignore-scripts
+      - name: Verify fresh dependency resolution without the committed lockfile
+        run: |
+          fresh="$(mktemp -d)"
+          cp package.json "$fresh/package.json"
+          npm install --prefix "$fresh" --ignore-scripts
+          npm ls --prefix "$fresh" undici --all
+          npm audit --prefix "$fresh" --package-lock-only
       - run: npm run check:compat
         env:
           PI_OFFLINE: '1'
@@ -53,8 +65,14 @@ jobs:
         with:
           node-version: 24.21.0
           package-manager-cache: false
-      - run: node --test tools/tests/macos-focus.test.mjs
+      - name: Use the reviewed npm resolver
+        working-directory: ${{ runner.temp }}
+        run: |
+          PM="$(node -p 'require(process.env.GITHUB_WORKSPACE + "/package.json").packageManager')"
+          npm exec --yes --package="$PM" -- npm install --global "$PM"
       - run: npm ci --ignore-scripts
+      - name: Native and offline behavior contracts
+        run: npm test
       - name: Official Pi host and CLI
         run: |
           node tools/validate-pi-host.mjs
