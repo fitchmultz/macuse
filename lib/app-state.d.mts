@@ -21,8 +21,6 @@ export interface AppObservation {
   title: string | null;
   url: string | null;
   documentIdentity: { windowUrl: string | null; pageUrls: string[] } | null;
-  nativeWindowCandidate: boolean;
-  nativeWindow?: { pid: number; token: string; document: string };
   nativeWindowIdentity: boolean;
   nativeSheetId?: string;
   text: string;

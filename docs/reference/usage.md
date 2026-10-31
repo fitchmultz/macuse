@@ -85,7 +85,7 @@ Use native element indexes from the latest observation and the methods documente
 
 Controls with the same role and name can be distinguished by their observed context and descendants when those identify one target in both snapshots. `setValue` can verify such a field when its context identifies it after editing; if context is shared, unchanged descendants can disambiguate it. A field unique before and after can also be verified when its surrounding structure changes. Snapshot evidence does not prove native object continuity; indistinguishable or changed targets remain blocked.
 
-When a title changes, the guard can retain the observation if native window identity and top-level document URLs still match. If that evidence is unavailable or the document changed, inspect again before acting.
+For a sole standard window with document URLs, the guard compares the full window and top-level page URLs rather than the changing title; embedded frame navigation does not change the parent document. Matching URLs do not prove native window continuity, so inspect the intended window and target before acting. Without document URLs, title changes require a fresh observation.
 
 For Unicode insertion, observe the intended app and already-focused field, then call `macuse_insert_text`:
 

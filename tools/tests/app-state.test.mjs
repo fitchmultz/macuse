@@ -57,7 +57,8 @@ test("document URL uses scoped metadata, never arbitrary body URLs or unfinished
   assert.equal(observed.title, "Review - Browser");
   assert.equal(observed.url, "http://localhost:3000/review/7");
   assert.equal(parseAppState("Browser", text.replace("Value: http://localhost:3000/review/7", "Value: https://draft.invalid")).url, "localhost:3000/review/7");
-  assert.equal(sameDocument(observed, { ...observed, title: "Other" }), false);
+  assert.equal(sameDocument(observed, { ...observed, title: "Other" }), true);
+  assert.equal(sameDocument(observed, parseAppState("Browser", text.replaceAll("review/7", "review/8"))), false);
   assert.equal(sameDocument(observed, { ...observed, app: "browser" }), false);
   assert.equal(sameDocument(observed, { ...observed }), true);
 });
