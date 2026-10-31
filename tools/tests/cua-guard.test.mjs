@@ -574,13 +574,72 @@ test("typing cannot retarget when the focused editor moves to another cell", asy
 
 test("unique field identity re-resolves its index and exact Unicode setValue readback is required", async () => {
   const value = "café 漢字 🙂\n2026 roadmap\n2026 text of agreement\n  exact trailing whitespace  ";
-  const f = fixture({ states: [tree(), tree({ index: 7 }), tree({ index: 7, value })] });
+  for (const [identity, key] of [["ID: editor", "id"], ["Description: editor", "description"]]) {
+    const state = options => tree(options).replace("ID: editor", identity);
+    const f = fixture({ states: [state(), state({ index: 7 }), state({ index: 7, value })] });
+    await f.observe();
+    await f.guard(request("set_value", { element_index: 1, value }));
+    assert.equal(f.calls.find(c => c.method === "set_value").args[0].element_index, 7);
+    assert.equal(f.actions()[0].verification, "exact-field-value");
+    assert.equal(f.actions()[0].outcome, "completed");
+    assert.equal(f.context.meta.macuse.observations[0].elements.find(e => e[key] === "editor").value, value);
+  }
+});
+
+test("setValue verifies the search field when its results sidebar and index change", async () => {
+  // Reduced from the System Settings Full Disk Access snapshots surrounding the edit.
+  const before = `Window: "Full Disk Access", App: System Settings.
+0 standard window Full Disk Access, ID: Main, Secondary Actions: Raise
+	1 split group Main, SidebarNavigationSplitView
+		2 scroll area
+			3 list Description: Sidebar, ID: com.apple.settings.sidebar.collectionView
+				4 row (selectable)
+				8 row (selectable) Wi-Fi
+				30 row (selected) Privacy & Security
+		42 search text field (settable) Search
+			43 button Search
+		44 splitter (disabled, settable, float) 231.5
+		45 scroll area Secondary Actions: Cancel
+			46 container`;
+  const value = "Remote Apple Events";
+  const after = `Window: "Full Disk Access", App: System Settings.
+0 standard window Full Disk Access, ID: Main, Secondary Actions: Raise
+	1 split group Main, SidebarNavigationSplitView
+		2 container
+			3 scroll area
+				4 list Description: Sidebar, ID: com.apple.settings.applicationSearch.collectionView
+					5 row (selectable)
+					6 row (selectable) Remote Application Scripting, General → Sharing
+		7 search text field (settable) Value: ${value}, Placeholder: Search
+			8 button Search
+			9 button cancel
+		10 splitter (disabled, settable, float) 231.5
+		11 scroll area Secondary Actions: Cancel
+			12 container`;
+  const f = fixture({ nativeApp: "System Settings", states: [before, before, after] });
   await f.observe();
-  await f.guard(request("set_value", { element_index: 1, value }));
-  assert.equal(f.calls.find(c => c.method === "set_value").args[0].element_index, 7);
+  try {
+    await f.guard(request("set_value", { element_index: 42, value }));
+  } finally {
+    assert.deepEqual(f.calls.filter(call => call.method === "set_value"), [request("set_value", { element_index: 42, value })]);
+    assert.equal(f.context.meta.macuse.observations[0].elements.find(element => element.index === "7").value, value);
+  }
   assert.equal(f.actions()[0].verification, "exact-field-value");
   assert.equal(f.actions()[0].outcome, "completed");
-  assert.equal(f.context.meta.macuse.observations[0].elements.find(e => e.id === "editor").value, value);
+
+  const changedBeforeDispatch = after.replace(`Value: ${value}, Placeholder: Search`, "Search");
+  const stale = fixture({ nativeApp: "System Settings", states: [before, changedBeforeDispatch] });
+  await stale.observe();
+  await assert.rejects(stale.guard(request("set_value", { element_index: 42, value })), /Target identity or value changed/);
+  assert.equal(stale.calls.some(call => call.method === "set_value"), false);
+
+  const duplicate = after.replace("\t\t10 splitter", `\t\t13 search text field (settable) Value: ${value}, Placeholder: Search\n\t\t10 splitter`);
+  const ambiguous = fixture({ nativeApp: "System Settings", states: [before, before, duplicate] });
+  await ambiguous.observe();
+  await assert.rejects(ambiguous.guard(request("set_value", { element_index: 42, value })), /readback/);
+  assert.equal(ambiguous.actions()[0].outcome, "unknown");
+  await assert.rejects(ambiguous.guard(request("set_value", { element_index: 42, value })), /uncertain outcome/);
+  assert.equal(ambiguous.calls.filter(call => call.method === "set_value").length, 1);
 });
 
 test("editing a field within a row still verifies its changed value", async () => {
@@ -653,12 +712,21 @@ test("host insertion invalidates observations once per run without resetting bin
   assert.equal(f.actions().at(-1).outcome, "completed");
 });
 
-test("setValue readback cannot verify a different document or unrelated field", async () => {
-  for (const after of [tree({ title: "other", value: "new" }), tree().replace("4 text unrelated clock", "4 text field (settable) ID: unrelated, Value: new")]) {
+test("setValue readback requires the unique field, exact value and same document", async () => {
+  for (const after of [
+    tree({ title: "other", value: "new" }),
+    tree().replace("4 text unrelated clock", "4 text field (settable) ID: unrelated, Value: new"),
+    tree({ value: "new " }),
+    tree({ value: "new", duplicate: true }),
+    tree({ value: "new" }).replace("ID: editor, Value:", "editor, Value:"),
+  ]) {
     const f = fixture({ states: [tree(), tree(), after], mutate: () => undefined });
     await f.observe();
     await assert.rejects(f.guard(request("set_value", { element_index: 1, value: "new" })), /readback/);
+    assert.equal(f.actions()[0].dispatched, true);
     assert.equal(f.actions()[0].outcome, "unknown");
+    await assert.rejects(f.guard(request("set_value", { element_index: 1, value: "new" })), /uncertain outcome/);
+    assert.equal(f.calls.filter(call => call.method === "set_value").length, 1);
   }
 });
 
