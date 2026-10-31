@@ -56,6 +56,39 @@ test("short mutation notes and pointer actions use the ordinary mutation scope",
   assert.equal(f.actions()[0].outcome, "completed");
 });
 
+test("native click modifiers and action durations pass through the ordinary guard", async () => {
+  for (const [method, input] of [
+    ["click", { element_index: 1, key: "shift", duration: 0.001 }],
+    ["click", { x: 1, y: 1, key: "shift", duration: 0.001 }],
+    ["press_key", { key: "Right", duration: 0.001 }],
+  ]) {
+    const f = fixture();
+    await f.observe();
+    await f.guard(request(method, input));
+    assert.deepEqual(f.calls.at(-1), request(method, input));
+    assert.equal(f.actions()[0].outcome, "completed");
+  }
+});
+
+test("key chords held during clicks preserve keyboard and close checks", async () => {
+  const missing = tree().replace(/\nThe focused UI element.*$/, "");
+  for (const key of ["Return", "cmd+Delete"]) {
+    const f = fixture({ states: [missing, missing] });
+    await f.observe();
+    await assert.rejects(f.guard(request("click", { x: 1, y: 1, key })), /Focused field/);
+    assert.equal(f.calls.some(call => call.method === "click"), false);
+  }
+  const drift = fixture({ states: [tree(), tree({ focus: 3 })] });
+  await drift.observe();
+  await assert.rejects(drift.guard(request("click", { x: 1, y: 1, key: "Return" })), /Focused field/);
+  const f = fixture({ states: [missing, missing] });
+  await f.observe();
+  await f.guard(request("click", { x: 1, y: 1, key: "shift" }));
+  assert.equal(f.actions().at(-1).outcome, "completed");
+  await f.guard(request("click", { x: 1, y: 1, key: "cmd+w" }));
+  assert.equal(f.actions().at(-1).closesWindow, true);
+});
+
 test("validate complete arguments and block corrupting Unicode typing before action", async () => {
   for (const [method, input] of [
     ["type_text", { text: "café 漢字 🙂" }],
