@@ -20,10 +20,12 @@ export interface AppObservation {
   app: string;
   title: string | null;
   url: string | null;
+  documentIdentity: { windowUrl: string | null; pageUrls: string[] } | null;
   nativeWindowIdentity: boolean;
   nativeSheetId?: string;
   text: string;
   focused?: AppElement;
+  focusedWindow?: boolean;
   elements: AppElement[];
   observedAt: number;
 }

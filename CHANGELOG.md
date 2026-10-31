@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Allow title changes when CUA's window and top-level document URLs remain unchanged; selected-text insertion checks the refreshed window state.
 - Accept native execution deadlines below one second and above five minutes, within Node's request-timer range.
 - Allow a following keypress when an indexed click on a non-settable control or AX Press returns focus to an identified containing element.
 - Carry the intended field from an indexed click or exact `setValue` readback into the next keyboard action when fresh state confirms focus.

@@ -167,6 +167,29 @@ test("document URL wins over abbreviated titles, but explicit title guards remai
 	noEdit(await insertText(other.native, input, untitled), other, /window\/document changed/);
 });
 
+test("selected-text insertion survives a native window title update", async () => {
+	const snapshot = title => parseAppState(app.bundleId, `Window: "${title}", App: TextEdit.
+0 standard window ${title}
+	1 HTML content Description: Text fixture, URL: 127.0.0.1:52513/top
+		2 text field (settable) Message, Value: before after
+		3 HTML content Description: Frame, URL: 127.0.0.1:52513/frame
+
+The focused UI element is 2 text field (settable) Message, Value: before after`);
+	const before = snapshot("Job 10%");
+	const fresh = snapshot("Job 11%");
+	const current = { ...state, focusedWindow: { token: "window", title: fresh.title, document: null },
+		focusedElement: { ...state.focusedElement, identifier: null, role: "AXTextField", roleDescription: "text field",
+			title: "Message", description: "Message", value: "before after" } };
+	const refreshObservation = async () => fresh;
+	const f = fixture({ inspectApp: async () => current });
+	assert.equal((await insertText(f.native, input, before, { refreshObservation })).details.macuse.outcome, "verified");
+
+	const changed = fixture({ inspectApp: async () => ({ ...current, focusedWindow: { ...current.focusedWindow, title: "Other" } }) });
+	noEdit(await insertText(changed.native, input, before, { refreshObservation }), changed, /window\/document changed/);
+	const exactTitle = fixture({ inspectApp: async () => current });
+	noEdit(await insertText(exactTitle.native, { ...input, expectedTitle: before.title }, before, { refreshObservation }), exactTitle, /Window guard failed/);
+});
+
 test("page labels and nonstandard roots cannot authorize insertion through a coincident native window title", async () => {
 	for (const root of [
 		"window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html",

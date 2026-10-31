@@ -130,7 +130,7 @@ test("paste shortcuts and Control+V reach the native key implementation", async 
 });
 
 test("paste retains exact scope, observation, document and focused-input guards", async () => {
-  for (const after of [tree({ title: "other" }), tree({ focus: 3 }), tree({ value: "external edit" })]) {
+  for (const after of [tree().replace("file:///tmp/fixture", "file:///tmp/other"), tree({ focus: 3 }), tree({ value: "external edit" })]) {
     const f = fixture({ states: [tree(), after] });
     await f.observe();
     await assert.rejects(f.guard(request("paste", { text: "new", format: "text" })), /changed/);
@@ -269,7 +269,7 @@ test("primary AX Press remains usable when Sky lists only secondary actions", as
 });
 
 test("preflight rejects document or field drift and ambiguous target identity", async () => {
-  for (const after of [tree({ title: "other" }), tree({ value: "external edit" }), tree({ duplicate: true })]) {
+  for (const after of [tree().replace("file:///tmp/fixture", "file:///tmp/other"), tree({ value: "external edit" }), tree({ duplicate: true })]) {
     const f = fixture({ states: [tree(), after] });
     await f.observe();
     await assert.rejects(f.guard(request("set_value", { element_index: 1, value: "new" })), /changed/);
@@ -357,6 +357,83 @@ test("setValue can use unchanged descendants when same-named controls share cont
   await f.observe();
   await f.guard(request("set_value", { element_index: 1, value: "5" }));
   assert.equal(f.actions()[0].verification, "exact-field-value");
+});
+
+test("a progress title can change without blocking an action in the same observed workflow", async () => {
+  // Reduced from the Comfy Desktop snapshots whose 68% -> 76% title change blocked Fit View.
+  const snapshot = (progress, workflow = "workflow") => `Window: "ComfyUI — [${progress}%] Node — Comfy Desktop v1.1.7", App: Comfy Desktop.
+0 standard window ComfyUI — [${progress}%] Node — Comfy Desktop v1.1.7, Secondary Actions: Raise
+\t1 container ComfyUI — [${progress}%] Node — Comfy Desktop v1.1.7
+\t\t3 HTML content Comfy Desktop — Title Bar, URL: file:///Applications/Comfy%20Desktop.app/Contents/Resources/app.asar/out/renderer/comfyTitleBar.html?installationId=
+\t\t18 HTML content [${progress}%] Node, URL: 127.0.0.1:8188/#${workflow}
+\t\t\t84 button Fit View (.)`;
+  const click = request("click", { x: 2210, y: 1734 });
+  const nativeApp = "/Applications/Comfy Desktop.app";
+  const same = fixture({ nativeApp, states: [snapshot(68), snapshot(76)] });
+  await same.observe();
+  await same.guard(click);
+  assert.equal(same.actions()[0].outcome, "completed");
+  assert.equal(same.calls.filter(call => call.method === "click").length, 1);
+
+  const changed = fixture({ nativeApp, states: [snapshot(68), snapshot(76, "other")] });
+  await changed.observe();
+  await assert.rejects(changed.guard(click), /document changed/);
+  assert.equal(changed.actions()[0].dispatched, false);
+
+  const unproven = fixture({ nativeApp, states: [
+    'Window: "Job 10%", App: Comfy Desktop.\n0 standard window Job 10%',
+    'Window: "Job 11%", App: Comfy Desktop.\n0 standard window Job 11%',
+  ] });
+  await unproven.observe();
+  await assert.rejects(unproven.guard(click), /document changed/);
+  assert.equal(unproven.actions()[0].dispatched, false);
+});
+
+test("a changing embedded frame does not stale an unchanged native window", async () => {
+  // Reduced from a real WebKit window with a changing local iframe.
+  const snapshot = (page, title = "macuse row fixture") => `Window: "${title}", App: FrameProbe.
+0 standard window ${title}, URL: file:///tmp/macuse-owned-row-document
+\t1 scroll area
+\t\t2 HTML content Description: Workflow fixture, URL: file:///tmp/macuse-row-fixture/
+\t\t\t7 scroll area
+\t\t\t\t8 HTML content Description: Embedded content, URL: 127.0.0.1:64711/${page}`;
+  const nativeApp = "/tmp/FrameProbe.app";
+  const f = fixture({ nativeApp, states: [snapshot("one"), snapshot("two")] });
+  await f.observe();
+  await f.guard(request("press_key", { key: "super+h" }));
+  assert.equal(f.actions()[0].outcome, "completed");
+
+  const progress = fixture({ nativeApp, states: [snapshot("one"), snapshot("two", "macuse row fixture 50%")] });
+  await progress.observe();
+  await progress.guard(request("press_key", { key: "super+h" }));
+  assert.equal(progress.actions()[0].outcome, "completed");
+});
+
+test("a changing title does not make the same focused native window stale", async () => {
+  const snapshot = progress => `Window: "macuse progress ${progress}%", App: ProgressProbe.
+0 standard window macuse progress ${progress}%, URL: file:///tmp/macuse-owned-progress-document, Secondary Actions: Raise
+\t1 button No-op
+\t2 close button
+\t3 zoom button (disabled)
+\t4 image macuse-owned-progress-document
+\t5 text macuse progress ${progress}%
+
+The focused UI element is 0 standard window macuse progress ${progress}%`;
+  const nativeApp = "/tmp/ProgressProbe.app";
+  const f = fixture({ nativeApp, states: [snapshot(10), snapshot(11)] });
+  await f.observe();
+  await f.guard(request("press_key", { key: "Escape" }));
+  assert.equal(f.actions()[0].outcome, "completed");
+
+  const button = fixture({ nativeApp, states: [snapshot(10), snapshot(11)] });
+  await button.observe();
+  await button.guard(request("perform_secondary_action", { element_index: 1, action: "Press" }));
+  assert.equal(button.actions()[0].outcome, "completed");
+
+  const changed = fixture({ nativeApp, states: [snapshot(10), snapshot(11).replace("button No-op", "button Run")] });
+  await changed.observe();
+  await assert.rejects(changed.guard(request("press_key", { key: "Escape" })), /Focused field changed/);
+  assert.equal(changed.actions()[0].dispatched, false);
 });
 
 const popupUrl = "chrome-extension://ghmbeldphafepmbegfdlkpapadhbakde/popup.html#/u/0/share/fixture/item/fixture?filters=fixture";
@@ -773,7 +850,7 @@ test("app-wide Command shortcuts tolerate changed focused text but never documen
     await f.observe();
     await f.guard(request("press_key", { key }));
     assert.equal(f.calls.at(-1).method, "press_key");
-    const drift = fixture({ states: [tree(), tree({ title: "other" })] });
+    const drift = fixture({ states: [tree(), tree().replace("file:///tmp/fixture", "file:///tmp/other")] });
     await drift.observe();
     await assert.rejects(drift.guard(request("press_key", { key })), /document changed/);
   }
@@ -963,7 +1040,7 @@ test("host insertion invalidates observations once per run without resetting bin
 
 test("setValue readback requires the unique field, exact value and same document", async () => {
   for (const after of [
-    tree({ title: "other", value: "new" }),
+    tree({ value: "new" }).replace("file:///tmp/fixture", "file:///tmp/other"),
     tree().replace("4 text unrelated clock", "4 text field (settable) ID: unrelated, Value: new"),
     tree({ value: "new " }),
     tree({ value: "new", duplicate: true }),
