@@ -11,6 +11,7 @@ export interface AppElement {
   secondaryActions: string[];
   line: string;
   context: string;
+  cellValueContext: string;
   descendants: string;
 }
 export interface AppObservation {
@@ -27,4 +28,5 @@ export interface AppObservation {
 export function parseAppState(app: string, text: string): AppObservation;
 export function sameDocument(before: AppObservation, after: AppObservation): boolean;
 export function findUniqueElement(element: AppElement, observation: AppObservation): AppElement | undefined;
+export function findContextElement(element: AppElement, observation: AppObservation): AppElement | undefined;
 export function findSameElement(element: AppElement, observation: AppObservation): AppElement | undefined;

@@ -179,6 +179,87 @@ test("preflight rejects document or field drift and ambiguous target identity", 
   }
 });
 
+test("a distinct scroll area remains addressable when another has the same generic name", async () => {
+  // Reduced from the System Settings Privacy & Security page.
+  const before = `Window: "Privacy & Security", App: System Settings.
+0 standard window Privacy & Security, ID: Main, Secondary Actions: Raise
+\t1 split group Main, SidebarNavigationSplitView
+\t\t2 container
+\t\t\t3 scroll area Secondary Actions: Scroll Up, Scroll Down
+\t\t\t\t4 list Description: Sidebar, ID: com.apple.settings.applicationSearch.collectionView
+\t\t\t\t\t6 row (selected) Security settings, Privacy & Security
+\t\t51 search text field (settable) Value: Privacy & Security, Placeholder: Search
+\t\t55 scroll area Secondary Actions: Scroll Up, Scroll Down, Cancel
+\t\t\t56 container
+\t\t\t\t57 text Privacy
+\t\t\t58 button Description: Location Services, ID: Location Services_Navigator
+\t\t\t100 scroll bar (settable, float) 1`;
+  const fresh = before.replace("\t\t55 scroll area", "\t\t155 scroll area");
+  const f = fixture({ nativeApp: "System Settings", states: [before, fresh] });
+  await f.observe();
+  await f.guard(request("scroll", { element_index: 55, direction: "up", pages: 1 }));
+  assert.equal(f.calls.at(-1).args[0].element_index, 155);
+  assert.equal(f.actions()[0].outcome, "completed");
+});
+
+test("setValue verifies a distinguishable same-named field, not its peer", async () => {
+  const before = `Window: "fixture", App: App.
+0 standard window fixture, URL: file:///tmp/fixture
+	1 group Billing
+		2 text field (settable) Value: old
+	3 group Shipping
+		4 text field (settable) Value: other`;
+  for (const [after, verified] of [
+    [before.replace("Value: old", "Value: new"), true],
+    [before.replace("Value: other", "Value: new"), false],
+    [before.replace("\t1 group Billing\n\t\t2 text field (settable) Value: old\n", "").replace("Value: other", "Value: new"), false],
+  ]) {
+    const f = fixture({ states: [before, before, after] });
+    await f.observe();
+    const edit = f.guard(request("set_value", { element_index: 2, value: "new" }));
+    if (verified) {
+      await edit;
+      assert.equal(f.actions()[0].verification, "exact-field-value");
+    } else {
+      await assert.rejects(edit, /readback/);
+      assert.equal(f.actions()[0].outcome, "unknown");
+    }
+  }
+});
+
+test("setValue verifies a scroll bar whose value indicator changes with it", async () => {
+  // Reduced from the live System Settings Privacy & Security page.
+  const before = `Window: "Privacy & Security", App: System Settings.
+0 standard window Privacy & Security, ID: Main, Secondary Actions: Raise
+	1 split group Main, SidebarNavigationSplitView
+		2 container
+			3 scroll area
+				45 scroll bar (settable, float) 0
+					46 value indicator (settable, float) 0
+		55 scroll area Secondary Actions: Scroll Up, Scroll Down, Cancel
+			100 scroll bar (settable, float) 1
+				101 value indicator (settable, float) 1`;
+  const after = before.replace("100 scroll bar (settable, float) 1", "100 scroll bar (settable, float) 0")
+    .replace("101 value indicator (settable, float) 1", "101 value indicator (settable, float) 0");
+  const f = fixture({ nativeApp: "System Settings", states: [before, before, after] });
+  await f.observe();
+  await f.guard(request("set_value", { element_index: 100, value: "0" }));
+  assert.equal(f.actions()[0].verification, "exact-field-value");
+});
+
+test("setValue can use unchanged descendants when same-named controls share context", async () => {
+  const before = `Window: "fixture", App: App.
+0 standard window fixture, URL: file:///tmp/fixture
+	1 slider (settable, float) 0
+		2 value indicator A
+	3 slider (settable, float) 1
+		4 value indicator B`;
+  const f = fixture({ states: [before, before, before.replace("1 slider (settable, float) 0", "1 slider (settable, float) 5")] });
+  await f.observe();
+  await f.guard(request("set_value", { element_index: 1, value: "5" }));
+  assert.equal(f.actions()[0].verification, "exact-field-value");
+});
+
 const popupUrl = "chrome-extension://ghmbeldphafepmbegfdlkpapadhbakde/popup.html#/u/0/share/fixture/item/fixture?filters=fixture";
 const popupTree = ({ page = `HTML content ${popupUrl}`, value = "old" } = {}) =>
   `Window: "", App: Brave Browser.\n0 window Secondary Actions: Raise\n\t1 container\n\t\t2 scroll area\n\t\t\t3 ${page}\n\t\t\t\t4 container\n\t\t\t\t\t8 button Open navigation\n\t\t\t\t\t11 text field (settable) Search in all items…, Value: ${value}`;
