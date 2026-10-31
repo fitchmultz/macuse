@@ -202,6 +202,31 @@ test("a distinct scroll area remains addressable when another has the same gener
   assert.equal(f.actions()[0].outcome, "completed");
 });
 
+test("setValue verifies a distinguishable same-named field, not its peer", async () => {
+  const before = `Window: "fixture", App: App.
+0 standard window fixture, URL: file:///tmp/fixture
+	1 group Billing
+		2 text field (settable) Value: old
+	3 group Shipping
+		4 text field (settable) Value: other`;
+  for (const [after, verified] of [
+    [before.replace("Value: old", "Value: new"), true],
+    [before.replace("Value: other", "Value: new"), false],
+    [before.replace("\t1 group Billing\n\t\t2 text field (settable) Value: old\n", "").replace("Value: other", "Value: new"), false],
+  ]) {
+    const f = fixture({ states: [before, before, after] });
+    await f.observe();
+    const edit = f.guard(request("set_value", { element_index: 2, value: "new" }));
+    if (verified) {
+      await edit;
+      assert.equal(f.actions()[0].verification, "exact-field-value");
+    } else {
+      await assert.rejects(edit, /readback/);
+      assert.equal(f.actions()[0].outcome, "unknown");
+    }
+  }
+});
+
 const popupUrl = "chrome-extension://ghmbeldphafepmbegfdlkpapadhbakde/popup.html#/u/0/share/fixture/item/fixture?filters=fixture";
 const popupTree = ({ page = `HTML content ${popupUrl}`, value = "old" } = {}) =>
   `Window: "", App: Brave Browser.\n0 window Secondary Actions: Raise\n\t1 container\n\t\t2 scroll area\n\t\t\t3 ${page}\n\t\t\t\t4 container\n\t\t\t\t\t8 button Open navigation\n\t\t\t\t\t11 text field (settable) Search in all items…, Value: ${value}`;
