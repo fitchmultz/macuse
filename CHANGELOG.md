@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Allow authorized actions in untitled native windows and sheets that expose no document ID, while retaining available document metadata and target checks.
+- Return native Computer Use text and all action summaries without macuse-owned output caps, so first-use instructions, app state and action evidence reach the host.
 - Add a separate owned-fixture session proof joining the independent executor and native actuator with pre-read process identity pinning, trusted-only authority, visible native outcome evidence, bounded parent-owned screenshots, and honest reset/stop settlement. Production backends and tool defaults remain unchanged.
 - Add a separate opt-in independent JavaScriptCore executor proof with deny-default OS sandbox probes, trusted capability RPC, persistent bindings, interruption evidence, and process/resource checks. Production Pi/CLI/MCP and the vendor backend are unchanged; this is not a full independence or hard memory-isolation claim.
 - Add `macuse runtime`, a read-only selected-launch-file version/path/SHA-256 inventory for diagnosing vendor updates without starting services.
