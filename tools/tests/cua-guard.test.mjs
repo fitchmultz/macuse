@@ -227,6 +227,26 @@ test("setValue verifies a distinguishable same-named field, not its peer", async
   }
 });
 
+test("setValue verifies a scroll bar whose value indicator changes with it", async () => {
+  // Reduced from the live System Settings Privacy & Security page.
+  const before = `Window: "Privacy & Security", App: System Settings.
+0 standard window Privacy & Security, ID: Main, Secondary Actions: Raise
+	1 split group Main, SidebarNavigationSplitView
+		2 container
+			3 scroll area
+				45 scroll bar (settable, float) 0
+					46 value indicator (settable, float) 0
+		55 scroll area Secondary Actions: Scroll Up, Scroll Down, Cancel
+			100 scroll bar (settable, float) 1
+				101 value indicator (settable, float) 1`;
+  const after = before.replace("100 scroll bar (settable, float) 1", "100 scroll bar (settable, float) 0")
+    .replace("101 value indicator (settable, float) 1", "101 value indicator (settable, float) 0");
+  const f = fixture({ nativeApp: "System Settings", states: [before, before, after] });
+  await f.observe();
+  await f.guard(request("set_value", { element_index: 100, value: "0" }));
+  assert.equal(f.actions()[0].verification, "exact-field-value");
+});
+
 const popupUrl = "chrome-extension://ghmbeldphafepmbegfdlkpapadhbakde/popup.html#/u/0/share/fixture/item/fixture?filters=fixture";
 const popupTree = ({ page = `HTML content ${popupUrl}`, value = "old" } = {}) =>
   `Window: "", App: Brave Browser.\n0 window Secondary Actions: Raise\n\t1 container\n\t\t2 scroll area\n\t\t\t3 ${page}\n\t\t\t\t4 container\n\t\t\t\t\t8 button Open navigation\n\t\t\t\t\t11 text field (settable) Search in all items…, Value: ${value}`;
