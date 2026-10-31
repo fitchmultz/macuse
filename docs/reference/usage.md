@@ -110,7 +110,7 @@ To save a screenshot from the bound app:
 }
 ```
 
-macuse saves the first emitted image at the exact requested path, resolves relative paths against the session working directory, expands `~`, and refuses to overwrite a file. Check the returned `savedImage` path, bytes, SHA-256, actual MIME type, and available dimensions before claiming an artifact was saved. Text output is capped after full guard state is collected; clipped output remains available in tool details.
+macuse saves the first emitted image at the exact requested path, resolves relative paths against the session working directory, expands `~`, and refuses to overwrite a file. Check the returned `savedImage` path, bytes, SHA-256, actual MIME type, and available dimensions before claiming an artifact was saved. Native text and images are returned to the host; host output handling may apply. Guards use the complete native app state.
 
 ## CLI and MCP
 
