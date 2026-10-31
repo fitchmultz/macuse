@@ -179,6 +179,29 @@ test("preflight rejects document or field drift and ambiguous target identity", 
   }
 });
 
+test("a distinct scroll area remains addressable when another has the same generic name", async () => {
+  // Reduced from the System Settings Privacy & Security page.
+  const before = `Window: "Privacy & Security", App: System Settings.
+0 standard window Privacy & Security, ID: Main, Secondary Actions: Raise
+\t1 split group Main, SidebarNavigationSplitView
+\t\t2 container
+\t\t\t3 scroll area Secondary Actions: Scroll Up, Scroll Down
+\t\t\t\t4 list Description: Sidebar, ID: com.apple.settings.applicationSearch.collectionView
+\t\t\t\t\t6 row (selected) Security settings, Privacy & Security
+\t\t51 search text field (settable) Value: Privacy & Security, Placeholder: Search
+\t\t55 scroll area Secondary Actions: Scroll Up, Scroll Down, Cancel
+\t\t\t56 container
+\t\t\t\t57 text Privacy
+\t\t\t58 button Description: Location Services, ID: Location Services_Navigator
+\t\t\t100 scroll bar (settable, float) 1`;
+  const fresh = before.replace("\t\t55 scroll area", "\t\t155 scroll area");
+  const f = fixture({ nativeApp: "System Settings", states: [before, fresh] });
+  await f.observe();
+  await f.guard(request("scroll", { element_index: 55, direction: "up", pages: 1 }));
+  assert.equal(f.calls.at(-1).args[0].element_index, 155);
+  assert.equal(f.actions()[0].outcome, "completed");
+});
+
 const popupUrl = "chrome-extension://ghmbeldphafepmbegfdlkpapadhbakde/popup.html#/u/0/share/fixture/item/fixture?filters=fixture";
 const popupTree = ({ page = `HTML content ${popupUrl}`, value = "old" } = {}) =>
   `Window: "", App: Brave Browser.\n0 window Secondary Actions: Raise\n\t1 container\n\t\t2 scroll area\n\t\t\t3 ${page}\n\t\t\t\t4 container\n\t\t\t\t\t8 button Open navigation\n\t\t\t\t\t11 text field (settable) Search in all items…, Value: ${value}`;
