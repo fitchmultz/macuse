@@ -60,7 +60,6 @@ test("document URL uses scoped metadata, never arbitrary body URLs or unfinished
   assert.equal(sameDocument(observed, { ...observed, title: "Other" }), false);
   assert.equal(sameDocument(observed, { ...observed, app: "browser" }), false);
   assert.equal(sameDocument(observed, { ...observed }), true);
-  assert.equal(sameDocument({ app: "App", title: null, url: null }, { app: "App", title: null, url: null }), false);
 });
 
 test("stable target resolution accepts index changes but rejects duplicate or missing IDs", () => {

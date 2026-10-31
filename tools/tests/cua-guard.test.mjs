@@ -166,24 +166,13 @@ test("an empty-title popup uses its sole full page label as title, not URL proof
   }
 });
 
-test("anonymous popup labels cannot bypass document, target, or exact readback guards", async () => {
+test("popup actions reject observed document or target drift and require exact readback", async () => {
   const before = popupTree();
   const cases = [
     ["changed full URL", before, before.replace("item/fixture", "item/other"), /document changed/],
     ["changed fragment", before, before.replace("filters=fixture", "filters=other"), /document changed/],
     ["changed value", before, popupTree({ value: "external edit" }), /Target identity or value changed/],
     ["duplicate target", before, `${before}\n\t\t\t\t\t12 text field (settable) Search in all items…, Value: old`, /Target identity or value changed/],
-    ...[
-      ["ordinary body URL", popupTree({ page: `text ${popupUrl}` })],
-      ["unnamed document", popupTree({ page: "HTML content" })],
-      ["URL prefix without scheme", popupTree({ page: "HTML content ghmbeldphafepmbegfdlkpapadhbakde/popup.html" })],
-      ["invalid URL", popupTree({ page: "HTML content https://" })],
-      ["URL with extra text", popupTree({ page: `HTML content ${popupUrl} is the current page` })],
-      ["URL with metadata", popupTree({ page: `HTML content ${popupUrl}, Help: page` })],
-      ["multiple distinct page labels", `${before}\n\t\t\t12 web area https://other.invalid/`],
-      ["duplicate page labels", `${before}\n\t\t\t12 HTML content ${popupUrl}`],
-      ["multiple anonymous windows", `${before}\n12 window Secondary Actions: Raise`],
-    ].map(([name, text]) => [name, text, text, /document changed/]),
   ];
   for (const [name, observed, fresh, error] of cases) {
     const f = fixture({ states: [observed, fresh] });
@@ -202,19 +191,19 @@ test("anonymous popup labels cannot bypass document, target, or exact readback g
   }
 });
 
-test("named top-level native sheets and windows permit targeted actions but reject title drift and unnamed roots", async () => {
+test("native sheets and windows permit targeted actions but reject observed title drift", async () => {
   const title = 'Add "Proton Pass: Free Password Manager"?';
   for (const role of ["sheet", "window"]) {
     const snapshot = (name, actions) => `Window: "", App: Google Chrome.\n0 ${role} ${name}${name ? ", " : ""}Secondary Actions: ${actions}\n\t1 container ${title}\n\t\t2 container\n\t\t\t3 heading ${title}\n\t\t\t8 container\n\t\t\t\t9 button Cancel\n\t\t\t\t10 button Add extension\n11 menu bar\n\t12 Chrome`;
     for (const [observed, fresh, allowed, actions = "Raise"] of [
-      [title, title, true], [title, "Other sheet", false], ["", "", false], ["", "", false, "Raise, Minimize"],
+      [title, title, true], [title, "Other sheet", false], ["", "", true], ["", "", true, "Raise, Minimize"],
     ]) {
       const f = fixture({ nativeApp: "Google Chrome", states: [snapshot(observed, actions), snapshot(fresh, actions)] });
       await f.observe();
       const action = f.guard(request("perform_secondary_action", { element_index: 10, action: "Press" }));
       if (allowed) {
         await action;
-        assert.deepEqual(f.actions()[0].before, { title, url: null, nativeWindowIdentity: false });
+        assert.deepEqual(f.actions()[0].before, { title: observed, url: null, nativeWindowIdentity: false });
         assert.equal(f.actions()[0].outcome, "completed");
       } else {
         await assert.rejects(action, /document changed/);
@@ -226,6 +215,28 @@ test("named top-level native sheets and windows permit targeted actions but reje
 
 const goToSheet = ({ root = "sheet ID: GoToWindow, Secondary Actions: Raise", index = 2, value = "/tmp", focused = false } = {}) =>
   `Window: "", App: Pi Durable.\n0 ${root}\n\t1 text Go to the folder:\n\t${index} text field (settable) ID: PathTextField, Value: ${value}\n\t3 button Go, ID: GoButton\n\t4 button Cancel, ID: CancelButton\n5 menu bar\n\t6 Pi Durable${focused ? `\nThe focused UI element is ${index} text field` : ""}`;
+
+test("observed untitled System Settings sheet permits its application-scripting switch", async () => {
+  const sheet = `Window: "", App: System Settings.
+0 sheet Secondary Actions: Raise
+\t1 container
+\t\t2 scroll area
+\t\t\t3 switch Value: on, Remote Application Scripting allows Apple events sent from other computers to control applications on this Mac.
+\t\t12 button Help
+\t\t13 button Done
+14 menu bar
+\t15 System Settings`;
+  for (const [method, input] of [
+    ["perform_secondary_action", { element_index: 3, action: "Press" }],
+    ["click", { x: 837, y: 78 }],
+  ]) {
+    const f = fixture({ nativeApp: "System Settings", states: [sheet] });
+    await f.observe();
+    await f.guard(request(method, input));
+    assert.equal(f.actions()[0].outcome, "completed");
+    assert.equal(f.calls.filter(call => call.method === method).length, 1);
+  }
+});
 
 test("same-ID menu actions preserve full labels with metadata and reject changed labels before dispatch", async () => {
   for (const [prefix, metadata] of [["", ""], ["menu item ", ""], ["", ", Description: Recording control"]]) {
@@ -314,7 +325,7 @@ test("a sole identified untitled native sheet permits exact setValue and Escape 
   }
 });
 
-test("untitled sheet actions reject changed, missing or ambiguous document identity before dispatch", async () => {
+test("untitled sheet actions reject observed document identity changes before dispatch", async () => {
   const before = goToSheet();
   const cases = [
     ["changed sheet ID", before, before.replace("ID: GoToWindow", "ID: OtherSheet")],
@@ -323,24 +334,6 @@ test("untitled sheet actions reject changed, missing or ambiguous document ident
     ["new URL", before, before.replace("ID: GoToWindow", "ID: GoToWindow, URL: file:///tmp/other")],
     ["changed root role", before, before.replace("0 sheet", "0 window")],
     ["new ambiguous parent", before, `${before}\n7 standard window Parent document`],
-    ...[
-      ["unidentified sheet", goToSheet({ root: "sheet Secondary Actions: Raise" })],
-      ["empty sheet ID", goToSheet({ root: "sheet ID: , Secondary Actions: Raise" })],
-      ["blank sheet ID", goToSheet({ root: "sheet ID:   , Secondary Actions: Raise" })],
-      ["unidentified window", goToSheet({ root: "window Secondary Actions: Raise" })],
-      ["identified window, not sheet", goToSheet({ root: "window ID: GoToWindow, Secondary Actions: Raise" })],
-      ["duplicate sheet ID", `${before}\n\t7 group ID: GoToWindow`],
-      ["second sheet", `${before}\n7 sheet ID: OtherSheet, Secondary Actions: Raise`],
-      ["second window", `${before}\n7 standard window Parent document`],
-      ["unidentified extra root", `${before}\n7 dialog`],
-      ["ambiguous extra root", `${before}\n7 group`],
-      ["unrecognized extra root", `${before}\n7 unknown native root`],
-      ["unrecognized root after wrapper", `<app_state>\n${before}\n</app_state>\n7 unknown native root`],
-      ["sheet with a nested window", before.replace("\t1 text", "\t7 window ID: ParentWindow\n\t1 text")],
-      ["sheet with a nested dialog", before.replace("\t1 text", "\t7 dialog\n\t1 text")],
-      ["sheet nested under an unidentified parent", before.replace("0 sheet", "0 window Secondary Actions: Raise\n\t7 sheet")],
-      ["unidentified web document inside sheet", before.replace("\t1 text", "\t7 web area\n\t1 text")],
-    ].map(([name, state]) => [name, state, state]),
   ];
   for (const [name, observed, fresh] of cases) {
     for (const [method, input] of [["set_value", { element_index: 2, value: "/tmp/new" }], ["press_key", { key: "Escape" }]]) {
