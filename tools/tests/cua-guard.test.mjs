@@ -142,6 +142,79 @@ test("paste retains exact scope, observation, document and focused-input guards"
   await assert.rejects(f.guard(request("paste", { app: "Other", text: "new", format: "text" })), /scope/);
 });
 
+test("a click can hand off to paste when the clicked field becomes focused", async () => {
+  // Reduced from the Seltzer search workflow.
+  const before = `Window: "Seltzer", App: Seltzer.
+0 standard window Seltzer, Secondary Actions: Raise
+	1 search text field (settable) Search sessions
+		2 button Search
+	20 text field (settable) ID: other, Value: other
+	28 scroll area
+		29 outline Session waterfall. 50 visible lanes.
+The focused UI element is 29 outline`;
+  for (const [focus, succeeds] of [["1 search text field", true], ["20 text field", false]]) {
+    const afterClick = before.replace("The focused UI element is 29 outline", `The focused UI element is ${focus}`);
+    const f = fixture({ nativeApp: "Seltzer", states: [before, before, afterClick] });
+    await f.observe();
+    await f.guard(request("click", { element_index: 1 }));
+    const paste = f.guard(request("paste", { text: "trace-000", format: "text" }));
+    if (succeeds) {
+      await paste;
+      assert.equal(f.actions()[1].outcome, "completed");
+    } else {
+      await assert.rejects(paste, /Focused field/);
+      assert.equal(f.actions()[1].dispatched, false);
+    }
+  }
+});
+
+test("a click that leaves the previously observed field focused does not block input", async () => {
+  // Reduced from System Settings after clicking its settable content scroll bar.
+  const before = `Window: "Privacy & Security", App: System Settings.
+0 standard window Privacy & Security, ID: Main, Secondary Actions: Raise
+	1 split group Main, SidebarNavigationSplitView
+		51 search text field (settable) Value: Privacy & Security, Placeholder: Search
+		55 scroll area
+			100 scroll bar (settable, float) 1
+				101 value indicator (settable, float) 1
+The focused UI element is 51 search text field`;
+  const afterClick = before.replace("100 scroll bar (settable, float) 1", "100 scroll bar (settable, float) 0.998")
+    .replace("101 value indicator (settable, float) 1", "101 value indicator (settable, float) 0.998");
+  const f = fixture({ nativeApp: "System Settings", states: [before, before, afterClick] });
+  await f.observe();
+  await f.guard(request("click", { element_index: 100 }));
+  await f.guard(request("press_key", { key: "Left" }));
+  assert.equal(f.actions()[1].outcome, "completed");
+});
+
+test("a verified setValue can hand off to Return on the same focused field", async () => {
+  // Reduced from Finder's Go to Folder panel.
+  const before = `Window: "Go to Folder", App: Finder.
+0 standard window Go to Folder, ID: GoToWindow, Secondary Actions: Raise
+	1 button Description: Close, ID: CloseButton
+	2 text field (settable) ID: PathTextField, Value: /private/tmp/old`;
+  const after = `Window: "Go to Folder", App: Finder.
+0 standard window Go to Folder, ID: GoToWindow, Secondary Actions: Raise
+	1 text /Applications
+	2 button Description: Close, ID: CloseButton
+	3 text field (settable) Value: /Applications, ID: PathTextField
+The focused UI element is 3 text field`;
+  for (const [readback, succeeds] of [[after, true], [after.replace("The focused UI element is 3 text field", "The focused UI element is 2 button"), false]]) {
+    const f = fixture({ nativeApp: "Finder", states: [before, before, readback, readback] });
+    await f.observe();
+    await f.guard(request("set_value", { element_index: 2, value: "/Applications" }));
+    const key = f.guard(request("press_key", { key: "Return" }));
+    assert.equal(f.actions()[0].verification, "exact-field-value");
+    if (succeeds) {
+      await key;
+      assert.equal(f.actions()[1].outcome, "completed");
+    } else {
+      await assert.rejects(key, /Focused field/);
+      assert.equal(f.actions()[1].dispatched, false);
+    }
+  }
+});
+
 test("failed paste preserves uncertain outcome and prevents replay", async () => {
   const f = fixture({ mutate: () => { throw new Error("native pipe closed"); } });
   await f.observe();
