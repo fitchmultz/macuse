@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Accept native execution deadlines below one second and above five minutes, within Node's request-timer range.
+- Allow a following keypress when an indexed click on a non-settable control or AX Press returns focus to an identified containing element.
 - Carry the intended field from an indexed click or exact `setValue` readback into the next keyboard action when fresh state confirms focus.
 - Verify `setValue` against a uniquely identified field after the surrounding UI changes, while retaining exact-value, document and pre-dispatch target checks.
 - Allow authorized actions in untitled native windows and sheets that expose no document ID, while retaining available document metadata and target checks.

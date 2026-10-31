@@ -1,5 +1,6 @@
 export interface AppElement {
   index: string;
+  parentIndex?: string;
   id?: string;
   role: string;
   name: string;

@@ -187,6 +187,32 @@ The focused UI element is 51 search text field`;
   assert.equal(f.actions()[1].outcome, "completed");
 });
 
+test("an indexed dismissal can return focus to its containing document for a following shortcut", async () => {
+  // Reduced from a real WebKit notice dismissal and the recorded Comfy Desktop flow.
+  const before = `Window: "macuse row fixture", App: FocusProbe.
+0 standard window macuse row fixture, URL: file:///tmp/macuse-owned-row-document
+\t1 scroll area
+\t\t2 HTML content Description: Workflow fixture, URL: file:///tmp/macuse-row-fixture/
+\t\t\t3 outline Workflows
+\t\t\t\t4 row Workflow
+\t\t\t6 button Close notice
+The focused UI element is 4 row Workflow`;
+  const after = `Window: "macuse row fixture", App: FocusProbe.
+0 standard window macuse row fixture, URL: file:///tmp/macuse-owned-row-document
+\t1 scroll area
+\t\t2 HTML content Description: Workflow fixture, URL: file:///tmp/macuse-row-fixture/
+\t\t\t3 outline Workflows
+\t\t\t\t4 row Workflow
+The focused UI element is 2 HTML content`;
+  for (const [method, input] of [["perform_secondary_action", { element_index: 6, action: "Press" }], ["click", { element_index: 6 }]]) {
+    const f = fixture({ nativeApp: "FocusProbe", states: [before, before, after] });
+    await f.observe();
+    await f.guard(request(method, input));
+    await f.guard(request("press_key", { key: "period" }));
+    assert.equal(f.actions()[1].outcome, "completed");
+  }
+});
+
 test("a verified setValue can hand off to Return on the same focused field", async () => {
   // Reduced from Finder's Go to Folder panel.
   const before = `Window: "Go to Folder", App: Finder.
