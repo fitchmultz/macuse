@@ -382,15 +382,31 @@ test("a progress title can change without blocking an action in the same observe
   await assert.rejects(changed.guard(click), /document changed/);
   assert.equal(changed.actions()[0].dispatched, false);
 
-  const changedSameTitle = fixture({ nativeApp, states: [snapshot(68), snapshot(68, "other")], windowEvidence });
-  await changedSameTitle.observe();
-  await assert.rejects(changedSameTitle.guard(click), /document changed/);
-  assert.equal(changedSameTitle.actions()[0].dispatched, false);
-
   const unproven = fixture({ nativeApp, states: [snapshot(68), snapshot(76)] });
   await unproven.observe();
   await assert.rejects(unproven.guard(click), /document changed/);
   assert.equal(unproven.actions()[0].dispatched, false);
+});
+
+test("a changing embedded frame does not stale an unchanged native window", async () => {
+  // Reduced from a real WebKit window with a changing local iframe.
+  const snapshot = (page, title = "macuse row fixture") => `Window: "${title}", App: FrameProbe.
+0 standard window ${title}, URL: file:///tmp/macuse-owned-row-document
+\t1 scroll area
+\t\t2 HTML content Description: Workflow fixture, URL: file:///tmp/macuse-row-fixture/
+\t\t\t7 scroll area
+\t\t\t\t8 HTML content Description: Embedded content, URL: 127.0.0.1:64711/${page}`;
+  const nativeApp = "/tmp/FrameProbe.app";
+  const windowEvidence = () => ({ action: "accept", content: { appPath: nativeApp, pid: 100, token: "window-1", document: "file:///tmp/macuse-owned-row-document" } });
+  const f = fixture({ nativeApp, states: [snapshot("one"), snapshot("two")], windowEvidence });
+  await f.observe();
+  await f.guard(request("press_key", { key: "super+h" }));
+  assert.equal(f.actions()[0].outcome, "completed");
+
+  const progress = fixture({ nativeApp, states: [snapshot("one"), snapshot("two", "macuse row fixture 50%")], windowEvidence });
+  await progress.observe();
+  await progress.guard(request("press_key", { key: "super+h" }));
+  assert.equal(progress.actions()[0].outcome, "completed");
 });
 
 test("a changing title does not make the same focused native window stale", async () => {
