@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Accept native execution deadlines below one second and above five minutes, within Node's request-timer range.
 - Verify `setValue` against a uniquely identified field after the surrounding UI changes, while retaining exact-value, document and pre-dispatch target checks.
 - Allow authorized actions in untitled native windows and sheets that expose no document ID, while retaining available document metadata and target checks.
 - Return native Computer Use text and all action summaries without macuse-owned output caps, so first-use instructions, app state and action evidence reach the host.

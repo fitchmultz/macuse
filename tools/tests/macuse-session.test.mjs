@@ -46,6 +46,16 @@ test('code never starts auxiliary transport; invalid envelopes fail before nativ
   await f.session.stop();
 });
 
+test('session accepts native deadline values outside the old wrapper range', async () => {
+  const f = fixture();
+  for (const timeoutMs of [999, 300_001]) {
+    const result = await f.session.callTool('macuse', { code: '42', timeoutMs, trackFocus: false });
+    assert.equal(result.isError, false);
+  }
+  assert.deepEqual(f.events, ['code', 'code']);
+  await f.session.stop();
+});
+
 test('missing Sky focus marker is joined only to a unique matching native ID in the observed document', async () => {
   for (const mismatch of [false, 'document', 'value', 'duplicate', 'page label', 'sheet', 'window']) {
     const f = fixture();

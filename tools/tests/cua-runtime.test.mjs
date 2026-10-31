@@ -198,11 +198,22 @@ test("reset failure closes the connection and still settles a possibly dispatche
 test("invalid envelopes and pre-aborted calls never start the native runtime", async () => {
   const f = fixture();
   assert.throws(() => f.runtime.execute({ ...mutating, safetyNote: " \n " }), /safetyNote/);
-  for (const timeoutMs of [NaN, 999, 300_001]) assert.throws(() => f.runtime.execute({ code: "mock", timeoutMs }), /timeoutMs/);
+  for (const timeoutMs of [NaN, 0, -1, 2_147_468_648]) assert.throws(() => f.runtime.execute({ code: "mock", timeoutMs }), /timeoutMs/);
   const result = await f.runtime.execute(mutating, { signal: AbortSignal.abort() });
   assert.equal(result.isError, true);
   assert.equal(f.connects(), 0);
   assert.equal(f.calls.length, 0);
+});
+
+test("caller deadlines supported by the native runtime are passed through", async () => {
+  const f = fixture();
+  for (const timeoutMs of [1, 999, 300_001, 2_147_468_647]) {
+    const result = await f.runtime.execute({ code: "mock", timeoutMs });
+    assert.equal(result.isError, false);
+    assert.equal(f.calls.at(-1).request.arguments.timeout_ms, timeoutMs);
+    assert.equal(f.calls.at(-1).options.timeout, timeoutMs + 15_000);
+  }
+  await f.runtime.stop();
 });
 
 test("only computer app-access elicitations inherit standing approval", () => {

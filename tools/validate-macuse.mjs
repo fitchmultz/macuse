@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { MacuseSession } from '../lib/macuse-session.mjs';
+import { MAX_CUA_TIMEOUT_MS } from '../lib/cua-timeout.mjs';
 import { tools } from '../lib/tools.mjs';
 import { VERSION } from './macuse-utils.mjs';
 
@@ -91,7 +92,7 @@ async function main() {
   if (values.help) { console.log('macuse validation: extension (offline) | quick | read-only | mutating | focus | mcp\nmutating/focus select an Activity Monitor tab and restore the captured original in finally. No recording/privacy changes.'); return; }
   assert.ok(['extension', 'quick', 'read-only', 'mutating', 'focus', 'mcp'].includes(mode), `Unknown mode: ${mode}`);
   const timeoutMs = Number(values['tool-timeout-ms']);
-  assert.ok(Number.isInteger(timeoutMs) && timeoutMs >= 1000 && timeoutMs <= 300000, 'Invalid timeout');
+  assert.ok(Number.isInteger(timeoutMs) && timeoutMs >= 1 && timeoutMs <= MAX_CUA_TIMEOUT_MS, 'Invalid timeout');
   const checks = [];
   const check = async (name, run) => {
     const detail = await run();

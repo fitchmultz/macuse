@@ -68,6 +68,8 @@ The recovery tool is ungrouped and outside macuse's saved entry/auxiliary select
 
 `macuse` accepts `code`, optional `apps`, `allowMutating`, `safetyNote`, `timeoutMs`, `trackFocus`, and `saveImagePath`. A mutation requires an exact `apps` scope matching the identifiers used in code, `allowMutating:true`, a concrete safety note, and a prior same-app observation. A safety note names the target, intended effect, and stop boundary; mutation notes must be nonempty. Flags record authorization; they do not create user permission.
 
+`timeoutMs` accepts 1–2,147,468,647 milliseconds and defaults to 90,000. The upper bound accounts for Node's maximum timer delay and the MCP request's 15-second settlement allowance; the native execution deadline is passed through unchanged.
+
 For an approved dismissal of Activity Monitor's current transient UI, after inspecting it:
 
 ```json
