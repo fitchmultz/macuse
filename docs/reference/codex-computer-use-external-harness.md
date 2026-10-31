@@ -38,7 +38,7 @@ Timeout/abort interrupts JavaScript through `js_reset` and awaits settlement. A 
 
 ## Output and screenshots
 
-App observation methods emit text/images directly. Presentation caps apply only after full state has reached the guard; use JavaScript to return task-relevant summaries rather than duplicating entire trees. The tool retains full clipped output in its details.
+App observation methods emit text/images directly. Guards retain full state, and native output is returned to the host; use JavaScript to return task-relevant summaries rather than duplicating entire trees.
 
 `saveImagePath` on `macuse` saves the first emitted screenshot to that exact path, resolving relative paths against the session working directory and expanding `~`. It never overwrites an existing file. The result reports `savedImage` evidence: path, byte count, SHA-256, actual MIME type, and available dimensions. Call a single screenshot observation when the intended saved frame matters.
 

@@ -107,13 +107,24 @@ test('guard-generated close evidence cannot certify labels or nonstandard roots 
   }
 });
 
-test('presentation caps never erase action outcomes or the full internal result', async () => {
+test('native documentation and app state reach the caller with action outcomes intact', async () => {
   const f = fixture();
-  f.runtime.execute = async () => ({ content: [{ type: 'text', text: 'x'.repeat(30000) }], isError: true, details: { macuse: { status: 'unknown', actions: [{ id: 1, method: 'set_value', app: 'Test', dispatched: true, outcome: 'unknown', verification: 'none' }] } } });
+  const content = [
+    { type: 'text', text: `Native Computer Use documentation\n${'documentation text '.repeat(1600)}` },
+    { type: 'text', text: 'Window: Settings\n0 search text field Search' },
+    { type: 'image', mimeType: 'image/png', data: 'aW1hZ2U=' },
+  ];
+  const actions = Array.from({ length: 21 }, (_, index) => ({
+    id: index + 1, method: 'click', app: 'Test', dispatched: true,
+    outcome: index === 20 ? 'unknown' : 'completed',
+    verification: index === 20 ? 'none' : 'native-returned',
+  }));
+  f.runtime.execute = async () => ({ content: [...content], isError: true, details: { macuse: { status: 'unknown', actions } } });
   const response = await f.session.callTool('macuse', { code: 'observe', trackFocus: false });
-  assert.equal(response.content[0].text.length, 20000);
-  assert.equal(response.details.macuse.fullOutput[0].text.length, 30000);
-  assert.match(response.content.at(-2).text, /\"dispatched\":true/);
+  assert.equal(response.content[0].text.length, content[0].text.length);
+  assert.equal(response.content[0].text, content[0].text);
+  assert.deepEqual(response.content.slice(1, 3), content.slice(1));
+  assert.deepEqual(JSON.parse(response.content.at(-2).text).actions, actions);
   assert.match(response.content.at(-1).text, /never automatically replay/);
 });
 

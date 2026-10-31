@@ -29,7 +29,7 @@ Start by calling `macuse` with one of:
 
 Replace `Exact App` with the intended name, bundle ID, or path from the app inventory. Keep that identifier in `apps`; the guard recognizes the native-resolved app path returned by the service without fuzzy aliases. The runtime emits documentation and first state. Read them before acting. Bindings persist between calls until reset or a session boundary; use `var` for bindings you may need to assign again.
 
-`app.getAXState()`, `app.getScreenshot()`, and `app.getAXStateAndScreenshot()` auto-emit. Do not print or emit the same result again. Native state is full, even if vendor documentation describes optional diff behavior. Use task-relevant JavaScript summaries when output is large; full guard state is retained before text presentation caps.
+`app.getAXState()`, `app.getScreenshot()`, and `app.getAXStateAndScreenshot()` auto-emit. Do not print or emit the same result again. Native state is full, even if vendor documentation describes optional diff behavior. Use task-relevant JavaScript summaries when output is large; guards retain the full state.
 
 Only the computer surface and guarded Sky service are enabled in the normal vendor sandbox. Vendor documentation may mention broader features: do not use browser/audio surfaces, arbitrary imports/modules, or another evaluator. Primary GUI calls do not use app-server.
 
