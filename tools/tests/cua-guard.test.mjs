@@ -580,6 +580,23 @@ ${tooltip ? "\t\t\t95 container Refresh\n\t\t\t\t96 text Refresh\n" : ""}\t97 cl
   assert.equal(changed.actions()[0].dispatched, false);
 });
 
+test("a duplicate-named row appearing does not stale a distinct cell", async () => {
+  // Reduced from a real WebKit grid whose second row appeared after observation.
+  const snapshot = duplicate => `Window: "macuse row fixture", App: RowProbe.
+0 standard window macuse row fixture, URL: file:///tmp/macuse-owned-row-document
+\t1 scroll area
+\t\t2 HTML content Description: Workflow fixture, URL: file:///tmp/macuse-row-fixture/
+\t\t\t3 table (settable) Workflows
+\t\t\t\t4 row (selectable) Qwen Image 2.1 UC - Text to Image
+\t\t\t\t\t5 cell (selectable, settable) Qwen Image 2.1 UC - Text to Image
+\t\t\t\t\t6 cell (selectable, settable) Open workflow
+${duplicate ? "\t\t\t\t7 row (selectable) Qwen Image 2.1 UC - Text to Image\n\t\t\t\t\t8 cell (selectable, settable) Qwen Image 2.1 UC - Text to Image\n\t\t\t\t\t9 cell (selectable, settable) Rename\n" : ""}\t\t\t10 button Refresh`;
+  const f = fixture({ nativeApp: "RowProbe", states: [snapshot(false), snapshot(true)] });
+  await f.observe();
+  await f.guard(request("click", { element_index: 6 }));
+  assert.equal(f.actions()[0].outcome, "completed");
+});
+
 test("scroll position changes outside the row do not block its Delete button", async () => {
   const files = position => `Window: "Files", App: App.\n0 standard window Files\n\t1 scroll area Library, Value: ${position}\n\t\t2 row draft.txt\n\t\t\t3 button Delete`;
   const f = fixture({ states: [files("0"), files("120")] });
