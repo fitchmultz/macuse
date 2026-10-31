@@ -554,6 +554,49 @@ test("unrelated status outside a row does not block Delete", async () => {
   assert.equal(f.actions()[0].outcome, "completed");
 });
 
+test("a disappearing tooltip does not stale an unchanged named workflow row", async () => {
+  // Reduced from the Comfy Desktop observations before the rejected workflow double-click.
+  const snapshot = tooltip => `Window: "ComfyUI — [0%] Node — Comfy Desktop v1.1.7", App: Comfy Desktop.
+0 standard window ComfyUI — [0%] Node — Comfy Desktop v1.1.7
+\t1 container
+\t\t18 HTML content [0%] Node, URL: 127.0.0.1:8188/
+\t\t\t19 container
+\t\t\t\t43 container Sidebar
+\t\t\t\t\t44 outline
+\t\t\t\t\t\t51 row Description: Qwen Image 2.1 UC - Text to Image, Value: 0
+\t\t\t\t\t\t\t52 container
+\t\t\t\t\t\t\t\t53 text Qwen Image 2.1 UC - Text to Image
+\t\t\t\t\t\t\t\t54 button Bookmark
+\t\t\t\t\t\t\t\t\t55 text 
+${tooltip ? "\t\t\t95 container Refresh\n\t\t\t\t96 text Refresh\n" : ""}\t97 close button`;
+  const f = fixture({ nativeApp: "/Applications/Comfy Desktop.app", states: [snapshot(true), snapshot(false)] });
+  await f.observe();
+  await f.guard(request("click", { element_index: 53, click_count: 2 }));
+  assert.equal(f.actions()[0].outcome, "completed");
+
+  const changed = fixture({ nativeApp: "/Applications/Comfy Desktop.app", states: [snapshot(true), snapshot(false).replace("row Description: Qwen", "row Description: Other")] });
+  await changed.observe();
+  await assert.rejects(changed.guard(request("click", { element_index: 53, click_count: 2 })), /Target identity/);
+  assert.equal(changed.actions()[0].dispatched, false);
+});
+
+test("a duplicate-named row appearing does not stale a distinct cell", async () => {
+  // Reduced from a real WebKit grid whose second row appeared after observation.
+  const snapshot = duplicate => `Window: "macuse row fixture", App: RowProbe.
+0 standard window macuse row fixture, URL: file:///tmp/macuse-owned-row-document
+\t1 scroll area
+\t\t2 HTML content Description: Workflow fixture, URL: file:///tmp/macuse-row-fixture/
+\t\t\t3 table (settable) Workflows
+\t\t\t\t4 row (selectable) Qwen Image 2.1 UC - Text to Image
+\t\t\t\t\t5 cell (selectable, settable) Qwen Image 2.1 UC - Text to Image
+\t\t\t\t\t6 cell (selectable, settable) Open workflow
+${duplicate ? "\t\t\t\t7 row (selectable) Qwen Image 2.1 UC - Text to Image\n\t\t\t\t\t8 cell (selectable, settable) Qwen Image 2.1 UC - Text to Image\n\t\t\t\t\t9 cell (selectable, settable) Rename\n" : ""}\t\t\t10 button Refresh`;
+  const f = fixture({ nativeApp: "RowProbe", states: [snapshot(false), snapshot(true)] });
+  await f.observe();
+  await f.guard(request("click", { element_index: 6 }));
+  assert.equal(f.actions()[0].outcome, "completed");
+});
+
 test("scroll position changes outside the row do not block its Delete button", async () => {
   const files = position => `Window: "Files", App: App.\n0 standard window Files\n\t1 scroll area Library, Value: ${position}\n\t\t2 row draft.txt\n\t\t\t3 button Delete`;
   const f = fixture({ states: [files("0"), files("120")] });

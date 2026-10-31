@@ -11,6 +11,7 @@ export interface AppElement {
   secondaryActions: string[];
   line: string;
   context: string;
+  rowContext?: string;
   cellValueContext: string;
   descendants: string;
 }
