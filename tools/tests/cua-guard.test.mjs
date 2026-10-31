@@ -247,6 +247,19 @@ test("setValue verifies a scroll bar whose value indicator changes with it", asy
   assert.equal(f.actions()[0].verification, "exact-field-value");
 });
 
+test("setValue can use unchanged descendants when same-named controls share context", async () => {
+  const before = `Window: "fixture", App: App.
+0 standard window fixture, URL: file:///tmp/fixture
+	1 slider (settable, float) 0
+		2 value indicator A
+	3 slider (settable, float) 1
+		4 value indicator B`;
+  const f = fixture({ states: [before, before, before.replace("1 slider (settable, float) 0", "1 slider (settable, float) 5")] });
+  await f.observe();
+  await f.guard(request("set_value", { element_index: 1, value: "5" }));
+  assert.equal(f.actions()[0].verification, "exact-field-value");
+});
+
 const popupUrl = "chrome-extension://ghmbeldphafepmbegfdlkpapadhbakde/popup.html#/u/0/share/fixture/item/fixture?filters=fixture";
 const popupTree = ({ page = `HTML content ${popupUrl}`, value = "old" } = {}) =>
   `Window: "", App: Brave Browser.\n0 window Secondary Actions: Raise\n\t1 container\n\t\t2 scroll area\n\t\t\t3 ${page}\n\t\t\t\t4 container\n\t\t\t\t\t8 button Open navigation\n\t\t\t\t\t11 text field (settable) Search in all items…, Value: ${value}`;
