@@ -5,6 +5,7 @@
 - Verify `setValue` against a uniquely identified field after the surrounding UI changes, while retaining exact-value, document and pre-dispatch target checks.
 - Allow authorized actions in untitled native windows and sheets that expose no document ID, while retaining available document metadata and target checks.
 - Add a separate owned-fixture session proof joining the independent executor and native actuator with pre-read process identity pinning, trusted-only authority, visible native outcome evidence, bounded parent-owned screenshots, and honest reset/stop settlement. Production backends and tool defaults remain unchanged.
+- Allow native macOS click modifiers and click/key hold durations through the ordinary action guard.
 - Add a separate opt-in independent JavaScriptCore executor proof with deny-default OS sandbox probes, trusted capability RPC, persistent bindings, interruption evidence, and process/resource checks. Production Pi/CLI/MCP and the vendor backend are unchanged; this is not a full independence or hard memory-isolation claim.
 - Add `macuse runtime`, a read-only selected-launch-file version/path/SHA-256 inventory for diagnosing vendor updates without starting services.
 
