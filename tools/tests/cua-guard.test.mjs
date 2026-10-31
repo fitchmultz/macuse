@@ -148,10 +148,11 @@ test("a click can hand off to paste when the clicked field becomes focused", asy
 0 standard window Seltzer, Secondary Actions: Raise
 	1 search text field (settable) Search sessions
 		2 button Search
+	20 text field (settable) ID: other, Value: other
 	28 scroll area
 		29 outline Session waterfall. 50 visible lanes.
 The focused UI element is 29 outline`;
-  for (const [focus, succeeds] of [["1 search text field", true], ["29 outline", false]]) {
+  for (const [focus, succeeds] of [["1 search text field", true], ["20 text field", false]]) {
     const afterClick = before.replace("The focused UI element is 29 outline", `The focused UI element is ${focus}`);
     const f = fixture({ nativeApp: "Seltzer", states: [before, before, afterClick] });
     await f.observe();
@@ -165,6 +166,25 @@ The focused UI element is 29 outline`;
       assert.equal(f.actions()[1].dispatched, false);
     }
   }
+});
+
+test("a click that leaves the previously observed field focused does not block input", async () => {
+  // Reduced from System Settings after clicking its settable content scroll bar.
+  const before = `Window: "Privacy & Security", App: System Settings.
+0 standard window Privacy & Security, ID: Main, Secondary Actions: Raise
+	1 split group Main, SidebarNavigationSplitView
+		51 search text field (settable) Value: Privacy & Security, Placeholder: Search
+		55 scroll area
+			100 scroll bar (settable, float) 1
+				101 value indicator (settable, float) 1
+The focused UI element is 51 search text field`;
+  const afterClick = before.replace("100 scroll bar (settable, float) 1", "100 scroll bar (settable, float) 0.998")
+    .replace("101 value indicator (settable, float) 1", "101 value indicator (settable, float) 0.998");
+  const f = fixture({ nativeApp: "System Settings", states: [before, before, afterClick] });
+  await f.observe();
+  await f.guard(request("click", { element_index: 100 }));
+  await f.guard(request("press_key", { key: "Left" }));
+  assert.equal(f.actions()[1].outcome, "completed");
 });
 
 test("a verified setValue can hand off to Return on the same focused field", async () => {
