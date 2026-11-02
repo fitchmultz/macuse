@@ -574,3 +574,83 @@ await test("resized originals serialize once while unchanged originals stay sole
     undefined,
   );
 });
+
+await test("every resized original in one result is verified and retained at its own image index", async () => {
+  const wideBytes = png(2400, 16),
+    tallBytes = png(16, 2600);
+  const [wide, tall] = await Promise.all(
+    [wideBytes, tallBytes].map((data) => resizeImage(Buffer.from(data, "base64"), "image/png")),
+  );
+  if (!wide || !tall) {
+    assert.fail("resize failed");
+  }
+  // Pi may re-encode a resized screenshot as JPEG when that is smaller.
+  const [shownWide, shownTall] = [wide, tall].map(
+    /** @returns {ContentMock} */
+    ({ mimeType, data }) => ({ type: "image", mimeType, data }),
+  );
+  if (!shownWide || !shownTall) {
+    assert.fail("missing resized parts");
+  }
+  /** @type {ToolResultMessage} */
+  const message = {
+    role: "toolResult",
+    toolName: "macuse",
+    toolCallId: "call_two|fc_two",
+    isError: false,
+    timestamp: 456,
+    content: [
+      text("Observed"),
+      shownWide,
+      text(formatDimensionNote(wide) ?? ""),
+      image(smallBytes),
+      shownTall,
+      text(formatDimensionNote(tall) ?? ""),
+    ],
+    details: {
+      macuse: {
+        originalContent: [text("Observed"), image(wideBytes), image(smallBytes), image(tallBytes)],
+      },
+    },
+  };
+  await retainMacuseOriginals(message);
+  assert.deepEqual(pick(message, "details", "macuse", "originalImages"), [
+    { index: 0, ...image(wideBytes) },
+    { index: 2, ...image(tallBytes) },
+  ]);
+  const restored = restoreMacuseImages(
+    {
+      input: [
+        {
+          type: "function_call_output",
+          call_id: "call_two",
+          output: [
+            {
+              type: "input_text",
+              text: `Observed\n${formatDimensionNote(wide) ?? ""}\n${formatDimensionNote(tall) ?? ""}`,
+            },
+            ...[shownWide, image(smallBytes), shownTall].map(
+              /** @returns {OutputMock} */
+              (part) => ({
+                type: "input_image",
+                detail: "auto",
+                image_url: part.type === "image" ? `data:${part.mimeType};base64,${part.data}` : "",
+              }),
+            ),
+          ],
+        },
+      ],
+    },
+    new Map([["call_two", message]]),
+    { id: "gpt-6-astra", api: "openai-responses" },
+  );
+  assert.deepEqual(
+    [0, 1, 2, 3].map((i) =>
+      pick(restored, "input", 0, "output", i, i === 0 ? "text" : "image_url"),
+    ),
+    [
+      "Observed",
+      ...[wideBytes, smallBytes, tallBytes].map((data) => `data:image/png;base64,${data}`),
+    ],
+  );
+});
