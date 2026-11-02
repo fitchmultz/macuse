@@ -11,6 +11,9 @@ import {
 import { VERSION } from "./macuse-utils.mjs";
 
 const session = new IndependentProofSession();
+// The low-level Server exposes the shared JSON Schemas directly. McpServer's
+// registerTool accepts Zod schemas, which would duplicate the public schema.
+// oxlint-disable-next-line typescript/no-deprecated -- QX-002: SDK reserves Server for low-level operations.
 const server = new Server(
   { name: "macuse-independent-proof", version: VERSION },
   { capabilities: { tools: {} } },
@@ -61,6 +64,11 @@ const shutdown = () => {
     process.exitCode = 1;
   });
 };
+// Protocol exposes onclose as a plain callback property, not an EventTarget,
+// so addEventListener is not available here.
+// oxlint-disable-next-line unicorn/prefer-add-event-listener -- QX-003: SDK Protocol exposes a callback property.
 server.onclose = shutdown;
-for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, shutdown);
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.once(signal, shutdown);
+}
 await server.connect(new StdioServerTransport());

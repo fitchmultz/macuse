@@ -82,12 +82,12 @@ export interface CuaCallToolOptions {
  * test fakes that provide these members are both acceptable connections.
  */
 export interface CuaClient {
-  callTool(
+  callTool: (
     request: CuaToolRequest,
     schema?: unknown,
     options?: CuaCallToolOptions,
-  ): Promise<unknown>;
-  close(): Promise<void>;
+  ) => Promise<unknown>;
+  close: () => Promise<void>;
 }
 export class CuaRuntime {
   constructor(options?: {
@@ -96,14 +96,16 @@ export class CuaRuntime {
     connect?: (options: unknown, onDiagnostic: (event: unknown) => void) => Promise<CuaClient>;
   });
   execute(
-    input: CuaInput | Record<string, unknown>,
+    input: unknown,
     options?: {
-      signal?: AbortSignal;
-      onUpdate?: (update: {
-        content: CuaContent[];
-        isError: boolean;
-        details: { macuse: Partial<CuaResult["details"]["macuse"]> };
-      }) => void;
+      signal?: AbortSignal | undefined;
+      onUpdate?:
+        | ((update: {
+            content: CuaContent[];
+            isError: boolean;
+            details: { macuse: Partial<CuaResult["details"]["macuse"]> };
+          }) => void)
+        | undefined;
     },
   ): Promise<CuaResult>;
   getObservation(app: string): AppObservation | undefined;
@@ -130,7 +132,9 @@ export interface LaunchEnv {
   MACUSE_SKY_SERVICE_URL: string;
 }
 export function imageMetadata(data: string): { mimeType?: string; width?: number; height?: number };
-export function appApproval(request: any): {
+export function appApproval(request: {
+  params: { _meta?: Record<string, unknown> | undefined; [key: string]: unknown };
+}): {
   action: "accept" | "decline";
   content?: Record<string, never>;
 };

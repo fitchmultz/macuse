@@ -308,6 +308,18 @@
         "**/__tests__/**/*.{js,jsx,ts,tsx,mjs,cjs,mts,cts}"
       ],
       "rules": {
+        "typescript/no-floating-promises": [
+          "error",
+          {
+            "checkThenables": true,
+            "ignoreIIFE": false,
+            "ignoreVoid": false,
+            "allowForKnownSafeCalls": [
+              { "from": "package", "package": "node:test", "name": ["nodeTest"] }
+            ],
+            "allowForKnownSafePromises": []
+          }
+        ],
         "complexity": [
           "error",
           {

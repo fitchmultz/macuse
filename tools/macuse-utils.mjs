@@ -24,7 +24,9 @@ export const VERSION = (() => {
     );
     if (typeof pkg === "object" && pkg !== null && "version" in pkg) {
       const version = pkg.version;
-      if (typeof version === "string") return version;
+      if (typeof version === "string") {
+        return version;
+      }
     }
   } catch {
     // Fall through; readFileSync failure is unrecoverable for a tool run from the repo.
@@ -118,7 +120,9 @@ function compareVersionLike(a, b) {
     .map(Number);
   for (let i = 0; i < Math.max(aa.length, bb.length); i += 1) {
     const delta = (aa[i] ?? 0) - (bb[i] ?? 0);
-    if (delta !== 0) return delta;
+    if (delta !== 0) {
+      return delta;
+    }
   }
   return a.localeCompare(b);
 }
@@ -131,7 +135,11 @@ const serverNames = ["computer-use", "event-stream", "computer-history"];
  * @returns {"computer-use" | "event-stream" | "computer-history"}
  */
 export function mcpServerForTool(tool) {
-  for (const name of serverNames) if (MCP_SERVERS[name].tools.includes(tool)) return name;
+  for (const name of serverNames) {
+    if (MCP_SERVERS[name].tools.includes(tool)) {
+      return name;
+    }
+  }
   throw new Error(`Unsupported upstream Computer Use tool: ${tool}`);
 }
 
@@ -163,7 +171,9 @@ export function discoverComputerUsePluginDir(root = DEFAULT_COMPUTER_USE_PLUGIN_
       .sort(compareVersionLike)
       .reverse();
     const found = entries.find((entry) => existsSync(resolve(root, entry, ".mcp.json")));
-    if (found !== undefined) return resolve(root, found);
+    if (found !== undefined) {
+      return resolve(root, found);
+    }
   } catch {
     // Fall back to latest path observed when this helper was updated.
   }
@@ -313,7 +323,9 @@ export function parseJsonOutput(label, text) {
  */
 export function frontmostApp() {
   const front = runCommand("frontmost asn", "/usr/bin/lsappinfo", ["front"], { timeoutMs: 5000 });
-  if (!front.ok || front.stdout.trim().length === 0) return null;
+  if (!front.ok || front.stdout.trim().length === 0) {
+    return null;
+  }
   const asn = front.stdout.trim();
   const bundle = runCommand(
     "frontmost bundle id",
@@ -338,13 +350,21 @@ export function mousePosition() {
   const script =
     "import CoreGraphics; if let e = CGEvent(source: nil) { let p = e.location; print(Int(p.x), Int(p.y)) }";
   const result = runCommand("mouse position", "swift", ["-e", script], { timeoutMs: 10_000 });
-  if (!result.ok) return null;
+  if (!result.ok) {
+    return null;
+  }
   const [x, y] = result.stdout
     .trim()
     .split(/\s+/)
     .map((value) => Number(value));
-  if (typeof x !== "number" || !Number.isFinite(x) || typeof y !== "number" || !Number.isFinite(y))
+  if (
+    typeof x !== "number" ||
+    !Number.isFinite(x) ||
+    typeof y !== "number" ||
+    !Number.isFinite(y)
+  ) {
     return null;
+  }
   return { x, y };
 }
 
@@ -363,7 +383,9 @@ export function sha256File(path) {
  * @returns {{ path: string, bytes: number, sha256: string, width: number | null, height: number | null } | null}
  */
 export function imageInfo(path) {
-  if (!existsSync(path)) return null;
+  if (!existsSync(path)) {
+    return null;
+  }
   const result = runCommand("image info", "sips", ["-g", "pixelWidth", "-g", "pixelHeight", path], {
     timeoutMs: 10_000,
   });
@@ -405,10 +427,15 @@ export function stepText(step) {
  * @returns {string}
  */
 function cellText(value) {
-  if (value === null || value === undefined) return "";
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint")
+  if (value === null || value === undefined) {
+    return "";
+  }
+  if (typeof value === "string") {
+    return value;
+  }
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
     return String(value);
+  }
   try {
     const json = /** @type {unknown} */ (JSON.stringify(value));
     return typeof json === "string" ? json : "[object]";

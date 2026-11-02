@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test as nodeTest } from "node:test";
 import { IndependentProofSession } from "../../lib/independent-proof-session.mjs";
 
 const mac = { skip: process.platform !== "darwin", timeout: 30_000 };
@@ -22,7 +22,9 @@ const value = (result) => executionOf(independentOf(result)).value;
 /** @param {Record<string, unknown>} independent @returns {Array<Record<string, unknown>>} */
 const nativeActionsOf = (independent) => {
   const actions = independent.nativeActions;
-  if (!Array.isArray(actions)) return [];
+  if (!Array.isArray(actions)) {
+    return [];
+  }
   return actions.filter((action) => isRecord(action));
 };
 /** @param {Record<string, unknown>} independent @returns {Record<string, unknown>} */
@@ -31,14 +33,16 @@ const settlementOf = (independent) => {
   return isRecord(settlement) ? settlement : {};
 };
 
-await test(
+nodeTest(
   "proof adapter preserves isolated expressions and returns authoritative mirrored refusal without native target",
   mac,
   async () => {
     const previous = process.env.MACUSE_INDEPENDENT_PROOF_TARGET;
     delete process.env.MACUSE_INDEPENDENT_PROOF_TARGET;
     const session = new IndependentProofSession();
-    if (previous !== undefined) process.env.MACUSE_INDEPENDENT_PROOF_TARGET = previous;
+    if (previous !== undefined) {
+      process.env.MACUSE_INDEPENDENT_PROOF_TARGET = previous;
+    }
     try {
       assert.equal(value(await session.execute({ code: "var retained = 40; retained + 2" })), 42);
       const denied = await session.execute({
@@ -49,13 +53,17 @@ await test(
       assert.equal(independentOf(denied).isError, true);
       const deniedActions = nativeActionsOf(independentOf(denied));
       const refusal = deniedActions[0];
-      if (refusal === undefined) assert.fail("Expected a refused native action");
+      if (refusal === undefined) {
+        assert.fail("Expected a refused native action");
+      }
       assert.equal(refusal.mutationAttempted, false);
       assert.match(String(refusal.error), /operator-configured/);
       assert.equal(independentOf(denied).priorUnknown, false);
       assert.equal(value(denied), 42, "guest completion cannot certify a refused native request");
       const textBlock = denied.content.find((block) => block.type === "text");
-      if (textBlock === undefined) assert.fail("Expected text content");
+      if (textBlock === undefined) {
+        assert.fail("Expected text content");
+      }
       /** @type {unknown} */
       const parsedVisible = JSON.parse(textBlock.text);
       const visible = isRecord(parsedVisible) ? parsedVisible : {};
@@ -66,8 +74,12 @@ await test(
       );
       /** @type {unknown} */
       const firstEvidence = evidenceList[0];
-      if (firstEvidence === undefined) assert.fail("Expected a native evidence entry");
-      if (!isRecord(firstEvidence)) assert.fail("Expected a native evidence record");
+      if (firstEvidence === undefined) {
+        assert.fail("Expected a native evidence entry");
+      }
+      if (!isRecord(firstEvidence)) {
+        assert.fail("Expected a native evidence record");
+      }
       assert.match(String(firstEvidence.error), /operator-configured/);
       assert.equal(firstEvidence.mutationAttempted, false);
       const reset = await session.reset();
@@ -84,7 +96,7 @@ await test(
   },
 );
 
-await test(
+nodeTest(
   "trusted proof target scopes reads and rejects guest authorization/identity fields before native access",
   mac,
   async () => {
@@ -131,7 +143,9 @@ await test(
         assert.equal(result.isError, true);
         assert.equal(independentOf(result).isError, true);
         const refusal = nativeActionsOf(independentOf(result))[0];
-        if (refusal === undefined) assert.fail("Expected a refused native action");
+        if (refusal === undefined) {
+          assert.fail("Expected a refused native action");
+        }
         assert.equal(refusal.mutationAttempted, false);
         assert.match(String(refusal.error), pattern);
       }
@@ -141,7 +155,7 @@ await test(
   },
 );
 
-await test(
+nodeTest(
   "proof reset refuses concurrent admission, invalidates queued execution and drains actual owned worker",
   mac,
   async () => {
@@ -163,24 +177,30 @@ await test(
   },
 );
 
-await test("proof operator target configuration rejects malformed identities without starting native services", () => {
-  const valid = {
-    bundleId: "com.macuse.actuator-fixture.00000000-0000-0000-0000-000000000000",
-    pid: 12345,
-    path: "/not/a/real/ActuatorFixture.app",
-  };
-  for (const target of /** @type {unknown[]} */ ([
-    {},
-    { ...valid, bundleId: "com.apple.TextEdit" },
-    { ...valid, pid: -1 },
-    { ...valid, path: "ActuatorFixture.app" },
-    { ...valid, path: "/not/a/real/Other.app" },
-    { ...valid, windowTitle: "unrelated window" },
-    { ...valid, allowMutating: true },
-  ])) {
-    // Deliberately malformed identities must reach the constructor's own validation.
-    // oxlint-disable-next-line no-unsafe-type-assertion
-    const malformed = /** @type {ProofTarget} */ (target);
-    assert.throws(() => new IndependentProofSession({ target: malformed }), /trusted proof target/);
-  }
-});
+nodeTest(
+  "proof operator target configuration rejects malformed identities without starting native services",
+  () => {
+    const valid = {
+      bundleId: "com.macuse.actuator-fixture.00000000-0000-0000-0000-000000000000",
+      pid: 12345,
+      path: "/not/a/real/ActuatorFixture.app",
+    };
+    for (const target of /** @type {unknown[]} */ ([
+      {},
+      { ...valid, bundleId: "com.apple.TextEdit" },
+      { ...valid, pid: -1 },
+      { ...valid, path: "ActuatorFixture.app" },
+      { ...valid, path: "/not/a/real/Other.app" },
+      { ...valid, windowTitle: "unrelated window" },
+      { ...valid, allowMutating: true },
+    ])) {
+      // Deliberately malformed identities must reach the constructor's own validation.
+      // oxlint-disable-next-line no-unsafe-type-assertion -- QX-006: Test intentionally passes invalid input.
+      const malformed = /** @type {ProofTarget} */ (target);
+      assert.throws(
+        () => new IndependentProofSession({ target: malformed }),
+        /trusted proof target/,
+      );
+    }
+  },
+);

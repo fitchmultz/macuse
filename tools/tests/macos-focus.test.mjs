@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import nodeTest from "node:test";
 import { MacOSNative } from "../macos-native.mjs";
 
 // Read-only platform checks: no app activation, fixture creation, key/mouse events, or privacy prompts.
-await test(
+nodeTest(
   "native observer multiplexes requests and restarts cleanly",
   { skip: process.platform !== "darwin" },
   async () => {
@@ -27,17 +27,19 @@ await test(
         assert.equal(result.coverage.applicationActivation, true);
         assert.equal(result.coverage.inputAttribution, false);
         assert.equal(result.coverage.windowDetails, "targetAppsOnly");
-        for (const state of [result.before, result.after])
+        for (const state of [result.before, result.after]) {
           if (state.focusedWindow) {
             assert.equal(state.focusedWindow.title, null);
             assert.equal(state.focusedWindow.document, null);
           }
+        }
         assert.ok(Array.isArray(result.transitions));
-        for (const event of result.transitions)
+        for (const event of result.transitions) {
           if (event.kind === "focused_window" && event.window !== null) {
             assert.equal(event.window.title, null);
             assert.equal(event.window.document, null);
           }
+        }
       }
       await assert.rejects(native.endObservation(observations[0].id), /Unknown observation/);
       await native.stop();
@@ -51,7 +53,7 @@ await test(
   },
 );
 
-await test(
+nodeTest(
   "invalid app identity never reports zero windows or attempts a text edit",
   { skip: process.platform !== "darwin" },
   async () => {

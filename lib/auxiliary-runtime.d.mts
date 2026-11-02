@@ -1,3 +1,5 @@
+import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
+
 export type AuxiliaryToolName =
   | "event_stream_start"
   | "event_stream_status"
@@ -22,7 +24,7 @@ export type AuxiliaryToolDescriptor = {
   inputSchema: {
     type: "object";
     additionalProperties: false;
-    properties: Record<string, import("@modelcontextprotocol/sdk/validation").JsonSchemaType>;
+    properties: Record<string, JsonSchemaType>;
     required: string[];
   };
   annotations: {
@@ -62,7 +64,10 @@ export class AuxiliaryRuntime {
   callTool(
     tool: string,
     input?: unknown,
-    options?: { signal?: AbortSignal; timeoutMs?: number },
+    options?: {
+      signal?: AbortSignal | undefined;
+      timeoutMs?: number | undefined;
+    },
   ): Promise<AuxiliaryResult>;
   status(): {
     running: boolean;

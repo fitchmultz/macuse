@@ -24,34 +24,60 @@ const host = resolve(packageDir);
 process.env.PI_PACKAGE_DIR = host;
 const hostURL = pathToFileURL(join(host, "package.json")).href;
 const aiPackage = findPackageJSON("@earendil-works/pi-ai", hostURL);
-if (aiPackage === undefined) assert.fail("pi-ai package not found under the selected host");
+if (aiPackage === undefined) {
+  assert.fail("pi-ai package not found under the selected host");
+}
 const ai = dirname(aiPackage);
 const typeboxPackage = findPackageJSON("typebox", hostURL);
-if (typeboxPackage === undefined) assert.fail("typebox package not found under the selected host");
+if (typeboxPackage === undefined) {
+  assert.fail("typebox package not found under the selected host");
+}
 const sdkPackage = findPackageJSON("@modelcontextprotocol/sdk", import.meta.url);
-if (sdkPackage === undefined) assert.fail("@modelcontextprotocol/sdk package not found");
+if (sdkPackage === undefined) {
+  assert.fail("@modelcontextprotocol/sdk package not found");
+}
 /** @typedef {typeof import("@earendil-works/pi-coding-agent")} PiPublic */
 /** @typedef {typeof import("@earendil-works/pi-ai")} PiAi */
 /** @typedef {Awaited<ReturnType<typeof createAgentSession>>["session"]} ProofSession */
 /** @typedef {ProofSession["messages"][number]} ProofMessage */
+
+/**
+ * Emit the shutdown event, then dispose the session even if the emit fails.
+ * @param {ProofSession} active
+ * @returns {Promise<void>}
+ */
+const shutdownSession = async (active) => {
+  try {
+    await active.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+  } finally {
+    active.dispose();
+  }
+};
 /** @typedef {NonNullable<Extract<ProofMessage, { role: "toolResult" }>>} ProofToolResult */
 /**
  * @param {unknown} value
  * @returns {value is import("@earendil-works/pi-ai").JsonObject}
  */
 const isJsonObject = (value) => {
-  if (!isRecord(value)) return false;
+  if (!isRecord(value)) {
+    return false;
+  }
   for (const item of Object.values(value)) {
     if (
       item === null ||
       typeof item === "string" ||
       typeof item === "number" ||
       typeof item === "boolean"
-    )
+    ) {
       continue;
+    }
     if (Array.isArray(item)) {
-      if (!item.every((entry) => isJsonValue(entry))) return false;
-    } else if (!isJsonValue(item)) return false;
+      if (!item.every((entry) => isJsonValue(entry))) {
+        return false;
+      }
+    } else if (!isJsonValue(item)) {
+      return false;
+    }
   }
   return true;
 };
@@ -77,18 +103,22 @@ const scratch = await mkdtemp(join(tmpdir(), "macuse-independent-pi-"));
 /** @type {Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined} */
 let session;
 let interrupted = false;
+const isInterrupted = () => interrupted;
 const cancel = () => {
   interrupted = true;
   process.stdin.destroy();
   const active = session;
-  if (active !== undefined) active.abort().catch(() => null);
+  if (active !== undefined) {
+    active.abort().catch(() => null);
+  }
 };
 process.once("SIGINT", cancel);
 process.once("SIGTERM", cancel);
 try {
   const source = fileURLToPath(new URL("..", import.meta.url));
-  for (const path of ["extensions", "lib", "tools", "package.json"])
+  for (const path of ["extensions", "lib", "tools", "package.json"]) {
     await cp(join(source, path), join(scratch, path), { recursive: true });
+  }
   for (const [name, target] of /** @type {[string, string][]} */ ([
     ["@earendil-works/pi-coding-agent", host],
     ["@earendil-works/pi-ai", ai],
@@ -125,7 +155,7 @@ try {
   });
   await resourceLoader.reload();
   assert.deepEqual(resourceLoader.getExtensions().errors, []);
-  ({ session } = await createAgentSession({
+  const { session: ownedSession } = await createAgentSession({
     cwd: scratch,
     agentDir: scratch,
     modelRuntime,
@@ -138,17 +168,18 @@ try {
       compaction: { enabled: false },
       retry: { enabled: false },
     }),
-  }));
-  await session.bindExtensions({
+  });
+  session = ownedSession;
+  await ownedSession.bindExtensions({
     onError: (error) => {
       throw new Error(error.error);
     },
   });
   let sequence = 0;
   for await (const line of readProofLines(process.stdin)) {
-    // `interrupted` flips in signal callbacks tsgolint's flow analysis cannot see.
-    // oxlint-disable-next-line no-unnecessary-condition
-    if (interrupted) break;
+    if (isInterrupted()) {
+      break;
+    }
     /** @type {unknown} */
     const parsed = JSON.parse(line);
     const request = isRecord(parsed) ? parsed : {};
@@ -161,17 +192,14 @@ try {
       }),
       fauxAssistantMessage("Proof tool returned."),
     ]);
-    const active = session;
-    // tsc requires the undefined guard; tsgolint resolves the assignment as definite.
-    // oxlint-disable-next-line no-unnecessary-condition
-    if (active === undefined) assert.fail("session missing before prompt");
-    await active.prompt("Execute the supplied bounded qualification call.");
+    await ownedSession.prompt("Execute the supplied bounded qualification call.");
     /** @param {ProofMessage} message @returns {message is ProofToolResult} */
     const isCorrelatedToolResult = (message) =>
       message.role === "toolResult" && message.toolCallId === id;
-    const result = active.messages.find(isCorrelatedToolResult);
-    if (result === undefined)
+    const result = ownedSession.messages.find(isCorrelatedToolResult);
+    if (result === undefined) {
       assert.fail("Actual Pi tool execution did not return a correlated result");
+    }
     process.stdout.write(
       `${JSON.stringify({ content: result.content, isError: result.isError, details: result.details })}\n`,
     );
@@ -179,11 +207,7 @@ try {
 } finally {
   try {
     if (session) {
-      try {
-        await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-      } finally {
-        session.dispose();
-      }
+      await shutdownSession(session);
     }
   } finally {
     process.removeListener("SIGINT", cancel);

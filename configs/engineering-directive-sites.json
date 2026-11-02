@@ -1,0 +1,98 @@
+[
+  {
+    "path": "tools/independent-proof-mcp.mjs",
+    "rule": "typescript/no-deprecated",
+    "id": "QX-002",
+    "owner": "module",
+    "conditions": [],
+    "operation": "const server = new Server("
+  },
+  {
+    "path": "tools/independent-proof-mcp.mjs",
+    "rule": "unicorn/prefer-add-event-listener",
+    "id": "QX-003",
+    "owner": "module",
+    "conditions": [],
+    "operation": "server.onclose = shutdown;"
+  },
+  {
+    "path": "tools/macuse-mcp.mjs",
+    "rule": "typescript/no-deprecated",
+    "id": "QX-002",
+    "owner": "module",
+    "conditions": [],
+    "operation": "const server = new Server({ name: \"macuse\", version: VERSION }, { capabilities: { tools: {} } });"
+  },
+  {
+    "path": "tools/macuse-mcp.mjs",
+    "rule": "unicorn/prefer-add-event-listener",
+    "id": "QX-003",
+    "owner": "module",
+    "conditions": [],
+    "operation": "server.onclose = () => {"
+  },
+  {
+    "path": "tools/tests/auxiliary-runtime.test.mjs",
+    "rule": "no-unsafe-type-assertion",
+    "id": "QX-006",
+    "owner": "\"exports exactly eight guarded auxiliary tools; invalid calls never start a process\"",
+    "conditions": [],
+    "operation": "const invalidTimeout = /** @type {number} */ (timeoutMs);"
+  },
+  {
+    "path": "tools/tests/auxiliary-runtime.test.mjs",
+    "rule": "no-unsafe-type-assertion",
+    "id": "QX-006",
+    "owner": "\"queued cancellation does not stop active work; settings are copied before waiting\"",
+    "conditions": [],
+    "operation": "input.observation.defaultURLBehavior = /** @type {\"do_not_observe\" | \"observe\"} */ (\"invalid\");"
+  },
+  {
+    "path": "tools/tests/independent-proof-session.test.mjs",
+    "rule": "no-unsafe-type-assertion",
+    "id": "QX-006",
+    "owner": "\"proof operator target configuration rejects malformed identities without starting native services\"",
+    "conditions": [],
+    "operation": "const malformed = /** @type {ProofTarget} */ (target);"
+  },
+  {
+    "path": "tools/tests/macuse-session.test.mjs",
+    "rule": "no-unsafe-type-assertion",
+    "id": "QX-006",
+    "owner": "\"code never starts auxiliary transport; invalid envelopes fail before native access\"",
+    "conditions": [],
+    "operation": "[\"macuse\", /** @type {Record<string, unknown>} */ (JSON.parse(\"[]\"))],"
+  },
+  {
+    "path": "tools/tests/native-input.test.mjs",
+    "rule": "no-unsafe-type-assertion",
+    "id": "QX-006",
+    "owner": "\"missing observation, permission flags and malformed Unicode fail before native access\"",
+    "conditions": [],
+    "operation": "/** @type {InsertTextInput} */ (/** @type {unknown} */ ({ ...input, expectedTitle: 123 })),"
+  },
+  {
+    "path": "tools/tests/pi-lifecycle.test.mjs",
+    "rule": "no-unsafe-type-assertion",
+    "id": "QX-007",
+    "owner": "\"macuse-only loading delivers standalone guidance and lazy loaders without browser resources\"",
+    "conditions": [],
+    "operation": "/** @type {import(\"@earendil-works/pi-coding-agent\").ExtensionCommandContext} */ ({"
+  },
+  {
+    "path": "tools/tests/pi-lifecycle.test.mjs",
+    "rule": "no-unsafe-type-assertion",
+    "id": "QX-007",
+    "owner": "`explicit ${frontDoor} recovery repairs marker-only selection within policy ${JSON.stringify(policy)}`",
+    "conditions": [],
+    "operation": "/** @type {import(\"@earendil-works/pi-coding-agent\").ExtensionCommandContext} */ ({"
+  },
+  {
+    "path": "tools/tests/pi-lifecycle.test.mjs",
+    "rule": "no-unsafe-type-assertion",
+    "id": "QX-007",
+    "owner": "\"native tree and reload boundaries stop the owned session without starting native services\"",
+    "conditions": [],
+    "operation": "/** @type {import(\"@earendil-works/pi-coding-agent\").ExtensionCommandContext} */ ({"
+  }
+]

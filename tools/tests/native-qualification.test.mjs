@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import nodeTest from "node:test";
 import { qualifyActivityMonitor, qualifyActuatorFixture } from "../qualify-native-actuator.mjs";
 
 // Scripted observations exercise runner cleanup/reporting, not native guards, app behavior, or permissions.
@@ -53,16 +53,16 @@ function activity({
       const current =
         replaceWindow && attempted ? { ...window, token: "replacement-window" } : window;
       /** @type {Array<Record<string, unknown>>} */
-      const elements = ["CPU", "Memory", "Energy"].map((title) => ({
-        token: title,
+      const elements = ["CPU", "Memory", "Energy"].map((tab) => ({
+        token: tab,
         windowToken: current.token,
         role: "AXRadioButton",
-        title,
+        title: tab,
         description: "",
-        value: title === selected ? 1 : 0,
+        value: tab === selected ? 1 : 0,
         actions: ["AXPress"],
       }));
-      if (fixtureText)
+      if (fixtureText) {
         elements.push(
           {
             token: "field",
@@ -81,6 +81,7 @@ function activity({
             valueSettable: true,
           },
         );
+      }
       return {
         observationId,
         fullSnapshot: true,
@@ -108,16 +109,18 @@ function activity({
     async act(request) {
       const elementToken = typeof request.elementToken === "string" ? request.elementToken : "";
       const value = typeof request.value === "string" ? request.value : "";
-      if (request.allowMutating !== true)
+      if (request.allowMutating !== true) {
         throw Object.assign(new Error("Missing mutation authorization"), {
           dispatched: false,
           mutationAttempted: false,
         });
-      if (observations.get(request.observationId) !== revision)
+      }
+      if (observations.get(request.observationId) !== revision) {
         throw Object.assign(new Error("Observed app context changed"), {
           dispatched: false,
           mutationAttempted: false,
         });
+      }
       revision++;
       if (request.action === "setValue") {
         actions.push(`setValue:${value}`);
@@ -125,7 +128,7 @@ function activity({
           contextText = value;
           const drifted = selected !== "CPU";
           selected = "CPU";
-          if (drifted && !falselyVerifyContextDrift)
+          if (drifted && !falselyVerifyContextDrift) {
             return {
               status: "unverified",
               mutationAttempted: true,
@@ -133,6 +136,7 @@ function activity({
               verified: false,
               outcome: "unknown",
             };
+          }
           return {
             status: "applied",
             mutationAttempted: true,
@@ -153,149 +157,173 @@ function activity({
       actions.push(elementToken);
       selected = elementToken;
       attempted = true;
-      if (failAfterApply && actions.length === 1)
+      if (failAfterApply && actions.length === 1) {
         throw Object.assign(new Error("Lost acknowledgement after dispatch"), {
           dispatched: true,
           mutationAttempted: true,
         });
+      }
       return { status: "applied", mutationAttempted: true, nativeAccepted: true, verified: false };
     },
     stop: () => Promise.resolve(),
   };
 }
 
-await test("qualification restores the actual non-CPU original tab and does not claim full independence", async () => {
-  const actuator = activity();
-  const result = await qualifyActivityMonitor(actuator);
-  assert.equal(result.ok, true);
-  assert.deepEqual(actuator.actions, ["Memory", "Energy"]);
-  const restored = result.checks.find(
-    (check) => check.name === "original tab independently verified",
-  );
-  if (restored === undefined) assert.fail("expected restored-tab check");
-  assert.equal(restored.restoredTab, "Energy");
-  assert.equal(result.fullNativeQualification, false);
-  assert.equal(result.chatgptIndependenceQualified, false);
-  assert.ok(result.unattempted.includes("Independent persistent sandboxed execution"));
-});
+nodeTest(
+  "qualification restores the actual non-CPU original tab and does not claim full independence",
+  async () => {
+    const actuator = activity();
+    const result = await qualifyActivityMonitor(actuator);
+    assert.equal(result.ok, true);
+    assert.deepEqual(actuator.actions, ["Memory", "Energy"]);
+    const restored = result.checks.find(
+      (check) => check.name === "original tab independently verified",
+    );
+    if (restored === undefined) {
+      assert.fail("expected restored-tab check");
+    }
+    assert.equal(restored.restoredTab, "Energy");
+    assert.equal(result.fullNativeQualification, false);
+    assert.equal(result.chatgptIndependenceQualified, false);
+    assert.ok(result.unattempted.includes("Independent persistent sandboxed execution"));
+  },
+);
 
-await test("owned-fixture qualification refuses borrowed app or mismatched process identity before mutation", async () => {
-  await assert.rejects(
-    qualifyActuatorFixture(activity(), { app: "com.apple.ActivityMonitor" }),
-    /task-owned fixture/,
-  );
-  const fixture = {
-    app: "com.macuse.actuator-fixture.11111111-1111-4111-8111-111111111111",
-    pid: 124,
-    path: "/fixture/ActuatorFixture.app",
-    title: "macuse disposable actuator fixture",
-    stop: () => Promise.resolve(),
-  };
-  const actuator = activity(fixture);
-  const result = await qualifyActuatorFixture(actuator, fixture);
-  assert.equal(result.ok, false);
-  assert.deepEqual(actuator.actions, []);
-  assert.ok(
-    result.checks.some(
-      (check) => check.status === "fail" && /identity mismatch/.test(String(check.detail)),
-    ),
-  );
-});
+nodeTest(
+  "owned-fixture qualification refuses borrowed app or mismatched process identity before mutation",
+  async () => {
+    await assert.rejects(
+      qualifyActuatorFixture(activity(), { app: "com.apple.ActivityMonitor" }),
+      /task-owned fixture/,
+    );
+    const fixture = {
+      app: "com.macuse.actuator-fixture.11111111-1111-4111-8111-111111111111",
+      pid: 124,
+      path: "/fixture/ActuatorFixture.app",
+      title: "macuse disposable actuator fixture",
+      stop: () => Promise.resolve(),
+    };
+    const actuator = activity(fixture);
+    const result = await qualifyActuatorFixture(actuator, fixture);
+    assert.equal(result.ok, false);
+    assert.deepEqual(actuator.actions, []);
+    assert.ok(
+      result.checks.some(
+        (check) => check.status === "fail" && /identity mismatch/.test(String(check.detail)),
+      ),
+    );
+  },
+);
 
-await test("lost acknowledgement fails proof without replaying the attempted press; known fresh state can be restored", async () => {
-  const actuator = activity({ failAfterApply: true });
-  const result = await qualifyActivityMonitor(actuator);
-  assert.equal(result.ok, false);
-  assert.deepEqual(actuator.actions, ["Memory", "Energy"]);
-  const failed = result.checks.find((check) => check.status === "fail");
-  if (failed === undefined) assert.fail("expected a failed check");
-  assert.match(String(failed.detail), /Lost acknowledgement/);
-  assert.ok(result.checks.some((check) => check.restoredTab === "Energy"));
-});
+nodeTest(
+  "lost acknowledgement fails proof without replaying the attempted press; known fresh state can be restored",
+  async () => {
+    const actuator = activity({ failAfterApply: true });
+    const result = await qualifyActivityMonitor(actuator);
+    assert.equal(result.ok, false);
+    assert.deepEqual(actuator.actions, ["Memory", "Energy"]);
+    const failed = result.checks.find((check) => check.status === "fail");
+    if (failed === undefined) {
+      assert.fail("expected a failed check");
+    }
+    assert.match(String(failed.detail), /Lost acknowledgement/);
+    assert.ok(result.checks.some((check) => check.restoredTab === "Energy"));
+  },
+);
 
-await test("lost whole-field acknowledgement restores only the known fixture value without replaying Unicode replacement", async () => {
-  const fixture = {
-    app: "com.macuse.actuator-fixture.11111111-1111-4111-8111-111111111111",
-    pid: 123,
-    path: "/fixture/ActuatorFixture.app",
-    title: "macuse disposable actuator fixture",
-    stop: () => Promise.resolve(),
-  };
-  const actuator = activity({ ...fixture, fixtureText: true, failAfterTextApply: true });
-  const result = await qualifyActuatorFixture(actuator, fixture, { challenger: actuator });
-  assert.equal(result.ok, false);
-  assert.deepEqual(
-    actuator.actions.filter((action) => action.startsWith("setValue:")),
-    ["setValue:prefix 独立 👩🏽‍💻 e\u0301 suffix", "setValue:prefix ORIGINAL suffix"],
-  );
-  assert.ok(
-    result.checks.some(
-      (check) => check.status === "fail" && /Lost field acknowledgement/.test(String(check.detail)),
-    ),
-  );
-  assert.ok(
-    result.checks.some(
-      (check) => check.name === "original fixture text and radio state independently verified",
-    ),
-  );
-});
+nodeTest(
+  "lost whole-field acknowledgement restores only the known fixture value without replaying Unicode replacement",
+  async () => {
+    const fixture = {
+      app: "com.macuse.actuator-fixture.11111111-1111-4111-8111-111111111111",
+      pid: 123,
+      path: "/fixture/ActuatorFixture.app",
+      title: "macuse disposable actuator fixture",
+      stop: () => Promise.resolve(),
+    };
+    const actuator = activity({ ...fixture, fixtureText: true, failAfterTextApply: true });
+    const result = await qualifyActuatorFixture(actuator, fixture, { challenger: actuator });
+    assert.equal(result.ok, false);
+    assert.deepEqual(
+      actuator.actions.filter((action) => action.startsWith("setValue:")),
+      ["setValue:prefix 独立 👩🏽‍💻 e\u0301 suffix", "setValue:prefix ORIGINAL suffix"],
+    );
+    assert.ok(
+      result.checks.some(
+        (check) =>
+          check.status === "fail" && /Lost field acknowledgement/.test(String(check.detail)),
+      ),
+    );
+    assert.ok(
+      result.checks.some(
+        (check) => check.name === "original fixture text and radio state independently verified",
+      ),
+    );
+  },
+);
 
-await test("a falsely verified context-changing setter fails qualification and still restores both fields", async () => {
-  const fixture = {
-    app: "com.macuse.actuator-fixture.11111111-1111-4111-8111-111111111111",
-    pid: 123,
-    path: "/fixture/ActuatorFixture.app",
-    title: "macuse disposable actuator fixture",
-    stop: () => Promise.resolve(),
-  };
-  const actuator = activity({ ...fixture, fixtureText: true, falselyVerifyContextDrift: true });
-  const result = await qualifyActuatorFixture(actuator, fixture, { challenger: actuator });
-  assert.equal(result.ok, false);
-  assert.ok(
-    result.checks.some(
-      (check) =>
-        check.status === "fail" && /Context drift during the setter/.test(String(check.detail)),
-    ),
-  );
-  assert.ok(
-    result.checks.some(
-      (check) => check.name === "original fixture text and radio state independently verified",
-    ),
-  );
-  assert.deepEqual(
-    actuator.actions.filter((action) => action.startsWith("setValue:")),
-    [
-      "setValue:prefix 独立 👩🏽‍💻 e\u0301 suffix",
-      "setValue:postwrite MUTATED 🧪",
-      "setValue:prefix ORIGINAL suffix",
-      "setValue:postwrite ORIGINAL",
-    ],
-  );
-});
+nodeTest(
+  "a falsely verified context-changing setter fails qualification and still restores both fields",
+  async () => {
+    const fixture = {
+      app: "com.macuse.actuator-fixture.11111111-1111-4111-8111-111111111111",
+      pid: 123,
+      path: "/fixture/ActuatorFixture.app",
+      title: "macuse disposable actuator fixture",
+      stop: () => Promise.resolve(),
+    };
+    const actuator = activity({ ...fixture, fixtureText: true, falselyVerifyContextDrift: true });
+    const result = await qualifyActuatorFixture(actuator, fixture, { challenger: actuator });
+    assert.equal(result.ok, false);
+    assert.ok(
+      result.checks.some(
+        (check) =>
+          check.status === "fail" && /Context drift during the setter/.test(String(check.detail)),
+      ),
+    );
+    assert.ok(
+      result.checks.some(
+        (check) => check.name === "original fixture text and radio state independently verified",
+      ),
+    );
+    assert.deepEqual(
+      actuator.actions.filter((action) => action.startsWith("setValue:")),
+      [
+        "setValue:prefix 独立 👩🏽‍💻 e\u0301 suffix",
+        "setValue:postwrite MUTATED 🧪",
+        "setValue:prefix ORIGINAL suffix",
+        "setValue:postwrite ORIGINAL",
+      ],
+    );
+  },
+);
 
-await test("replacement window blocks cleanup rather than mutating a similarly named window", async () => {
-  const actuator = activity({ replaceWindow: true });
-  const result = await qualifyActivityMonitor(actuator);
-  assert.equal(result.ok, false);
-  assert.deepEqual(actuator.actions, ["Memory"]);
-  assert.ok(
-    result.checks.some(
-      (check) =>
-        check.status === "fail" &&
-        /Cleanup failed: Observed window changed/.test(String(check.detail)),
-    ),
-  );
-  assert.equal(
-    result.checks.some((check) => check.restoredTab !== undefined),
-    false,
-  );
-});
+nodeTest(
+  "replacement window blocks cleanup rather than mutating a similarly named window",
+  async () => {
+    const actuator = activity({ replaceWindow: true });
+    const result = await qualifyActivityMonitor(actuator);
+    assert.equal(result.ok, false);
+    assert.deepEqual(actuator.actions, ["Memory"]);
+    assert.ok(
+      result.checks.some(
+        (check) =>
+          check.status === "fail" &&
+          /Cleanup failed: Observed window changed/.test(String(check.detail)),
+      ),
+    );
+    assert.equal(
+      result.checks.some((check) => check.restoredTab !== undefined),
+      false,
+    );
+  },
+);
 
 for (const [corruptImage, reason] of /** @type {[string, RegExp][]} */ ([
   ["width", /Reported width differs/],
   ["scale", /dimensions disagree/],
 ])) {
-  await test(`screenshot ${corruptImage} mismatch fails before an authorized mutation`, async () => {
+  nodeTest(`screenshot ${corruptImage} mismatch fails before an authorized mutation`, async () => {
     const actuator = activity({ corruptImage });
     const result = await qualifyActivityMonitor(actuator);
     assert.equal(result.ok, false);

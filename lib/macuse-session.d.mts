@@ -43,47 +43,54 @@ export type SessionAction = {
   before?: { title: string | null; url: string | null; nativeWindowIdentity: boolean };
 };
 export type SessionRuntime = {
-  execute(
+  execute: (
     input: unknown,
     options?: {
       signal?: AbortSignal | undefined;
-      onUpdate?: (update: {
-        content: Content[];
-        isError: boolean;
-        details: { macuse: Record<string, unknown> };
-      }) => void;
+      onUpdate?:
+        | ((update: {
+            content: Content[];
+            isError: boolean;
+            details: { macuse: Record<string, unknown> };
+          }) => void)
+        | undefined;
     },
-  ): Promise<SessionResult>;
-  getObservation(app: string): AppObservation | undefined;
-  invalidateObservation(app: string): void;
-  reset(): Promise<unknown>;
-  stop(): Promise<void>;
-  status(): unknown;
+  ) => Promise<SessionResult>;
+  getObservation: (app: string) => AppObservation | undefined;
+  invalidateObservation: (app: string) => void;
+  reset: () => Promise<unknown>;
+  stop: () => Promise<void>;
+  status: () => unknown;
 };
 /** Structural native seam MacuseSession drives; production uses MacOSNative. */
 export type SessionNative = NativeTextBackend & {
-  resolveApp(identifier: string, options?: NativeRequestOptions): Promise<NativeApplication>;
-  inspectApp(pid: number, options?: NativeRequestOptions): Promise<NativeAppState>;
-  beginObservation(
+  resolveApp: (identifier: string, options?: NativeRequestOptions) => Promise<NativeApplication>;
+  inspectApp: (pid: number, options?: NativeRequestOptions) => Promise<NativeAppState>;
+  beginObservation: (
     pids?: number[],
     options?: NativeRequestOptions,
-  ): Promise<{ id: string; before?: NativeObservation["before"] }>;
-  endObservation(id: string, options?: NativeRequestOptions): Promise<NativeObservation>;
+  ) => Promise<{ id: string; before?: NativeObservation["before"] }>;
+  endObservation: (id: string, options?: NativeRequestOptions) => Promise<NativeObservation>;
 };
 /** Structural auxiliary seam MacuseSession drives; production uses AuxiliaryRuntime. */
 export type SessionAuxiliary = {
-  callTool(
+  callTool: (
     tool: string,
     input?: Record<string, unknown>,
-    options?: { signal?: AbortSignal | undefined; timeoutMs?: number },
-  ): Promise<SessionResult>;
-  stop(): Promise<void>;
-  status(): unknown;
+    options?: {
+      signal?: AbortSignal | undefined;
+      timeoutMs?: number | undefined;
+    },
+  ) => Promise<SessionResult>;
+  stop: () => Promise<void>;
+  status: () => unknown;
 };
 export class MacuseSession {
   cwd: string;
   /** Test injection seams; production callers construct with cwd only. */
   runtime: SessionRuntime;
+  native: SessionNative;
+  auxiliary: SessionAuxiliary;
   constructor(options?: {
     cwd?: string | undefined;
     /** Test injection seams; production callers construct with cwd only. */
@@ -100,7 +107,7 @@ export class MacuseSession {
       onUpdate?: ((result: MacuseResult) => void) | undefined;
     },
   ): Promise<MacuseResult>;
-  reset(): Promise<MacuseResult>;
+  reset: () => Promise<MacuseResult>;
   status(): { computer: unknown; auxiliary: unknown };
-  stop(): Promise<void>;
+  stop: () => Promise<void>;
 }

@@ -13,18 +13,18 @@ import type { AppObservation } from "./app-state.mjs";
  * The session's injected native backend must satisfy the same surface.
  */
 export interface NativeTextBackend {
-  resolveApp(identifier: string, options?: NativeRequestOptions): Promise<NativeApplication>;
-  beginObservation(
+  resolveApp: (identifier: string, options?: NativeRequestOptions) => Promise<NativeApplication>;
+  beginObservation: (
     pids?: number[],
     options?: NativeRequestOptions,
-  ): Promise<{ id: string; before?: NativeObservation["before"] }>;
-  endObservation(id: string, options?: NativeRequestOptions): Promise<NativeObservation>;
-  inspectApp(pid: number, options?: NativeRequestOptions): Promise<NativeAppState>;
-  replaceSelectedText(
+  ) => Promise<{ id: string; before?: NativeObservation["before"] }>;
+  endObservation: (id: string, options?: NativeRequestOptions) => Promise<NativeObservation>;
+  inspectApp: (pid: number, options?: NativeRequestOptions) => Promise<NativeAppState>;
+  replaceSelectedText: (
     request: NativeTextRequest,
     options?: NativeRequestOptions,
-  ): Promise<NativeTextResult>;
-  stop(): Promise<void>;
+  ) => Promise<NativeTextResult>;
+  stop: () => Promise<void>;
 }
 
 export type InsertTextInput = {

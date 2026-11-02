@@ -4,7 +4,7 @@ import { findPackageJSON } from "node:module";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import test from "node:test";
+import nodeTest from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
@@ -22,8 +22,12 @@ const env = {
 const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 /** @param {unknown} chunk @returns {string} */
 const chunkText = (chunk) => {
-  if (typeof chunk === "string") return chunk;
-  if (Buffer.isBuffer(chunk)) return chunk.toString();
+  if (typeof chunk === "string") {
+    return chunk;
+  }
+  if (Buffer.isBuffer(chunk)) {
+    return chunk.toString();
+  }
   return "";
 };
 /**
@@ -42,8 +46,12 @@ const parseLine = (line) => {
 /** @param {unknown} result @returns {Record<string, unknown>} */
 const metaOf = (result) => {
   const record = isRecord(result) ? result : {};
-  if (isRecord(record.details)) return record.details;
-  if (isRecord(record._meta)) return record._meta;
+  if (isRecord(record.details)) {
+    return record.details;
+  }
+  if (isRecord(record._meta)) {
+    return record._meta;
+  }
   return {};
 };
 /** @param {unknown} result @returns {Record<string, unknown>} */
@@ -66,17 +74,19 @@ const value = (result) => executionValue(independentDetails(result));
  */
 const at = (results, index) => {
   const found = results[index];
-  if (found === undefined) assert.fail(`Missing transport result ${index}`);
+  if (found === undefined) {
+    assert.fail(`Missing transport result ${index}`);
+  }
   return found;
 };
-/** @param {unknown} value @returns {value is { code: unknown, stderr: string, stdout: string }} */
-const isExecFailure = (value) =>
-  value instanceof Error &&
-  "code" in value &&
-  "stderr" in value &&
-  "stdout" in value &&
-  typeof value.stderr === "string" &&
-  typeof value.stdout === "string";
+/** @param {unknown} candidate @returns {candidate is { code: unknown, stderr: string, stdout: string }} */
+const isExecFailure = (candidate) =>
+  candidate instanceof Error &&
+  "code" in candidate &&
+  "stderr" in candidate &&
+  "stdout" in candidate &&
+  typeof candidate.stderr === "string" &&
+  typeof candidate.stdout === "string";
 const targetless = {
   code: "macuse.call('observe',{app:'com.macuse.actuator-fixture.11111111-1111-4111-8111-111111111111'})",
 };
@@ -107,8 +117,9 @@ async function sessionProcess(script, args = [], expectedExit = 0, hostValidates
   const stdin = child.stdin;
   const stdoutStream = child.stdout;
   const stderrStream = child.stderr;
-  if (stdin === null || stdoutStream === null || stderrStream === null)
+  if (stdin === null || stdoutStream === null || stderrStream === null) {
     assert.fail("Child stdio unavailable");
+  }
   stdin.end(input);
   /** @type {Promise<ReturnType<typeof parseLine>[]>} */
   const settled = new Promise((resolve, reject) => {
@@ -158,7 +169,7 @@ async function sessionProcess(script, args = [], expectedExit = 0, hostValidates
   assert.equal(independentDetails(at(result, 6)).dispatched, false);
 }
 
-await test(
+nodeTest(
   "actual CLI preserves JSONL Unicode, bindings, predispatch reset refusal, reset and targetless native failure",
   mac,
   async () => {
@@ -169,16 +180,20 @@ await test(
       { env, timeout: 10000 },
     );
     const oversizedStdin = oversized.child.stdin;
-    if (oversizedStdin === null) assert.fail("Child stdin unavailable");
+    if (oversizedStdin === null) {
+      assert.fail("Child stdin unavailable");
+    }
     oversizedStdin.end("x".repeat(131073));
     await assert.rejects(oversized, (/** @type {unknown} */ error) => {
-      if (!isExecFailure(error)) return false;
+      if (!isExecFailure(error)) {
+        return false;
+      }
       return error.code === 1 && /128 KiB/.test(error.stderr) && error.stdout === "";
     });
   },
 );
 
-await test(
+nodeTest(
   "actual MCP preserves proof results, failure metadata and reset through the public stdio client",
   mac,
   async () => {
@@ -194,7 +209,7 @@ await test(
       await client.connect(transport);
       pid = transport.pid;
       assert.deepEqual(
-        (await client.listTools()).tools.map((tool) => tool.name).sort(),
+        (await client.listTools()).tools.map((entry) => entry.name).sort(),
         [tool, reset].sort(),
       );
       const first = await client.callTool({
@@ -229,12 +244,14 @@ await test(
   },
 );
 
-await test(
+nodeTest(
   "actual Pi SDK tool boundary preserves proof errors and reset in a fresh isolated host process",
   mac,
   async () => {
     const found = findPackageJSON("@earendil-works/pi-coding-agent", import.meta.url);
-    if (found === undefined) assert.fail("pi-coding-agent package not found");
+    if (found === undefined) {
+      assert.fail("pi-coding-agent package not found");
+    }
     const host = dirname(found);
     await sessionProcess("../independent-proof-pi-worker.mjs", [host], 0, true);
   },
