@@ -443,7 +443,9 @@ nodeTest(
           },
         }),
       });
-      noEdit(await insertText(f.native, input, observed), f, /unique cross-source identity/);
+      const result = await insertText(f.native, input, observed);
+      noEdit(result, f, /unique cross-source identity/);
+      assert.deepEqual(result.details.macuse.target, app);
     }
   },
 );

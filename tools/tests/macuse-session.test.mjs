@@ -161,6 +161,32 @@ function fixture() {
 }
 
 nodeTest(
+  "a rejected code run settles its focus observation and preserves the failure",
+  async () => {
+    const f = fixture();
+    const failure = new Error("native execution failed");
+    const end = f.native.endObservation;
+    f.native.beginObservation = async () => {
+      f.events.push("begin");
+      return { id: "watch" };
+    };
+    f.native.endObservation = async (id, options) => {
+      f.events.push(`end:${id}`);
+      return end(id, options);
+    };
+    f.runtime.execute = async () => {
+      f.events.push("execute");
+      throw failure;
+    };
+    await assert.rejects(
+      f.session.callTool("macuse", { code: "42" }),
+      (error) => error === failure,
+    );
+    assert.deepEqual(f.events, ["begin", "execute", "end:watch"]);
+  },
+);
+
+nodeTest(
   "code never starts auxiliary transport; invalid envelopes fail before native access",
   async () => {
     const f = fixture();
