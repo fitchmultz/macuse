@@ -23,12 +23,12 @@ The auxiliary app-server starts only for Record & Replay or Computer History. It
 
 ## Public interface
 
-| Surface | Tools |
-| --- | --- |
-| Pi defaults | `macuse`, `macuse_insert_text`, `macuse_reset`, `macuse_tools` |
-| Pi lazy tools | Three `event_stream_*` tools and five `computer_history_*` tools |
-| Standard MCP | Eleven tools: code, insert, reset, and eight auxiliary tools; no activation loader |
-| CLI | The same eleven tools through `call` or persistent JSONL `session` |
+| Surface       | Tools                                                                              |
+| ------------- | ---------------------------------------------------------------------------------- |
+| Pi defaults   | `macuse`, `macuse_insert_text`, `macuse_reset`, `macuse_tools`                     |
+| Pi lazy tools | Three `event_stream_*` tools and five `computer_history_*` tools                   |
+| Standard MCP  | Eleven tools: code, insert, reset, and eight auxiliary tools; no activation loader |
+| CLI           | The same eleven tools through `call` or persistent JSONL `session`                 |
 
 Bootstrap with `await cua.getState()` or `var app = await cua.getApp("Exact App")`. Documentation and initial state are emitted automatically. Bindings persist until reset or a session boundary. `app.getAXState()`, `app.getScreenshot()`, and `app.getAXStateAndScreenshot()` also auto-emit. Use normal JavaScript conditions, bounded loops, assertions, and `try/finally` instead of a separate workflow language; await every action and keep programs short enough to adapt to observed UI state.
 
@@ -46,19 +46,19 @@ Screenshot coordinates refer to the native returned image, with no assumed Retin
 
 ## Source map
 
-| Responsibility | Path |
-| --- | --- |
-| Pi tools/lifecycle | `extensions/macuse.ts` |
-| Public tool schemas | `lib/tools.mjs` |
-| Shared session/serialization | `lib/macuse-session.mjs` |
-| Vendor launch/execution/reset | `lib/cua-runtime.mjs` |
-| Trusted Sky dispatch guard | `lib/cua-guard-service.mjs` |
-| Full AX state parsing/identity | `lib/app-state.mjs` |
-| Selected-text insertion | `lib/native-input.mjs` |
-| Native focus/AX helper | `tools/macos-native.mjs`, `tools/macos-native.swift` |
-| Recording/history transport | `lib/auxiliary-runtime.mjs` |
-| Astra screenshot hook | `lib/pi-images.mjs` |
-| CLI/MCP/config | `tools/macuse.mjs`, `tools/macuse-mcp.mjs`, `tools/macuse-config.mjs` |
+| Responsibility                 | Path                                                                  |
+| ------------------------------ | --------------------------------------------------------------------- |
+| Pi tools/lifecycle             | `extensions/macuse.ts`                                                |
+| Public tool schemas            | `lib/tools.mjs`                                                       |
+| Shared session/serialization   | `lib/macuse-session.mjs`                                              |
+| Vendor launch/execution/reset  | `lib/cua-runtime.mjs`                                                 |
+| Trusted Sky dispatch guard     | `lib/cua-guard-service.mjs`                                           |
+| Full AX state parsing/identity | `lib/app-state.mjs`                                                   |
+| Selected-text insertion        | `lib/native-input.mjs`                                                |
+| Native focus/AX helper         | `tools/macos-native.mjs`, `tools/macos-native.swift`                  |
+| Recording/history transport    | `lib/auxiliary-runtime.mjs`                                           |
+| Astra screenshot hook          | `lib/pi-images.mjs`                                                   |
+| CLI/MCP/config                 | `tools/macuse.mjs`, `tools/macuse-mcp.mjs`, `tools/macuse-config.mjs` |
 
 `/macuse-status` reports owned-runtime status without starting services. `/macuse-stop` stops only the session's processes; the next call can start a fresh session. `/macuse-reset` clears JavaScript bindings/observations without undoing application state.
 

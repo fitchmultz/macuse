@@ -1,136 +1,281 @@
-import assert from 'node:assert/strict';
-import test from 'node:test';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { MacuseSession } from '../../lib/macuse-session.mjs';
-import { CuaRuntime } from '../../lib/cua-runtime.mjs';
-import { parseAppState } from '../../lib/app-state.mjs';
-import { createGuard } from '../../lib/cua-guard-service.mjs';
-import { activityMonitorCheck } from '../validate-macuse.mjs';
+import assert from "node:assert/strict";
+import test from "node:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { MacuseSession } from "../../lib/macuse-session.mjs";
+import { CuaRuntime } from "../../lib/cua-runtime.mjs";
+import { parseAppState } from "../../lib/app-state.mjs";
+import { createGuard } from "../../lib/cua-guard-service.mjs";
+import { activityMonitorCheck } from "../validate-macuse.mjs";
 
-const result = () => ({ content: [{ type: 'text', text: 'Observed' }], isError: false, details: { macuse: {} } });
-const observed = { app: 'Test', title: 'Fixture', url: null, nativeWindowIdentity: true, observedAt: 1, elements: [], focused: { index: '1', role: 'text field', id: 'editor', value: 'old' } };
+const result = () => ({
+  content: [{ type: "text", text: "Observed" }],
+  isError: false,
+  details: { macuse: {} },
+});
+const observed = {
+  app: "Test",
+  title: "Fixture",
+  url: null,
+  nativeWindowIdentity: true,
+  observedAt: 1,
+  elements: [],
+  focused: { index: "1", role: "text field", id: "editor", value: "old" },
+};
 observed.elements = [observed.focused];
-const app = { pid: 42, bundleId: 'test.app', name: 'Test', path: '/Test.app' };
-const state = { pid: 42, app, accessibilityTrusted: true, focusedWindow: { token: 'w', title: 'Fixture', document: null }, focusedElement: { token: 'f', role: 'AXTextField', roleDescription: 'text field', identifier: 'editor', value: 'old', selectedTextSettable: true } };
+const app = { pid: 42, bundleId: "test.app", name: "Test", path: "/Test.app" };
+const state = {
+  pid: 42,
+  app,
+  accessibilityTrusted: true,
+  focusedWindow: { token: "w", title: "Fixture", document: null },
+  focusedElement: {
+    token: "f",
+    role: "AXTextField",
+    roleDescription: "text field",
+    identifier: "editor",
+    value: "old",
+    selectedTextSettable: true,
+  },
+};
 function fixture() {
   const events = [];
   const runtime = {
     observation: observed,
     execute: async () => {
-      events.push('code');
+      events.push("code");
       runtime.observation = { ...observed, observedAt: Date.now() };
       return { ...result(), details: { macuse: { observations: [runtime.observation] } } };
     },
     getObservation: () => runtime.observation,
-    invalidateObservation: app => { events.push(`invalidate:${app}`); runtime.observation = undefined; },
-    reset: async () => events.push('reset'), stop: async () => events.push('stop-code'), status: () => ({ running: false }),
+    invalidateObservation: (app) => {
+      events.push(`invalidate:${app}`);
+      runtime.observation = undefined;
+    },
+    reset: async () => events.push("reset"),
+    stop: async () => events.push("stop-code"),
+    status: () => ({ running: false }),
   };
-  const native = { resolveApp: async () => app, inspectApp: async () => state, beginObservation: async () => ({ id: 'watch' }), endObservation: async () => ({ transitions: [], coverage: { applicationActivation: true } }), replaceSelectedText: async () => ({ status: 'applied', verified: true, mutationAttempted: true }), stop: async () => events.push('stop-native') };
-  const auxiliary = { callTool: async () => { events.push('auxiliary'); return result(); }, stop: async () => events.push('stop-auxiliary'), status: () => ({ running: false }) };
-  return { events, runtime, native, auxiliary, session: new MacuseSession({ runtime, native, auxiliary }) };
+  const native = {
+    resolveApp: async () => app,
+    inspectApp: async () => state,
+    beginObservation: async () => ({ id: "watch" }),
+    endObservation: async () => ({ transitions: [], coverage: { applicationActivation: true } }),
+    replaceSelectedText: async () => ({
+      status: "applied",
+      verified: true,
+      mutationAttempted: true,
+    }),
+    stop: async () => events.push("stop-native"),
+  };
+  const auxiliary = {
+    callTool: async () => {
+      events.push("auxiliary");
+      return result();
+    },
+    stop: async () => events.push("stop-auxiliary"),
+    status: () => ({ running: false }),
+  };
+  return {
+    events,
+    runtime,
+    native,
+    auxiliary,
+    session: new MacuseSession({ runtime, native, auxiliary }),
+  };
 }
 
-test('code never starts auxiliary transport; invalid envelopes fail before native access', async () => {
+test("code never starts auxiliary transport; invalid envelopes fail before native access", async () => {
   const f = fixture();
-  const valid = await f.session.callTool('macuse', { code: '42', trackFocus: false });
+  const valid = await f.session.callTool("macuse", { code: "42", trackFocus: false });
   assert.equal(valid.isError, false);
-  assert.deepEqual(f.events, ['code']);
-  for (const [name, input] of [['macuse', []], ['macuse', { code: 1 }], ['macuse', { code: '42', trackFocus: 'false' }], ['macuse_insert_text', {}], ['unknown', {}]]) {
+  assert.deepEqual(f.events, ["code"]);
+  for (const [name, input] of [
+    ["macuse", []],
+    ["macuse", { code: 1 }],
+    ["macuse", { code: "42", trackFocus: "false" }],
+    ["macuse_insert_text", {}],
+    ["unknown", {}],
+  ]) {
     const invalid = await f.session.callTool(name, input);
     assert.equal(invalid.isError, true);
     assert.equal(invalid.details.macuse.dispatched, false);
   }
-  assert.deepEqual(f.events, ['code']);
+  assert.deepEqual(f.events, ["code"]);
   await f.session.stop();
 });
 
-test('session accepts native deadline values outside the old wrapper range', async () => {
+test("session accepts native deadline values outside the old wrapper range", async () => {
   const f = fixture();
   for (const timeoutMs of [999, 300_001]) {
-    const result = await f.session.callTool('macuse', { code: '42', timeoutMs, trackFocus: false });
+    const result = await f.session.callTool("macuse", { code: "42", timeoutMs, trackFocus: false });
     assert.equal(result.isError, false);
   }
-  assert.deepEqual(f.events, ['code', 'code']);
+  assert.deepEqual(f.events, ["code", "code"]);
   await f.session.stop();
 });
 
-test('missing Sky focus marker is joined only to a unique matching native ID in the observed document', async () => {
-  for (const mismatch of [false, 'document', 'value', 'duplicate', 'page label', 'sheet', 'window']) {
+test("missing Sky focus marker is joined only to a unique matching native ID in the observed document", async () => {
+  for (const mismatch of [
+    false,
+    "document",
+    "value",
+    "duplicate",
+    "page label",
+    "sheet",
+    "window",
+  ]) {
     const f = fixture();
-    const source = ['page label', 'sheet', 'window'].includes(mismatch)
-      ? parseAppState('Test', `Window: "", App: Test.\n0 ${mismatch === 'page label' ? 'window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html' : `${mismatch} Fixture`}\n\t2 text field ID: editor, Value: old`)
+    const source = ["page label", "sheet", "window"].includes(mismatch)
+      ? parseAppState(
+          "Test",
+          `Window: "", App: Test.\n0 ${mismatch === "page label" ? "window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html" : `${mismatch} Fixture`}\n\t2 text field ID: editor, Value: old`,
+        )
       : observed;
-    const field = source.focused ?? source.elements.find(e => e.id === 'editor');
-    const observation = { ...source, focused: undefined, observedAt: Date.now() + 1000, elements: mismatch === 'duplicate' ? [field, field] : source.elements };
-    f.runtime.execute = async () => ({ ...result(), details: { macuse: { observations: [observation] } } });
-    f.native.inspectApp = async () => ({ ...state, focusedWindow: { ...state.focusedWindow, title: mismatch === 'document' ? 'Other' : source.title }, focusedElement: { ...state.focusedElement, value: mismatch === 'value' ? 'changed' : 'old' } });
-    await f.session.callTool('macuse', { code: 'observe', trackFocus: false });
-    assert.equal(observation.focused?.id, mismatch ? undefined : 'editor', String(mismatch));
+    const field = source.focused ?? source.elements.find((e) => e.id === "editor");
+    const observation = {
+      ...source,
+      focused: undefined,
+      observedAt: Date.now() + 1000,
+      elements: mismatch === "duplicate" ? [field, field] : source.elements,
+    };
+    f.runtime.execute = async () => ({
+      ...result(),
+      details: { macuse: { observations: [observation] } },
+    });
+    f.native.inspectApp = async () => ({
+      ...state,
+      focusedWindow: {
+        ...state.focusedWindow,
+        title: mismatch === "document" ? "Other" : source.title,
+      },
+      focusedElement: { ...state.focusedElement, value: mismatch === "value" ? "changed" : "old" },
+    });
+    await f.session.callTool("macuse", { code: "observe", trackFocus: false });
+    assert.equal(observation.focused?.id, mismatch ? undefined : "editor", String(mismatch));
   }
 });
 
-test('guard-generated close evidence cannot certify labels or nonstandard roots absent from a populated native window list', async () => {
+test("guard-generated close evidence cannot certify labels or nonstandard roots absent from a populated native window list", async () => {
   for (const [root, nativeTitle, nativeDocument, closed] of [
-    ['window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html', '', null, false],
-    ['standard window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html', '', null, false],
-    ['sheet Confirmation', 'Parent window', null, false],
-    ['window Confirmation', 'Parent window', null, false],
-    ['standard window Fixture', 'Other window', null, true],
-    ['standard window Fixture', 'Fixture', null, false],
-    ['standard window Fixture, URL: file:///tmp/Fixture.txt', 'Other window', 'file:///tmp/Other.txt', true],
-    ['standard window Fixture, URL: file:///tmp/Fixture.txt', 'Other window', 'file:///tmp/Fixture.txt', false],
-    ['standard window Fixture, URL: file:///tmp/Fixture.txt', 'Other window', null, false],
+    [
+      "window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html",
+      "",
+      null,
+      false,
+    ],
+    [
+      "standard window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html",
+      "",
+      null,
+      false,
+    ],
+    ["sheet Confirmation", "Parent window", null, false],
+    ["window Confirmation", "Parent window", null, false],
+    ["standard window Fixture", "Other window", null, true],
+    ["standard window Fixture", "Fixture", null, false],
+    [
+      "standard window Fixture, URL: file:///tmp/Fixture.txt",
+      "Other window",
+      "file:///tmp/Other.txt",
+      true,
+    ],
+    [
+      "standard window Fixture, URL: file:///tmp/Fixture.txt",
+      "Other window",
+      "file:///tmp/Fixture.txt",
+      false,
+    ],
+    ["standard window Fixture, URL: file:///tmp/Fixture.txt", "Other window", null, false],
   ]) {
     for (const empty of [false, true]) {
       const f = fixture();
-      let reads = 0, closes = 0;
-      const context = { setResponseMeta(meta) { this.meta = structuredClone(meta); } };
-      const guard = createGuard({ context: () => context, dispatch: async request => {
-        if (request.method === 'get_app_state') {
-          reads++;
-          return { app: 'Test', text: `Window: "", App: Test.\n0 ${root}` };
-        }
-        assert.equal(request.method, 'press_key');
-        closes++;
-      } });
-      f.runtime.execute = async input => {
-        context.requestMeta = { macuse: { runId: 'close-regression', ...input } };
-        await guard({ type: 'execute', method: 'get_app_state', args: [{ app: 'Test' }] });
-        await guard({ type: 'execute', method: 'press_key', args: [{ app: 'Test', key: 'cmd+w' }] });
+      let reads = 0,
+        closes = 0;
+      const context = {
+        setResponseMeta(meta) {
+          this.meta = structuredClone(meta);
+        },
+      };
+      const guard = createGuard({
+        context: () => context,
+        dispatch: async (request) => {
+          if (request.method === "get_app_state") {
+            reads++;
+            return { app: "Test", text: `Window: "", App: Test.\n0 ${root}` };
+          }
+          assert.equal(request.method, "press_key");
+          closes++;
+        },
+      });
+      f.runtime.execute = async (input) => {
+        context.requestMeta = { macuse: { runId: "close-regression", ...input } };
+        await guard({ type: "execute", method: "get_app_state", args: [{ app: "Test" }] });
+        await guard({
+          type: "execute",
+          method: "press_key",
+          args: [{ app: "Test", key: "cmd+w" }],
+        });
         return { ...result(), details: context.meta };
       };
-      f.native.inspectApp = async () => ({ ...state, windowsCount: empty ? 0 : 1,
-        windows: empty ? [] : [{ title: nativeTitle, document: nativeDocument }] });
-      const response = await f.session.callTool('macuse', { code: 'observe then close', apps: ['Test'],
-        allowMutating: true, safetyNote: 'Close only the observed fixture.', trackFocus: false });
+      f.native.inspectApp = async () => ({
+        ...state,
+        windowsCount: empty ? 0 : 1,
+        windows: empty ? [] : [{ title: nativeTitle, document: nativeDocument }],
+      });
+      const response = await f.session.callTool("macuse", {
+        code: "observe then close",
+        apps: ["Test"],
+        allowMutating: true,
+        safetyNote: "Close only the observed fixture.",
+        trackFocus: false,
+      });
       assert.equal(response.isError, false);
       const action = response.details.macuse.actions[0];
       assert.equal(action.dispatched, true);
       assert.equal(action.closesWindow, true);
-      assert.equal(action.verification, empty || closed ? 'native-window-closed' : 'native-returned', `${root}; empty=${empty}`);
-      assert.equal(response.content.some(part => part.text?.includes('confirms the target window is closed')), empty || closed);
-      assert.equal(reads, 2, 'close verification must not reopen the app via Sky');
-      assert.equal(closes, 1, 'close must never be replayed');
+      assert.equal(
+        action.verification,
+        empty || closed ? "native-window-closed" : "native-returned",
+        `${root}; empty=${empty}`,
+      );
+      assert.equal(
+        response.content.some((part) =>
+          part.text?.includes("confirms the target window is closed"),
+        ),
+        empty || closed,
+      );
+      assert.equal(reads, 2, "close verification must not reopen the app via Sky");
+      assert.equal(closes, 1, "close must never be replayed");
     }
   }
 });
 
-test('native documentation and app state reach the caller with action outcomes intact', async () => {
+test("native documentation and app state reach the caller with action outcomes intact", async () => {
   const f = fixture();
   const content = [
-    { type: 'text', text: `Native Computer Use documentation\n${'documentation text '.repeat(1600)}` },
-    { type: 'text', text: 'Window: Settings\n0 search text field Search' },
-    { type: 'image', mimeType: 'image/png', data: 'aW1hZ2U=' },
+    {
+      type: "text",
+      text: `Native Computer Use documentation\n${"documentation text ".repeat(1600)}`,
+    },
+    { type: "text", text: "Window: Settings\n0 search text field Search" },
+    { type: "image", mimeType: "image/png", data: "aW1hZ2U=" },
   ];
   const actions = Array.from({ length: 21 }, (_, index) => ({
-    id: index + 1, method: 'click', app: 'Test', dispatched: true,
-    outcome: index === 20 ? 'unknown' : 'completed',
-    verification: index === 20 ? 'none' : 'native-returned',
+    id: index + 1,
+    method: "click",
+    app: "Test",
+    dispatched: true,
+    outcome: index === 20 ? "unknown" : "completed",
+    verification: index === 20 ? "none" : "native-returned",
   }));
-  f.runtime.execute = async () => ({ content: [...content], isError: true, details: { macuse: { status: 'unknown', actions } } });
-  const response = await f.session.callTool('macuse', { code: 'observe', trackFocus: false });
+  f.runtime.execute = async () => ({
+    content: [...content],
+    isError: true,
+    details: { macuse: { status: "unknown", actions } },
+  });
+  const response = await f.session.callTool("macuse", { code: "observe", trackFocus: false });
   assert.equal(response.content[0].text.length, content[0].text.length);
   assert.equal(response.content[0].text, content[0].text);
   assert.deepEqual(response.content.slice(1, 3), content.slice(1));
@@ -138,103 +283,156 @@ test('native documentation and app state reach the caller with action outcomes i
   assert.match(response.content.at(-1).text, /never automatically replay/);
 });
 
-test('screenshot export preserves the literal requested path and refuses overwrite', async t => {
-  const dir = await mkdtemp(join(tmpdir(), 'macuse-image-test-'));
+test("screenshot export preserves the literal requested path and refuses overwrite", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "macuse-image-test-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
-  const f = fixture(); f.session.cwd = dir;
+  const f = fixture();
+  f.session.cwd = dir;
   const bytes = Buffer.from([0xff, 0xd8, 0xff, 0xd9]);
-  f.runtime.execute = async () => ({ ...result(), content: [{ type: 'image', mimeType: 'image/jpeg', data: bytes.toString('base64') }] });
-  const saved = await f.session.callTool('macuse', { code: 'screenshot', saveImagePath: '@capture.jpg', trackFocus: false });
+  f.runtime.execute = async () => ({
+    ...result(),
+    content: [{ type: "image", mimeType: "image/jpeg", data: bytes.toString("base64") }],
+  });
+  const saved = await f.session.callTool("macuse", {
+    code: "screenshot",
+    saveImagePath: "@capture.jpg",
+    trackFocus: false,
+  });
   assert.equal(saved.isError, false);
-  assert.equal(saved.details.macuse.savedImage.path, join(dir, '@capture.jpg'));
-  assert.deepEqual(await readFile(join(dir, '@capture.jpg')), bytes);
-  const exists = await f.session.callTool('macuse', { code: 'screenshot', saveImagePath: '@capture.jpg', trackFocus: false });
+  assert.equal(saved.details.macuse.savedImage.path, join(dir, "@capture.jpg"));
+  assert.deepEqual(await readFile(join(dir, "@capture.jpg")), bytes);
+  const exists = await f.session.callTool("macuse", {
+    code: "screenshot",
+    saveImagePath: "@capture.jpg",
+    trackFocus: false,
+  });
   assert.equal(exists.isError, true);
-  assert.match(exists.content.map(p => p.text ?? '').join('\n'), /EEXIST/);
-  assert.deepEqual(await readFile(join(dir, '@capture.jpg')), bytes);
+  assert.match(exists.content.map((p) => p.text ?? "").join("\n"), /EEXIST/);
+  assert.deepEqual(await readFile(join(dir, "@capture.jpg")), bytes);
 });
 
-test('selected insertion owns the same queue as code and invalidates its prior observation', async () => {
+test("selected insertion owns the same queue as code and invalidates its prior observation", async () => {
   const f = fixture();
-  const editing = Promise.withResolvers(), edited = Promise.withResolvers();
-  f.native.replaceSelectedText = async () => { editing.resolve(); await edited.promise; return { status: 'applied', mutationAttempted: true, verified: true }; };
-  const edit = f.session.callTool('macuse_insert_text', { app: 'Test', text: 'café', allowMutating: true, safetyNote: 'Only replace the fixture selection; no other effects.' });
+  const editing = Promise.withResolvers(),
+    edited = Promise.withResolvers();
+  f.native.replaceSelectedText = async () => {
+    editing.resolve();
+    await edited.promise;
+    return { status: "applied", mutationAttempted: true, verified: true };
+  };
+  const edit = f.session.callTool("macuse_insert_text", {
+    app: "Test",
+    text: "café",
+    allowMutating: true,
+    safetyNote: "Only replace the fixture selection; no other effects.",
+  });
   await editing.promise;
-  const next = f.session.callTool('macuse', { code: '42', trackFocus: false });
+  const next = f.session.callTool("macuse", { code: "42", trackFocus: false });
   await Promise.resolve();
-  assert.deepEqual(f.events, ['code', 'invalidate:Test']);
+  assert.deepEqual(f.events, ["code", "invalidate:Test"]);
   edited.resolve();
-  assert.equal((await edit).details.macuse.outcome, 'verified');
+  assert.equal((await edit).details.macuse.outcome, "verified");
   await next;
-  assert.deepEqual(f.events, ['code', 'invalidate:Test', 'code']);
+  assert.deepEqual(f.events, ["code", "invalidate:Test", "code"]);
   await f.session.stop();
 });
 
-test('insertion refresh rejects a reused record and cannot authorize a later insertion', async () => {
+test("insertion refresh rejects a reused record and cannot authorize a later insertion", async () => {
   const f = fixture();
-  const snapshot = record => parseAppState('Test', `Window: "Fixture", App: Test.
+  const snapshot = (record) =>
+    parseAppState(
+      "Test",
+      `Window: "Fixture", App: Test.
 0 standard window Fixture
 	1 cell Value: ${record}
 		2 text field ID: editor, Value: old
-The focused UI element is 2 text field`);
-  f.runtime.observation = snapshot('draft.txt');
-  f.runtime.execute = async input => {
+The focused UI element is 2 text field`,
+    );
+  f.runtime.observation = snapshot("draft.txt");
+  f.runtime.execute = async (input) => {
     assert.equal(input.code, 'await cua.getApp("Test")');
-    f.events.push('refresh');
-    f.runtime.observation = snapshot('important.txt');
+    f.events.push("refresh");
+    f.runtime.observation = snapshot("important.txt");
     return { ...result(), details: { macuse: { observations: [f.runtime.observation] } } };
   };
-  f.native.replaceSelectedText = async () => assert.fail('must not dispatch');
-  const input = { app: 'Test', text: 'replacement', allowMutating: true, safetyNote: 'Replace only the draft.txt record selection.' };
-  const first = await f.session.callTool('macuse_insert_text', input);
+  f.native.replaceSelectedText = async () => assert.fail("must not dispatch");
+  const input = {
+    app: "Test",
+    text: "replacement",
+    allowMutating: true,
+    safetyNote: "Replace only the draft.txt record selection.",
+  };
+  const first = await f.session.callTool("macuse_insert_text", input);
   assert.equal(first.details.macuse.dispatched, false);
   assert.match(first.content[0].text, /Focused field changed/);
   assert.equal(f.runtime.getObservation(), undefined);
-  const second = await f.session.callTool('macuse_insert_text', input);
+  const second = await f.session.callTool("macuse_insert_text", input);
   assert.match(second.content[0].text, /Observe the intended app/);
-  assert.deepEqual(f.events, ['refresh', 'invalidate:Test']);
+  assert.deepEqual(f.events, ["refresh", "invalidate:Test"]);
 });
 
-test('insertion refresh retains native focus joining for snapshots without a Sky focused marker', async () => {
+test("insertion refresh retains native focus joining for snapshots without a Sky focused marker", async () => {
   const f = fixture();
   f.runtime.execute = async () => {
     f.runtime.observation = { ...observed, focused: undefined, observedAt: Date.now() };
     return { ...result(), details: { macuse: { observations: [f.runtime.observation] } } };
   };
-  const response = await f.session.callTool('macuse_insert_text', { app: 'Test', text: 'café', allowMutating: true, safetyNote: 'Only replace the fixture selection; no other effects.' });
-  assert.equal(response.details.macuse.outcome, 'verified');
+  const response = await f.session.callTool("macuse_insert_text", {
+    app: "Test",
+    text: "café",
+    allowMutating: true,
+    safetyNote: "Only replace the fixture selection; no other effects.",
+  });
+  assert.equal(response.details.macuse.outcome, "verified");
   assert.equal(f.runtime.getObservation(), undefined);
 });
 
-test('an interrupted insertion refresh preserves reset evidence and cancels queued code', async () => {
-  const f = fixture(), started = Promise.withResolvers(), finish = Promise.withResolvers();
+test("an interrupted insertion refresh preserves reset evidence and cancels queued code", async () => {
+  const f = fixture(),
+    started = Promise.withResolvers(),
+    finish = Promise.withResolvers();
   f.runtime.execute = async () => {
-    f.events.push('refresh'); started.resolve(); await finish.promise;
-    return { content: [{ type: 'text', text: 'Snapshot timed out.' }], isError: true,
-      details: { macuse: { status: 'unknown', kernelReset: true, interruption: 'timeout' } } };
+    f.events.push("refresh");
+    started.resolve();
+    await finish.promise;
+    return {
+      content: [{ type: "text", text: "Snapshot timed out." }],
+      isError: true,
+      details: { macuse: { status: "unknown", kernelReset: true, interruption: "timeout" } },
+    };
   };
-  f.native.replaceSelectedText = async () => assert.fail('must not dispatch');
-  const insertion = f.session.callTool('macuse_insert_text', { app: 'Test', text: 'café', allowMutating: true, safetyNote: 'Only replace the fixture selection; no other effects.' });
+  f.native.replaceSelectedText = async () => assert.fail("must not dispatch");
+  const insertion = f.session.callTool("macuse_insert_text", {
+    app: "Test",
+    text: "café",
+    allowMutating: true,
+    safetyNote: "Only replace the fixture selection; no other effects.",
+  });
   await started.promise;
-  const queued = f.session.callTool('macuse', { code: 'must-not-run', trackFocus: false });
+  const queued = f.session.callTool("macuse", { code: "must-not-run", trackFocus: false });
   finish.resolve();
   const response = await insertion;
   assert.equal(response.isError, true);
   assert.equal(response.details.macuse.dispatched, false);
   assert.equal(response.details.macuse.kernelReset, true);
-  assert.equal(response.details.macuse.interruption, 'timeout');
-  assert.equal(response.details.macuse.refresh.status, 'unknown');
+  assert.equal(response.details.macuse.interruption, "timeout");
+  assert.equal(response.details.macuse.refresh.status, "unknown");
   assert.match(response.content[0].text, /Snapshot timed out/);
   assert.match((await queued).content[0].text, /Cancelled before dispatch/);
-  assert.deepEqual(f.events, ['refresh', 'invalidate:Test']);
+  assert.deepEqual(f.events, ["refresh", "invalidate:Test"]);
 });
 
-test('stale or failed insertion snapshots never reuse the prior cached observation', async () => {
+test("stale or failed insertion snapshots never reuse the prior cached observation", async () => {
   for (const failed of [false, true]) {
     const f = fixture();
     f.runtime.execute = async () => ({ ...result(), isError: failed });
-    f.native.replaceSelectedText = async () => assert.fail('must not dispatch');
-    const response = await f.session.callTool('macuse_insert_text', { app: 'Test', text: 'café', allowMutating: true, safetyNote: 'Only replace the fixture selection; no other effects.' });
+    f.native.replaceSelectedText = async () => assert.fail("must not dispatch");
+    const response = await f.session.callTool("macuse_insert_text", {
+      app: "Test",
+      text: "café",
+      allowMutating: true,
+      safetyNote: "Only replace the fixture selection; no other effects.",
+    });
     assert.equal(response.isError, true);
     assert.equal(response.details.macuse.dispatched, false);
     assert.match(response.content[0].text, failed ? /Observed/ : /fresh full app snapshot/);
@@ -242,12 +440,20 @@ test('stale or failed insertion snapshots never reuse the prior cached observati
   }
 });
 
-test('reset aborts the active call, drains it, cancels queued calls, and never replays', async () => {
-  const f = fixture(), started = Promise.withResolvers(), settled = Promise.withResolvers();
-  f.runtime.execute = async (_input, { signal }) => { started.resolve(); await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })); await settled.promise; f.events.push('aborted-code-settled'); return { ...result(), isError: true }; };
-  const first = f.session.callTool('macuse', { code: 'held', trackFocus: false });
+test("reset aborts the active call, drains it, cancels queued calls, and never replays", async () => {
+  const f = fixture(),
+    started = Promise.withResolvers(),
+    settled = Promise.withResolvers();
+  f.runtime.execute = async (_input, { signal }) => {
+    started.resolve();
+    await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+    await settled.promise;
+    f.events.push("aborted-code-settled");
+    return { ...result(), isError: true };
+  };
+  const first = f.session.callTool("macuse", { code: "held", trackFocus: false });
   await started.promise;
-  const queued = f.session.callTool('macuse', { code: 'must-not-run', trackFocus: false });
+  const queued = f.session.callTool("macuse", { code: "must-not-run", trackFocus: false });
   const reset = f.session.reset();
   await Promise.resolve();
   assert.deepEqual(f.events, []);
@@ -255,86 +461,149 @@ test('reset aborts the active call, drains it, cancels queued calls, and never r
   assert.equal((await first).details.macuse.isError, true);
   assert.equal((await queued).details.macuse.dispatched, false);
   await reset;
-  assert.deepEqual(f.events, ['aborted-code-settled', 'reset']);
+  assert.deepEqual(f.events, ["aborted-code-settled", "reset"]);
   await f.session.stop();
 });
 
-test('new calls wait through an in-progress kernel reset', async () => {
-  const f = fixture(), started = Promise.withResolvers(), finished = Promise.withResolvers();
-  f.runtime.reset = async () => { started.resolve(); await finished.promise; f.events.push('reset'); };
+test("new calls wait through an in-progress kernel reset", async () => {
+  const f = fixture(),
+    started = Promise.withResolvers(),
+    finished = Promise.withResolvers();
+  f.runtime.reset = async () => {
+    started.resolve();
+    await finished.promise;
+    f.events.push("reset");
+  };
   const reset = f.session.reset();
   await started.promise;
-  const next = f.session.callTool('macuse', { code: 'after-reset', trackFocus: false });
+  const next = f.session.callTool("macuse", { code: "after-reset", trackFocus: false });
   await Promise.resolve();
   assert.deepEqual(f.events, []);
   finished.resolve();
   await Promise.all([reset, next]);
-  assert.deepEqual(f.events, ['reset', 'code']);
+  assert.deepEqual(f.events, ["reset", "code"]);
   await f.session.stop();
 });
 
-for (const interruption of ['abort', 'timeout', 'reset']) test(`${interruption} cancels pending session calls while allowing fresh work`, async t => {
-  const f = fixture(), started = Promise.withResolvers(), held = Promise.withResolvers();
-  const calls = [];
-  f.session.runtime = new CuaRuntime({ connect: async () => ({
-    callTool: async request => {
-      if (request.name === 'js_reset') {
-        held.resolve({ content: [], isError: true });
-        return { content: [] };
-      }
-      const code = request.arguments.code;
-      calls.push(code);
-      if (code === 'held') { started.resolve(); return held.promise; }
-      return { content: [], _meta: { macuse: { runId: request._meta.macuse.runId, actions: [], observations: [] } } };
-    },
-    close: async () => {},
-  }) });
-  t.after(() => f.session.stop());
-  const call = (code, options) => f.session.callTool('macuse', { code, trackFocus: false, timeoutMs: 1000 }, options);
-  const controller = new AbortController();
-  const first = call('held', { signal: controller.signal });
-  await started.promise;
-  const queued = call('must-not-run');
-  let reset, duringReset;
-  if (interruption === 'abort') controller.abort();
-  if (interruption === 'reset') {
-    reset = f.session.reset();
-    duringReset = call('during-reset');
-  }
-  const interrupted = await first;
-  assert.equal(interrupted.isError, true);
-  assert.equal(interrupted.details.macuse.kernelReset, true);
-  assert.equal((await queued).details.macuse.dispatched, false);
-  assert.equal(calls.includes('must-not-run'), false);
-  await reset;
-  if (duringReset) assert.equal((await duringReset).isError, false);
-  assert.equal((await call('fresh')).isError, false);
-  assert.deepEqual(calls, interruption === 'reset' ? ['held', 'during-reset', 'fresh'] : ['held', 'fresh']);
-});
+for (const interruption of ["abort", "timeout", "reset"])
+  test(`${interruption} cancels pending session calls while allowing fresh work`, async (t) => {
+    const f = fixture(),
+      started = Promise.withResolvers(),
+      held = Promise.withResolvers();
+    const calls = [];
+    f.session.runtime = new CuaRuntime({
+      connect: async () => ({
+        callTool: async (request) => {
+          if (request.name === "js_reset") {
+            held.resolve({ content: [], isError: true });
+            return { content: [] };
+          }
+          const code = request.arguments.code;
+          calls.push(code);
+          if (code === "held") {
+            started.resolve();
+            return held.promise;
+          }
+          return {
+            content: [],
+            _meta: { macuse: { runId: request._meta.macuse.runId, actions: [], observations: [] } },
+          };
+        },
+        close: async () => {},
+      }),
+    });
+    t.after(() => f.session.stop());
+    const call = (code, options) =>
+      f.session.callTool("macuse", { code, trackFocus: false, timeoutMs: 1000 }, options);
+    const controller = new AbortController();
+    const first = call("held", { signal: controller.signal });
+    await started.promise;
+    const queued = call("must-not-run");
+    let reset, duringReset;
+    if (interruption === "abort") controller.abort();
+    if (interruption === "reset") {
+      reset = f.session.reset();
+      duringReset = call("during-reset");
+    }
+    const interrupted = await first;
+    assert.equal(interrupted.isError, true);
+    assert.equal(interrupted.details.macuse.kernelReset, true);
+    assert.equal((await queued).details.macuse.dispatched, false);
+    assert.equal(calls.includes("must-not-run"), false);
+    await reset;
+    if (duringReset) assert.equal((await duringReset).isError, false);
+    assert.equal((await call("fresh")).isError, false);
+    assert.deepEqual(
+      calls,
+      interruption === "reset" ? ["held", "during-reset", "fresh"] : ["held", "fresh"],
+    );
+  });
 
-test('missing native focus coverage remains explicit without blocking a read-only result', async () => {
+test("missing native focus coverage remains explicit without blocking a read-only result", async () => {
   const f = fixture();
-  f.native.beginObservation = async () => { throw new Error('Compiler unavailable'); };
-  const response = await f.session.callTool('macuse', { code: '42' });
+  f.native.beginObservation = async () => {
+    throw new Error("Compiler unavailable");
+  };
+  const response = await f.session.callTool("macuse", { code: "42" });
   assert.equal(response.isError, false);
   assert.equal(response.details.macuse.focus.observationAvailable, false);
   assert.match(response.content.at(-1).text, /Compiler unavailable/);
   assert.equal(response.details.macuse.focus.isolationGuaranteed, false);
 });
 
-for (const mode of ['initial-disk', 'initial-memory', 'unknown', 'failed-action', 'missing-coverage', 'activation']) test(`Activity Monitor validation cleanup: ${mode}`, async () => {
-  const original = mode === 'unknown' ? undefined : mode === 'initial-memory' ? 'Memory' : 'Disk';
-  let current = original, mutations = 0;
-  const tabs = () => ['CPU', 'Memory', 'Disk'].map((name, index) => ({ index: String(index), name, description: name, role: 'radio button', secondaryActions: ['Press'], value: current === name ? '1' : '0' }));
-  const fixture = { runtime: { getObservation: () => ({ elements: tabs() }) }, callTool: async (_tool, input) => {
-    const action = input.code.match(/performSecondaryAction\((\d+)/);
-    if (action) { current = tabs()[Number(action[1])].name; mutations++; }
-    const changed = mutations === 1 && action;
-    return { ...result(), isError: mode === 'failed-action' && Boolean(changed), details: { macuse: { focus: { observationAvailable: mode !== 'missing-coverage', coverage: { applicationActivation: true, truncated: false }, before: { frontmost: { bundleId: 'user.editor' } }, after: { frontmost: { bundleId: 'user.editor' } }, transitions: mode === 'activation' && changed ? [{ kind: 'activation', app: { bundleId: 'com.apple.ActivityMonitor' } }] : [] } } } };
-  } };
-  const run = activityMonitorCheck(fixture, { strictFocus: true });
-  if (['initial-disk', 'initial-memory'].includes(mode)) assert.equal((await run).restored, true);
-  else await assert.rejects(run);
-  assert.equal(current, original);
-  assert.equal(mutations, ['unknown', 'missing-coverage'].includes(mode) ? 0 : 2);
-});
+for (const mode of [
+  "initial-disk",
+  "initial-memory",
+  "unknown",
+  "failed-action",
+  "missing-coverage",
+  "activation",
+])
+  test(`Activity Monitor validation cleanup: ${mode}`, async () => {
+    const original = mode === "unknown" ? undefined : mode === "initial-memory" ? "Memory" : "Disk";
+    let current = original,
+      mutations = 0;
+    const tabs = () =>
+      ["CPU", "Memory", "Disk"].map((name, index) => ({
+        index: String(index),
+        name,
+        description: name,
+        role: "radio button",
+        secondaryActions: ["Press"],
+        value: current === name ? "1" : "0",
+      }));
+    const fixture = {
+      runtime: { getObservation: () => ({ elements: tabs() }) },
+      callTool: async (_tool, input) => {
+        const action = input.code.match(/performSecondaryAction\((\d+)/);
+        if (action) {
+          current = tabs()[Number(action[1])].name;
+          mutations++;
+        }
+        const changed = mutations === 1 && action;
+        return {
+          ...result(),
+          isError: mode === "failed-action" && Boolean(changed),
+          details: {
+            macuse: {
+              focus: {
+                observationAvailable: mode !== "missing-coverage",
+                coverage: { applicationActivation: true, truncated: false },
+                before: { frontmost: { bundleId: "user.editor" } },
+                after: { frontmost: { bundleId: "user.editor" } },
+                transitions:
+                  mode === "activation" && changed
+                    ? [{ kind: "activation", app: { bundleId: "com.apple.ActivityMonitor" } }]
+                    : [],
+              },
+            },
+          },
+        };
+      },
+    };
+    const run = activityMonitorCheck(fixture, { strictFocus: true });
+    if (["initial-disk", "initial-memory"].includes(mode)) assert.equal((await run).restored, true);
+    else await assert.rejects(run);
+    assert.equal(current, original);
+    assert.equal(mutations, ["unknown", "missing-coverage"].includes(mode) ? 0 : 2);
+  });

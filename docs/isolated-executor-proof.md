@@ -32,9 +32,11 @@ production actuator integration in this proof.
 ```js
 import { IsolatedExecutor } from "../lib/isolated-executor.mjs";
 
-const executor = new IsolatedExecutor({ capabilities: {
-  inspect: { mutating: false, invoke: async params => ({ requested: params.app }) },
-} });
+const executor = new IsolatedExecutor({
+  capabilities: {
+    inspect: { mutating: false, invoke: async (params) => ({ requested: params.app }) },
+  },
+});
 try {
   const result = await executor.execute({
     code: "var state = macuse.call('inspect', {app:'example.exact'}); state",

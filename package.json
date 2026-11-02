@@ -45,6 +45,11 @@
     ]
   },
   "scripts": {
+    "lint": "oxlint --deny-warnings .",
+    "lint:agent": "oxlint --deny-warnings --format=agent .",
+    "lint:fix": "oxlint --fix .",
+    "format": "oxfmt --write .",
+    "format:check": "oxfmt --check .",
     "doctor": "node tools/macuse-doctor.mjs",
     "doctor:full": "node tools/macuse-doctor.mjs --full",
     "repair": "node tools/macuse-repair.mjs",
@@ -56,10 +61,10 @@
     "validate:mutating": "node tools/validate-macuse.mjs mutating",
     "validate:focus": "node tools/validate-macuse.mjs focus",
     "validate:mcp": "node tools/validate-macuse.mjs mcp",
-    "check:compat": "npm run typecheck && npm test && node tools/validate-macuse.mjs extension && node tools/validate-pi-host.mjs && npm run pack:check && node tools/qualify-independent-proof.mjs --help",
+    "check:compat": "npm run typecheck && npm test && node tools/validate-macuse.mjs extension && node tools/validate-pi-host.mjs && npm run format:check && npm run pack:check && node tools/qualify-independent-proof.mjs --help",
     "typecheck": "tsc --noEmit",
     "test": "node --test tools/tests/*.test.mjs",
-    "ci": "tsc --noEmit && npm test && node tools/validate-macuse.mjs quick",
+    "ci": "tsc --noEmit && npm test && node tools/validate-macuse.mjs quick && npm run format:check",
     "pack:check": "npm pack --dry-run"
   },
   "engines": {
@@ -78,6 +83,9 @@
     "@earendil-works/pi-coding-agent": "1.0.0",
     "@types/node": "24.19.1",
     "jiti": "2.7.0",
+    "oxfmt": "0.75.0",
+    "oxlint": "1.90.0",
+    "oxlint-tsgolint": "7.0.2005",
     "typebox": "1.3.34",
     "typescript": "7.0.2"
   },

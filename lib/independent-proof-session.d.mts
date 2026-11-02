@@ -13,7 +13,9 @@ export interface ProofInput {
   readonly timeoutMs?: number;
 }
 export interface ProofResult {
-  content: Array<{ type: "text"; text: string } | { type: "image"; mimeType: "image/png"; data: string }>;
+  content: Array<
+    { type: "text"; text: string } | { type: "image"; mimeType: "image/png"; data: string }
+  >;
   isError: boolean;
   details: { independent: { isError: boolean; [key: string]: unknown } };
 }

@@ -1,0 +1,35 @@
+# Engineering standard records
+
+Records for the adoption of [engineering-standard.md](engineering-standard.md) (Strict Oxlint and Oxfmt Engineering Standard v5.1.2). Quality exceptions follow the standard's Section 2 and Appendix B.
+
+## Adoption record
+
+| Field                   | Value                                                                                                                                                                                                                                                                                                                                        |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repository              | `fitchmultz/macuse`                                                                                                                                                                                                                                                                                                                          |
+| Adopted standard        | v5.1.2, copied at `docs/reference/engineering-standard.md` (sha256 `41b6d505b36007218ca56b7b3443fcbd96d994715da5a83aaca52b58af47d3d6`; formatter-clean under the adopted oxfmt config)                                                                                                                                                       |
+| Supported runtimes      | Node.js `>=24.21.0`, native macOS hosts for desktop checks                                                                                                                                                                                                                                                                                   |
+| Package manager         | npm (`npm@12.2.1`), committed lockfile                                                                                                                                                                                                                                                                                                       |
+| Toolchain               | oxlint `1.90.0`, oxfmt `0.75.0`, oxlint-tsgolint `7.0.2005`, TypeScript `7.0.2` (devDependencies, exact)                                                                                                                                                                                                                                     |
+| Lint configuration      | `.oxlintrc.json` (Appendix A baseline; `ignorePatterns`: `node_modules`, `.scratch`, `subagent-output`)                                                                                                                                                                                                                                      |
+| Formatter configuration | `.oxfmtrc.json` (Section 7.1 defaults; `sortPackageJson` and other sorting disabled)                                                                                                                                                                                                                                                         |
+| Formatter ownership     | oxfmt owns maintained `.mjs`, `.d.mts`, `.ts`, `.json`, `.md`, and `.yml` files. `package-lock.json` is generated output owned by npm. Swift sources (`.swift`) and vendored bytes have no oxfmt owner.                                                                                                                                      |
+| Compiler projects       | root `tsconfig.json`: `extensions/**/*.ts`, `.github/scripts/**`, `lib/**`, `tools/**` (implementation, tests, tooling, handwritten `.d.mts` declarations) with `allowJs`/`checkJs` and the Section 4.2 strict-family options                                                                                                                |
+| Source profiles         | Production: `lib/`, `extensions/`, `tools/*.mjs` (bin + qualification tooling), `.github/scripts/`. Tests: `tools/tests/*.test.mjs`. Handwritten declarations: `lib/*.d.mts`, `tools/*.d.mts`. Static fixture app: `tools/actuator-fixture.mjs` (implementation-owned). No maintained React/Vitest/Jest sources; test runner is `node:test`. |
+| Acceptance commands     | `npm run check:compat` (canonical aggregate), `npm run ci`, `npm run format:check`, `npm run lint`                                                                                                                                                                                                                                           |
+| Hosted CI               | `.github/workflows/ci.yml` (Linux contracts + macOS native hosts) and `.github/workflows/pi-compatibility.yml`                                                                                                                                                                                                                               |
+| Migration status        | See "Migration status" below                                                                                                                                                                                                                                                                                                                 |
+
+### Migration status
+
+Phased adoption per standard Section 9.2. Enforcement is added in each phase only for scope that passes its complete declared checks:
+
+1. Toolchain, configurations, formatting ownership, and `format:check` gating — complete.
+2. Compiler coverage expansion (`allowJs`/`checkJs` and Section 4.2 options over all maintained JavaScript) with source repairs until `npm run typecheck` passes — in progress.
+3. Strict lint enforcement (`npm run lint` and `lint:agent` in `check:compat`/`ci`) with source repairs, qualification controls (Section 8.2), and integrity checks — in progress.
+
+No finding budgets, diagnostic filtering, or incomplete-source exemptions are in force; gates not yet at strict enforcement simply run their previous configuration until their phase lands.
+
+## Quality-exception record
+
+No exceptions recorded yet. Each future entry uses the Appendix B template with a stable `QX-###` identifier, evidence, comparison, chosen adjustment, retained protection, and revisit trigger.

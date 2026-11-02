@@ -56,15 +56,15 @@ Native AX features need Accessibility permission and installed `xcrun swiftc`; t
 
 Pi's `macuse_tools` enables only these eight auxiliary tools; MCP exposes them directly:
 
-| Tool | Required local gate |
-| --- | --- |
-| `event_stream_status` | `{}`; reveals recording/activity/artifact metadata |
-| `event_stream_start` | Exact recording intent, `allowRecording:true`, non-empty `safetyNote` |
-| `event_stream_stop` | `{}`; no recording flag |
-| `computer_history_status` | `{}`; reveals history/activity metadata |
-| `computer_history_get_settings` | `{}`; reveals privacy settings |
-| `computer_history_pause` | `{}`; no recording flag |
-| `computer_history_resume` | Exact history-recording intent, `allowRecording:true`, non-empty `safetyNote` |
+| Tool                               | Required local gate                                                                       |
+| ---------------------------------- | ----------------------------------------------------------------------------------------- |
+| `event_stream_status`              | `{}`; reveals recording/activity/artifact metadata                                        |
+| `event_stream_start`               | Exact recording intent, `allowRecording:true`, non-empty `safetyNote`                     |
+| `event_stream_stop`                | `{}`; no recording flag                                                                   |
+| `computer_history_status`          | `{}`; reveals history/activity metadata                                                   |
+| `computer_history_get_settings`    | `{}`; reveals privacy settings                                                            |
+| `computer_history_pause`           | `{}`; no recording flag                                                                   |
+| `computer_history_resume`          | Exact history-recording intent, `allowRecording:true`, non-empty `safetyNote`             |
 | `computer_history_update_settings` | Exact approval, `allowPrivacyChange:true`, non-empty `safetyNote`, complete `observation` |
 
 Record & Replay captures clicks, typed text, and interacted-window content for up to 30 minutes. Starting while active returns the existing session. Do not start recording merely to debug a GUI action.

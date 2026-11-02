@@ -1,17 +1,17 @@
 {
-	"compilerOptions": {
-		"target": "ES2022",
-		"lib": ["ES2023"],
-		"module": "ESNext",
-		"moduleResolution": "bundler",
-		"strict": true,
-		"noImplicitOverride": true,
-		"noFallthroughCasesInSwitch": true,
-		"skipLibCheck": true,
-		"noEmit": true,
-		"types": ["node"],
-		"forceConsistentCasingInFileNames": true
-	},
-	"include": ["extensions/**/*.ts", ".github/scripts/**/*.ts"],
-	"exclude": ["node_modules", ".scratch", "subagent-artifacts"]
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["node"],
+    "forceConsistentCasingInFileNames": true
+  },
+  "include": ["extensions/**/*.ts", ".github/scripts/**/*.ts"],
+  "exclude": ["node_modules", ".scratch", "subagent-artifacts"]
 }

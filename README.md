@@ -4,7 +4,7 @@ macuse connects Pi and MCP assistants to native macOS apps through the Computer 
 
 ![Pi, CLI, and MCP clients send requests through macuse and the installed Computer Use runtime to macOS apps. App state returns to the client.](.github/readme/native-app-control.png)
 
-*macuse checks the app and document before each action. The assistant receives app state, screenshots, and action results.*
+_macuse checks the app and document before each action. The assistant receives app state, screenshots, and action results._
 
 > [!WARNING]
 > **Experimental, unsupported integration.** OpenAI can change these private interfaces without notice. Read the [safety policy](docs/reference/codex-computer-use-safety-policy.md) before you grant permissions or use app actions.
@@ -44,13 +44,13 @@ The tool returns API documentation and app state. Bindings persist until reset o
 
 ## Tools
 
-| Tool | Purpose |
-| --- | --- |
-| `macuse` | Inspect apps and run JavaScript in a persistent session. |
+| Tool                 | Purpose                                                         |
+| -------------------- | --------------------------------------------------------------- |
+| `macuse`             | Inspect apps and run JavaScript in a persistent session.        |
 | `macuse_insert_text` | Replace selected text without changes to the rest of the field. |
-| `macuse_reset` | Clear bindings and observations; preserve app state. |
-| `macuse_tools` | Enable Record & Replay or Computer History tools in Pi. |
-| `macuse_enable` | Select the four entry tools permitted by Pi. |
+| `macuse_reset`       | Clear bindings and observations; preserve app state.            |
+| `macuse_tools`       | Enable Record & Replay or Computer History tools in Pi.         |
+| `macuse_enable`      | Select the four entry tools permitted by Pi.                    |
 
 Pi starts with four entry tools and the separate recovery tool. Enable the `macos` group on Pi hosts with tool discovery. MCP exposes eleven tools, including the eight Record & Replay and Computer History tools. Tool activation starts no recording.
 

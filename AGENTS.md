@@ -2,6 +2,10 @@
 
 macuse reuses the installed native Computer Use runtime for Pi, CLI, and MCP clients. Read [docs/README.md](docs/README.md) for setup, architecture, and validation.
 
+## Engineering standard
+
+Follow [docs/reference/engineering-standard.md](docs/reference/engineering-standard.md) (lint, format, compiler, verification requirements); records live in [docs/reference/engineering-standard-records.md](docs/reference/engineering-standard-records.md). The normal acceptance command is `npm run check:compat`. Any relaxation of an applicable rule needs a recorded, evidence-based quality exception under the standard's Section 2 — never a silent disable.
+
 ## Canonical paths
 
 - Pi entrypoint: `extensions/macuse.ts`
