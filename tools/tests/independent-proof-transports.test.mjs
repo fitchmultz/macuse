@@ -18,7 +18,65 @@ const env = {
   MACUSE_INDEPENDENT_PROOF_TARGET: "",
   MACUSE_CHATGPT_RESOURCES: "/no-vendor-installation-in-proof",
 };
-const value = (result) => result.details.independent.execution.value;
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+/** @param {unknown} chunk @returns {string} */
+const chunkText = (chunk) => {
+  if (typeof chunk === "string") return chunk;
+  if (Buffer.isBuffer(chunk)) return chunk.toString();
+  return "";
+};
+/**
+ * @param {string} line
+ * @returns {{ isError: boolean | undefined, details: unknown }}
+ */
+const parseLine = (line) => {
+  /** @type {unknown} */
+  const parsed = JSON.parse(line);
+  assert.ok(isRecord(parsed), "Transport returned a non-object JSONL line");
+  return {
+    isError: typeof parsed.isError === "boolean" ? parsed.isError : undefined,
+    details: parsed.details,
+  };
+};
+/** @param {unknown} result @returns {Record<string, unknown>} */
+const metaOf = (result) => {
+  const record = isRecord(result) ? result : {};
+  if (isRecord(record.details)) return record.details;
+  if (isRecord(record._meta)) return record._meta;
+  return {};
+};
+/** @param {unknown} result @returns {Record<string, unknown>} */
+const independentDetails = (result) => {
+  const container = metaOf(result);
+  return isRecord(container.independent) ? container.independent : {};
+};
+/** @param {Record<string, unknown>} independent @returns {unknown} */
+const executionValue = (independent) => {
+  const execution = isRecord(independent.execution) ? independent.execution : {};
+  return execution.value;
+};
+/** @param {unknown} result @returns {unknown} */
+const value = (result) => executionValue(independentDetails(result));
+/**
+ * @template T
+ * @param {T[]} results
+ * @param {number} index
+ * @returns {T}
+ */
+const at = (results, index) => {
+  const found = results[index];
+  if (found === undefined) assert.fail(`Missing transport result ${index}`);
+  return found;
+};
+/** @param {unknown} value @returns {value is { code: unknown, stderr: string, stdout: string }} */
+const isExecFailure = (value) =>
+  value instanceof Error &&
+  "code" in value &&
+  "stderr" in value &&
+  "stdout" in value &&
+  typeof value.stderr === "string" &&
+  typeof value.stdout === "string";
 const targetless = {
   code: "macuse.call('observe',{app:'com.macuse.actuator-fixture.11111111-1111-4111-8111-111111111111'})",
 };
@@ -33,6 +91,12 @@ const requests = [
   { tool, input: invalidAdmission },
 ];
 
+/**
+ * @param {string} script
+ * @param {string[]} [args]
+ * @param {number} [expectedExit]
+ * @param {boolean} [hostValidatesSchema]
+ */
 async function sessionProcess(script, args = [], expectedExit = 0, hostValidatesSchema = false) {
   const input = requests.map((request) => JSON.stringify(request)).join("\r\n");
   const child = execFile(
@@ -40,15 +104,21 @@ async function sessionProcess(script, args = [], expectedExit = 0, hostValidates
     [fileURLToPath(new URL(script, import.meta.url)), ...args],
     { env, timeout: 50000, maxBuffer: 2 * 1024 * 1024 },
   );
-  child.stdin.end(input);
-  const result = await new Promise((resolve, reject) => {
-    let stdout = "",
-      stderr = "";
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk;
+  const stdin = child.stdin;
+  const stdoutStream = child.stdout;
+  const stderrStream = child.stderr;
+  if (stdin === null || stdoutStream === null || stderrStream === null)
+    assert.fail("Child stdio unavailable");
+  stdin.end(input);
+  /** @type {Promise<ReturnType<typeof parseLine>[]>} */
+  const settled = new Promise((resolve, reject) => {
+    let stdout = "";
+    let stderr = "";
+    stdoutStream.on("data", (chunk) => {
+      stdout += chunkText(chunk);
     });
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk;
+    stderrStream.on("data", (chunk) => {
+      stderr += chunkText(chunk);
     });
     child.once("error", reject);
     child.once("close", (code, signal) => {
@@ -59,35 +129,36 @@ async function sessionProcess(script, args = [], expectedExit = 0, hostValidates
           stdout
             .trim()
             .split("\n")
-            .map((line) => JSON.parse(line)),
+            .map((line) => parseLine(line)),
         );
       } catch (error) {
         reject(error);
       }
     });
   });
+  const result = await settled;
   assert.equal(result.length, requests.length);
-  assert.equal(value(result[0]), 41);
-  assert.equal(result[1].isError, true);
+  assert.equal(value(at(result, 0)), 41);
+  assert.equal(at(result, 1).isError, true);
   if (!hostValidatesSchema) {
-    assert.equal(result[1].details.independent.outcome, "not-dispatched");
-    assert.equal(result[1].details.independent.dispatched, false);
+    assert.equal(independentDetails(at(result, 1)).outcome, "not-dispatched");
+    assert.equal(independentDetails(at(result, 1)).dispatched, false);
   }
   assert.deepEqual(value(result[2]), { counter: 42, text: "独立\u2028é" });
-  assert.equal(result[3].isError, false);
-  assert.equal(value(result[4]), "undefined");
+  assert.equal(at(result, 3).isError, false);
+  assert.equal(value(at(result, 4)), "undefined");
   assert.equal(
-    result[5].isError,
+    at(result, 5).isError,
     true,
     "Targetless native read must remain an error across the transport",
   );
-  assert.equal(result[5].details.independent.isError, true);
-  assert.equal(result[6].isError, true);
-  assert.equal(result[6].details.independent.outcome, "not-dispatched");
-  assert.equal(result[6].details.independent.dispatched, false);
+  assert.equal(independentDetails(at(result, 5)).isError, true);
+  assert.equal(at(result, 6).isError, true);
+  assert.equal(independentDetails(at(result, 6)).outcome, "not-dispatched");
+  assert.equal(independentDetails(at(result, 6)).dispatched, false);
 }
 
-test(
+await test(
   "actual CLI preserves JSONL Unicode, bindings, predispatch reset refusal, reset and targetless native failure",
   mac,
   async () => {
@@ -97,15 +168,17 @@ test(
       [fileURLToPath(new URL("../independent-proof-cli.mjs", import.meta.url)), "session"],
       { env, timeout: 10000 },
     );
-    oversized.child.stdin.end("x".repeat(131073));
-    await assert.rejects(
-      oversized,
-      (error) => error.code === 1 && /128 KiB/.test(error.stderr) && error.stdout === "",
-    );
+    const oversizedStdin = oversized.child.stdin;
+    if (oversizedStdin === null) assert.fail("Child stdin unavailable");
+    oversizedStdin.end("x".repeat(131073));
+    await assert.rejects(oversized, (/** @type {unknown} */ error) => {
+      if (!isExecFailure(error)) return false;
+      return error.code === 1 && /128 KiB/.test(error.stderr) && error.stdout === "";
+    });
   },
 );
 
-test(
+await test(
   "actual MCP preserves proof results, failure metadata and reset through the public stdio client",
   mac,
   async () => {
@@ -116,7 +189,7 @@ test(
       env,
       stderr: "pipe",
     });
-    let pid;
+    let pid = null;
     try {
       await client.connect(transport);
       pid = transport.pid;
@@ -128,26 +201,26 @@ test(
         name: tool,
         arguments: { code: "var retained=41; retained" },
       });
-      assert.equal(first._meta.independent.execution.value, 41);
+      assert.equal(executionValue(independentDetails(first)), 41);
       const refused = await client.callTool({ name: "not_a_proof_tool", arguments: {} });
       assert.equal(refused.isError, true);
-      assert.equal(refused._meta.independent.outcome, "not-dispatched");
-      assert.equal(refused._meta.independent.dispatched, false);
+      assert.equal(independentDetails(refused).outcome, "not-dispatched");
+      assert.equal(independentDetails(refused).dispatched, false);
       const denied = await client.callTool({ name: tool, arguments: targetless });
       assert.equal(denied.isError, true);
-      assert.equal(denied._meta.independent.isError, true);
+      assert.equal(independentDetails(denied).isError, true);
       const invalid = await client.callTool({ name: tool, arguments: invalidAdmission });
       assert.equal(invalid.isError, true);
-      assert.equal(invalid._meta.independent.outcome, "not-dispatched");
-      assert.equal(invalid._meta.independent.dispatched, false);
+      assert.equal(independentDetails(invalid).outcome, "not-dispatched");
+      assert.equal(independentDetails(invalid).dispatched, false);
       const cleared = await client.callTool({ name: reset, arguments: {} });
       assert.equal(cleared.isError, false);
       const fresh = await client.callTool({ name: tool, arguments: { code: "typeof retained" } });
-      assert.equal(fresh._meta.independent.execution.value, "undefined");
+      assert.equal(executionValue(independentDetails(fresh)), "undefined");
     } finally {
       await client.close();
     }
-    assert.ok(pid);
+    assert.ok(pid !== null);
     assert.throws(
       () => process.kill(pid, 0),
       { code: "ESRCH" },
@@ -156,11 +229,13 @@ test(
   },
 );
 
-test(
+await test(
   "actual Pi SDK tool boundary preserves proof errors and reset in a fresh isolated host process",
   mac,
   async () => {
-    const host = dirname(findPackageJSON("@earendil-works/pi-coding-agent", import.meta.url));
+    const found = findPackageJSON("@earendil-works/pi-coding-agent", import.meta.url);
+    if (found === undefined) assert.fail("pi-coding-agent package not found");
+    const host = dirname(found);
     await sessionProcess("../independent-proof-pi-worker.mjs", [host], 0, true);
   },
 );

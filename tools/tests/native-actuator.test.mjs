@@ -9,27 +9,34 @@ import test from "node:test";
 import { NativeActuator } from "../native-actuator.mjs";
 
 const exec = promisify(execFile);
-const noDispatch = (error) =>
-  error.dispatched === false &&
-  error.mutationAttempted === false &&
-  error.outcome === "not-dispatched";
+/** @param {unknown} error @returns {boolean} */
+const noDispatch = (error) => {
+  if (!(error instanceof Error)) return false;
+  if (!("dispatched" in error && "mutationAttempted" in error && "outcome" in error)) return false;
+  return (
+    error.dispatched === false &&
+    error.mutationAttempted === false &&
+    error.outcome === "not-dispatched"
+  );
+};
 
-test("actuator rejects non-JSON and malformed Unicode before native dispatch", async () => {
+await test("actuator rejects non-JSON and malformed Unicode before native dispatch", async () => {
   const actuator = new NativeActuator();
   const cycle = {};
   cycle.self = cycle;
   try {
-    for (const [args, pattern] of [
+    for (const [args, pattern] of /** @type {[unknown, RegExp][]} */ ([
       [cycle, /acyclic/],
       [{ value: 1n }, /only JSON/],
       [{ value: undefined }, /only JSON/],
       [{ value: "\ud800" }, /well-formed Unicode/],
       [{ value: Infinity }, /finite/],
       [{ value: NaN }, /finite/],
-    ]) {
+    ])) {
       await assert.rejects(
         actuator.act(args),
-        (error) => error instanceof TypeError && noDispatch(error) && pattern.test(error.message),
+        (/** @type {unknown} */ error) =>
+          error instanceof TypeError && noDispatch(error) && pattern.test(error.message),
       );
     }
   } finally {
@@ -37,14 +44,14 @@ test("actuator rejects non-JSON and malformed Unicode before native dispatch", a
   }
 });
 
-test("full wire framing budget refuses a near-limit act as not dispatched", async () => {
+await test("full wire framing budget refuses a near-limit act as not dispatched", async () => {
   const actuator = new NativeActuator();
   const args = { value: "x".repeat(1_000_000 - Buffer.byteLength(JSON.stringify({ value: "" }))) };
   assert.equal(Buffer.byteLength(JSON.stringify(args)), 1_000_000);
   try {
     await assert.rejects(
       actuator.act(args),
-      (error) =>
+      (/** @type {unknown} */ error) =>
         error instanceof RangeError &&
         noDispatch(error) &&
         /wire request exceeds one megabyte/.test(error.message),
@@ -54,7 +61,7 @@ test("full wire framing budget refuses a near-limit act as not dispatched", asyn
   }
 });
 
-test(
+await test(
   "native process denies missing authority and stale observation without touching an app",
   { skip: process.platform !== "darwin" },
   async () => {
@@ -63,7 +70,8 @@ test(
       // Caller data cannot replace the transport-selected method or correlation ID.
       await assert.rejects(
         actuator.act({ method: "observe", id: 999, app: "not.a.running.app" }),
-        (error) => noDispatch(error) && /allowMutating/.test(error.message),
+        (/** @type {unknown} */ error) =>
+          noDispatch(error) && error instanceof Error && /allowMutating/.test(error.message),
       );
       await assert.rejects(
         actuator.act({
@@ -74,7 +82,10 @@ test(
           allowMutating: true,
           safetyNote: "Negative control: no target observation exists.",
         }),
-        (error) => noDispatch(error) && /Fresh same-app observation/.test(error.message),
+        (/** @type {unknown} */ error) =>
+          noDispatch(error) &&
+          error instanceof Error &&
+          /Fresh same-app observation/.test(error.message),
       );
     } finally {
       await actuator.stop();
@@ -82,7 +93,7 @@ test(
   },
 );
 
-test(
+await test(
   "native wire rejects an oversized unterminated request before parsing or AX access",
   { skip: process.platform !== "darwin", timeout: 30_000 },
   async () => {
@@ -95,14 +106,16 @@ test(
         "-o",
         binary,
       ]);
-      const result = await new Promise((resolve, reject) => {
+      /** @type {Promise<{ code: number | null, signal: string | null, output: string }>} */
+      const settled = new Promise((resolve, reject) => {
         const child = spawn(binary, [], { stdio: ["pipe", "pipe", "pipe"] });
         const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
         let output = "";
         child.stdout.on("data", (chunk) => {
-          output += chunk;
+          if (!Buffer.isBuffer(chunk)) return;
+          output += chunk.toString();
         });
-        child.stdin.on("error", () => {}); // Native rejection may close the pipe while the final bytes are buffered.
+        child.stdin.on("error", () => null); // Native rejection may close the pipe while the final bytes are buffered.
         child.once("error", reject);
         child.once("close", (code, signal) => {
           clearTimeout(timer);
@@ -110,6 +123,7 @@ test(
         });
         child.stdin.end(Buffer.alloc(1_000_001, 97));
       });
+      const result = await settled;
       assert.deepEqual(result, { code: 1, signal: null, output: "" });
     } finally {
       await rm(directory, { recursive: true, force: true });
@@ -117,7 +131,7 @@ test(
   },
 );
 
-test(
+await test(
   "stop during cold compilation drains owned processes and cancels queued dispatch, then permits a fresh session",
   { skip: process.platform !== "darwin", timeout: 30_000 },
   async () => {

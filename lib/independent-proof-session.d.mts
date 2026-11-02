@@ -29,7 +29,8 @@ export interface ProofSettlement {
 /** No native access without an explicit target or operator environment configuration. */
 export class IndependentProofSession {
   constructor(options?: { readonly target?: ProofTarget });
-  execute(input: ProofInput, options?: { signal?: AbortSignal }): Promise<ProofResult>;
+  /** Input is unvalidated guest data; `validateEnvelope` checks it before use. */
+  execute(input: unknown, options?: { signal?: AbortSignal | undefined }): Promise<ProofResult>;
   reset(): Promise<ProofResult>;
   stop(): Promise<ProofSettlement>;
 }

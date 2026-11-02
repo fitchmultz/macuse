@@ -31,11 +31,31 @@ const JSON_RPC_ERROR = Object.freeze({
   INTERNAL_ERROR: -32603,
 });
 
+/**
+ * @typedef {{ command: string, help?: boolean, client: string, cwd: string, protocolVersion: string, startupTimeoutMs: number, listTimeoutMs: number, toolTimeoutMs: number, elicitationTimeoutMs: number | undefined, shutdownTimeoutMs: number, logTimeoutMs: number, maxLogLines: number, app: string | undefined, approval: string | undefined, since: string | undefined, withTurnMetadata: boolean }} ProbeOptions
+ * @typedef {{ method: string, resolve: (result: unknown) => void, reject: (error: ProbeError) => void, timer: ReturnType<typeof setTimeout> }} PendingRpc
+ * @typedef {{ action: "accept" | "decline" | "cancel", content?: unknown }} ElicitationDecision
+ * @typedef {(params: unknown, context: { count: number }) => Promise<ElicitationDecision>} ElicitationHandler
+ * @typedef {{ serverRequests: number, notifications: number, elicitations: number, accepted: number, declined: number, canceled: number, unknownServerRequests: number, timeouts: number }} ProbeStats
+ * @typedef {{ code: number | null, signal: NodeJS.Signals | null }} ExitInfo
+ */
+
+/**
+ * @param {unknown} value
+ * @returns {value is Record<string, unknown>}
+ */
+const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+
 const SECRET_KEY_RE = /(?:secret|token|password|passwd|authorization|api[-_]?key|cookie|session)/i;
 const HEAVY_VALUE_RE = /(?:image|screenshot|bitmap|base64|data|blob|bytes|screen|framebuffer)/i;
 
 class ProbeError extends Error {
-  constructor(message, exitCode = EXIT.FAILURE, details = undefined) {
+  /**
+   * @param {string} message
+   * @param {number} [exitCode]
+   * @param {unknown} [details]
+   */
+  constructor(message, exitCode = EXIT.FAILURE, details) {
     super(message);
     this.name = this.constructor.name;
     this.exitCode = exitCode;
@@ -44,57 +64,98 @@ class ProbeError extends Error {
 }
 
 class UsageError extends ProbeError {
+  /**
+   * @param {string} message
+   */
   constructor(message) {
     super(message, EXIT.USAGE);
   }
 }
 
 class TimeoutError extends ProbeError {
-  constructor(message, details = undefined) {
+  /**
+   * @param {string} message
+   * @param {unknown} [details]
+   */
+  constructor(message, details) {
     super(message, EXIT.TIMEOUT, details);
   }
 }
 
 class MissingInstallError extends ProbeError {
-  constructor(message, details = undefined) {
+  /**
+   * @param {string} message
+   * @param {unknown} [details]
+   */
+  constructor(message, details) {
     super(message, EXIT.MISSING_INSTALL, details);
   }
 }
 
 class ChildExitError extends ProbeError {
-  constructor(message, details = undefined) {
+  /**
+   * @param {string} message
+   * @param {unknown} [details]
+   */
+  constructor(message, details) {
     super(message, EXIT.CHILD_EXIT, details);
   }
 }
 
 class ToolResultError extends ProbeError {
-  constructor(message, details = undefined) {
+  /**
+   * @param {string} message
+   * @param {unknown} [details]
+   */
+  constructor(message, details) {
     super(message, EXIT.TOOL_ERROR, details);
   }
 }
 
 class JsonRpcResponseError extends ProbeError {
+  /**
+   * @param {string} method
+   * @param {unknown} error
+   */
   constructor(method, error) {
-    super(
-      `${method} failed with JSON-RPC error ${error?.code ?? "unknown"}: ${error?.message ?? "unknown error"}`,
-      EXIT.FAILURE,
-      error,
-    );
+    const record = isRecord(error) ? error : undefined;
+    const code = record?.code;
+    const detail = record?.message;
+    const codeText =
+      typeof code === "number" || typeof code === "string" ? String(code) : "unknown";
+    const detailText = typeof detail === "string" ? detail : "unknown error";
+    super(`${method} failed with JSON-RPC error ${codeText}: ${detailText}`, EXIT.FAILURE, error);
     this.method = method;
     this.rpcError = error;
   }
 }
 
+/**
+ * @param {unknown} value
+ * @param {string} key
+ * @returns {boolean}
+ */
 function hasOwn(value, key) {
   return Object.prototype.hasOwnProperty.call(value, key);
 }
 
+/**
+ * @param {unknown} value
+ * @param {number} [max]
+ * @returns {unknown}
+ */
 function truncate(value, max = 220) {
   if (typeof value !== "string") return value;
   if (value.length <= max) return value;
   return `${value.slice(0, max)}…[${value.length} chars]`;
 }
 
+/**
+ * @param {unknown} value
+ * @param {string} [key]
+ * @param {number} [depth]
+ * @returns {unknown}
+ */
 function sanitizeForLog(value, key = "", depth = 0) {
   if (SECRET_KEY_RE.test(key)) return "[redacted]";
   if (HEAVY_VALUE_RE.test(key)) return `[redacted:${typeof value}]`;
@@ -111,15 +172,22 @@ function sanitizeForLog(value, key = "", depth = 0) {
     return items;
   }
 
-  if (key === "content" && Array.isArray(value.content)) {
+  if (key === "content" && isRecord(value) && Array.isArray(value.content)) {
     return summarizeContentBlocks(value.content);
   }
+  if (!isRecord(value)) return sanitizeForLog(value);
 
+  /** @type {Record<string, unknown>} */
   const out = {};
   for (const [childKey, childValue] of Object.entries(value)) {
     if (childKey === "content" && Array.isArray(childValue)) {
       out[childKey] = summarizeContentBlocks(childValue);
-    } else if (childKey === "structuredContent" && childValue && typeof childValue === "object") {
+    } else if (
+      childKey === "structuredContent" &&
+      childValue !== null &&
+      childValue !== undefined &&
+      typeof childValue === "object"
+    ) {
       out[childKey] = { keys: Object.keys(childValue).slice(0, 20), redacted: true };
     } else {
       out[childKey] = sanitizeForLog(childValue, childKey, depth + 1);
@@ -128,17 +196,24 @@ function sanitizeForLog(value, key = "", depth = 0) {
   return out;
 }
 
+/**
+ * @param {unknown} blocks
+ * @returns {unknown}
+ */
 function summarizeContentBlocks(blocks) {
   if (!Array.isArray(blocks)) return sanitizeForLog(blocks);
   return blocks
     .slice(0, 8)
     .map((block) => {
-      if (!block || typeof block !== "object") return sanitizeForLog(block);
-      const summary = { type: block.type ?? "unknown" };
-      if (typeof block.text === "string") summary.textLength = block.text.length;
-      if (typeof block.mimeType === "string") summary.mimeType = block.mimeType;
-      if (typeof block.uri === "string") summary.uri = truncate(block.uri, 120);
-      for (const [key, value] of Object.entries(block)) {
+      if (block === null || block === undefined || typeof block !== "object")
+        return sanitizeForLog(block);
+      const record = isRecord(block) ? block : undefined;
+      /** @type {Record<string, unknown>} */
+      const summary = { type: record?.type ?? "unknown" };
+      if (typeof record?.text === "string") summary.textLength = record.text.length;
+      if (typeof record?.mimeType === "string") summary.mimeType = record.mimeType;
+      if (typeof record?.uri === "string") summary.uri = truncate(record.uri, 120);
+      for (const [key, value] of Object.entries(record ?? {})) {
         if (key === "type" || key === "text" || key === "mimeType" || key === "uri") continue;
         if (HEAVY_VALUE_RE.test(key)) {
           summary[key] = `[redacted:${typeof value}]`;
@@ -149,17 +224,29 @@ function summarizeContentBlocks(blocks) {
     .concat(blocks.length > 8 ? [`… ${blocks.length - 8} more`] : []);
 }
 
+/**
+ * @param {unknown} details
+ * @returns {string}
+ */
 function formatDetails(details) {
   if (details === undefined) return "";
   return ` ${JSON.stringify(sanitizeForLog(details))}`;
 }
 
 class EventLogger {
+  /**
+   * @param {{ quiet?: boolean }} [options]
+   */
   constructor({ quiet = false } = {}) {
     this.quiet = quiet;
   }
 
-  event(event, details = undefined) {
+  /**
+   * @param {string} event
+   * @param {unknown} [details]
+   * @returns {void}
+   */
+  event(event, details) {
     if (this.quiet) return;
     const timestamp = new Date().toISOString();
     process.stderr.write(`${timestamp} ${event}${formatDetails(details)}\n`);
@@ -247,11 +334,15 @@ Examples:
 `);
 }
 
+/**
+ * @param {string[]} argv
+ * @returns {string[]}
+ */
 function normalizeArgTokens(argv) {
   const tokens = [];
   for (const arg of argv) {
     if (arg.startsWith("--") && arg.includes("=")) {
-      const [flag, ...rest] = arg.split("=");
+      const [flag = "", ...rest] = arg.split("=");
       tokens.push(flag, rest.join("="));
     } else {
       tokens.push(arg);
@@ -260,6 +351,11 @@ function normalizeArgTokens(argv) {
   return tokens;
 }
 
+/**
+ * @param {string} name
+ * @param {string | undefined} value
+ * @returns {number}
+ */
 function parsePositiveInt(name, value) {
   if (value === undefined || value === "")
     throw new UsageError(`${name} requires a positive integer`);
@@ -269,6 +365,10 @@ function parsePositiveInt(name, value) {
   return n;
 }
 
+/**
+ * @param {string[]} argv
+ * @returns {ProbeOptions | { help: true }}
+ */
 function parseArgs(argv) {
   const tokens = normalizeArgTokens(argv);
   if (tokens.length === 0 || tokens.includes("--help") || tokens.includes("-h")) {
@@ -294,7 +394,7 @@ function parseArgs(argv) {
   const booleanFlags = new Set(["--with-turn-metadata"]);
   let commandIndex = -1;
   for (let i = 0; i < tokens.length; i += 1) {
-    const arg = tokens[i];
+    const arg = tokens[i] ?? "";
     if (arg.startsWith("-")) {
       if (valueFlags.has(arg)) i += 1;
       if (booleanFlags.has(arg)) continue;
@@ -307,12 +407,15 @@ function parseArgs(argv) {
   }
   if (commandIndex === -1) throw new UsageError("missing mode; use --help for usage");
 
-  const command = tokens[commandIndex];
+  const command = tokens[commandIndex] ?? "";
   const rest = tokens.slice(0, commandIndex).concat(tokens.slice(commandIndex + 1));
+  const clientEnv = process.env.CODEX_CU_CLIENT;
+  const cwdEnv = process.env.CODEX_CU_CWD;
+  /** @type {ProbeOptions} */
   const options = {
     command,
-    client: process.env.CODEX_CU_CLIENT || DEFAULT_CLIENT,
-    cwd: process.env.CODEX_CU_CWD || DEFAULT_CWD,
+    client: clientEnv !== undefined && clientEnv !== "" ? clientEnv : DEFAULT_CLIENT,
+    cwd: cwdEnv !== undefined && cwdEnv !== "" ? cwdEnv : DEFAULT_CWD,
     protocolVersion: DEFAULT_PROTOCOL_VERSION,
     startupTimeoutMs: 10_000,
     listTimeoutMs: 10_000,
@@ -328,12 +431,13 @@ function parseArgs(argv) {
   };
 
   for (let i = 0; i < rest.length; i += 1) {
-    const flag = rest[i];
+    const flag = rest[i] ?? "";
     const next = () => {
       i += 1;
-      if (i >= rest.length || rest[i].startsWith("--"))
+      const value = rest[i] ?? "";
+      if (i >= rest.length || value.startsWith("--"))
         throw new UsageError(`${flag} requires a value`);
-      return rest[i];
+      return value;
     };
 
     switch (flag) {
@@ -390,13 +494,15 @@ function parseArgs(argv) {
   }
 
   if (command === "deny") {
-    if (!options.app) throw new UsageError("deny requires --app <app>");
+    if (options.app === undefined || options.app === "")
+      throw new UsageError("deny requires --app <app>");
     options.approval = "deny";
   }
 
   if (command === "state") {
-    if (!options.app) throw new UsageError("state requires --app <app>");
-    if (!options.approval)
+    if (options.app === undefined || options.app === "")
+      throw new UsageError("state requires --app <app>");
+    if (options.approval === undefined || options.approval === "")
       throw new UsageError("state requires --approval interactive|accept-once|deny");
     if (!["interactive", "accept-once", "deny"].includes(options.approval)) {
       throw new UsageError(`unsupported approval mode: ${options.approval}`);
@@ -404,7 +510,7 @@ function parseArgs(argv) {
   }
 
   if (command === "logs") {
-    if (!options.since)
+    if (options.since === undefined || options.since === "")
       throw new UsageError("logs requires --since <duration>, for example --since 5m");
     if (!/^\d+(?:\.\d+)?[smhd]$/.test(options.since)) {
       throw new UsageError("--since must look like 30s, 5m, 1h, or 1d");
@@ -415,6 +521,10 @@ function parseArgs(argv) {
   return options;
 }
 
+/**
+ * @param {ProbeOptions} options
+ * @returns {void}
+ */
 function validateInstall(options) {
   try {
     const stat = statSync(options.client);
@@ -423,7 +533,7 @@ function validateInstall(options) {
   } catch (error) {
     throw new MissingInstallError(
       `SkyComputerUseClient executable is not runnable: ${options.client}`,
-      { cause: error.message },
+      { cause: error instanceof Error ? error.message : String(error) },
     );
   }
 
@@ -432,16 +542,23 @@ function validateInstall(options) {
     if (!stat.isDirectory()) throw new Error("not a directory");
   } catch (error) {
     throw new MissingInstallError(`Computer Use plugin cwd is not available: ${options.cwd}`, {
-      cause: error.message,
+      cause: error instanceof Error ? error.message : String(error),
     });
   }
 }
 
+/**
+ * @param {unknown} id
+ * @returns {string}
+ */
 function jsonRpcIdKey(id) {
   return typeof id === "string" ? `s:${id}` : `n:${String(id)}`;
 }
 
 class JsonRpcStdioClient {
+  /**
+   * @param {{ command: string, cwd: string, protocolVersion: string, logger: EventLogger, elicitationHandler: ElicitationHandler, shutdownTimeoutMs: number }} options
+   */
   constructor({ command, cwd, protocolVersion, logger, elicitationHandler, shutdownTimeoutMs }) {
     this.command = command;
     this.cwd = cwd;
@@ -450,13 +567,17 @@ class JsonRpcStdioClient {
     this.elicitationHandler = elicitationHandler;
     this.shutdownTimeoutMs = shutdownTimeoutMs;
     this.args = ["mcp"];
+    /** @type {import("node:child_process").ChildProcessByStdio<import("node:stream").Writable, import("node:stream").Readable, import("node:stream").Readable> | undefined} */
     this.child = undefined;
     this.nextId = 1;
+    /** @type {Map<string, PendingRpc>} */
     this.pending = new Map();
     this.stdoutBuffer = "";
     this.stderrBuffer = "";
     this.exited = false;
+    /** @type {ExitInfo | undefined} */
     this.exitInfo = undefined;
+    /** @type {ProbeStats} */
     this.stats = {
       serverRequests: 0,
       notifications: 0,
@@ -481,8 +602,8 @@ class JsonRpcStdioClient {
     this.child.stdout.setEncoding("utf8");
     this.child.stderr.setEncoding("utf8");
 
-    this.child.stdout.on("data", (chunk) => this.handleStdout(chunk));
-    this.child.stderr.on("data", (chunk) => this.handleStderr(chunk));
+    this.child.stdout.on("data", (/** @type {string} */ chunk) => this.handleStdout(chunk));
+    this.child.stderr.on("data", (/** @type {string} */ chunk) => this.handleStderr(chunk));
     this.child.on("error", (error) => {
       this.logger.event("child.error", { message: error.message });
       this.rejectAllPending(
@@ -495,50 +616,69 @@ class JsonRpcStdioClient {
       this.logger.event("child.exit", this.exitInfo);
       this.rejectAllPending(
         new ChildExitError(
-          `child process exited while requests were pending: code=${code} signal=${signal}`,
+          `child process exited while requests were pending: code=${String(code)} signal=${String(
+            signal,
+          )}`,
           this.exitInfo,
         ),
       );
     });
   }
 
+  /**
+   * @param {string} chunk
+   * @returns {void}
+   */
   handleStdout(chunk) {
     this.stdoutBuffer += chunk;
     let newlineIndex;
     while ((newlineIndex = this.stdoutBuffer.indexOf("\n")) !== -1) {
       const line = this.stdoutBuffer.slice(0, newlineIndex).trim();
       this.stdoutBuffer = this.stdoutBuffer.slice(newlineIndex + 1);
-      if (!line) continue;
-      void this.handleProtocolLine(line);
+      if (line === "") continue;
+      this.handleProtocolLine(line).catch((/** @type {unknown} */ error) => {
+        this.logger.event("server.line_handler_error", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
     }
   }
 
+  /**
+   * @param {string} chunk
+   * @returns {void}
+   */
   handleStderr(chunk) {
     this.stderrBuffer += chunk;
     let newlineIndex;
     while ((newlineIndex = this.stderrBuffer.indexOf("\n")) !== -1) {
       const line = this.stderrBuffer.slice(0, newlineIndex).trim();
       this.stderrBuffer = this.stderrBuffer.slice(newlineIndex + 1);
-      if (line) this.logger.event("child.stderr", { line });
+      if (line !== "") this.logger.event("child.stderr", { line });
     }
   }
 
+  /**
+   * @param {string} line
+   * @returns {Promise<void>}
+   */
   async handleProtocolLine(line) {
-    let message;
+    let parsed;
     try {
-      message = JSON.parse(line);
+      parsed = /** @type {unknown} */ (JSON.parse(line));
     } catch (error) {
       this.logger.event("server.stdout_non_json", {
         line: truncate(line, 500),
-        error: error.message,
+        error: error instanceof Error ? error.message : String(error),
       });
       return;
     }
 
-    if (!message || typeof message !== "object") {
-      this.logger.event("server.invalid_jsonrpc", { message });
+    if (!isRecord(parsed)) {
+      this.logger.event("server.invalid_jsonrpc", { message: parsed });
       return;
     }
+    const message = parsed;
 
     if (hasOwn(message, "method")) {
       if (hasOwn(message, "id")) {
@@ -577,13 +717,17 @@ class JsonRpcStdioClient {
     this.logger.event("server.invalid_jsonrpc", { message });
   }
 
+  /**
+   * @param {Record<string, unknown>} message
+   * @returns {Promise<void>}
+   */
   async handleServerRequest(message) {
     const { id, method, params } = message;
     try {
       if (method === "elicitation/create") {
         this.stats.elicitations += 1;
         const result = await this.elicitationHandler(params, { count: this.stats.elicitations });
-        if (!result || !["accept", "decline", "cancel"].includes(result.action)) {
+        if (!["accept", "decline", "cancel"].includes(result.action)) {
           throw new Error(`elicitation handler returned invalid action: ${JSON.stringify(result)}`);
         }
         if (result.action === "accept") this.stats.accepted += 1;
@@ -608,18 +752,25 @@ class JsonRpcStdioClient {
       this.sendError(
         id,
         JSON_RPC_ERROR.METHOD_NOT_FOUND,
-        `Method not found by probe harness: ${method}`,
+        `Method not found by probe harness: ${String(method)}`,
       );
     } catch (error) {
-      this.logger.event("server.request_handler_error", { id, method, message: error.message });
+      const detail = error instanceof Error ? error.message : String(error);
+      this.logger.event("server.request_handler_error", { id, method, message: detail });
       this.sendError(
         id,
         JSON_RPC_ERROR.INTERNAL_ERROR,
-        `Probe harness failed to handle ${method}: ${error.message}`,
+        `Probe harness failed to handle ${String(method)}: ${detail}`,
       );
     }
   }
 
+  /**
+   * @param {string} method
+   * @param {unknown} params
+   * @param {number} timeoutMs
+   * @returns {Promise<unknown>}
+   */
   request(method, params, timeoutMs) {
     if (!this.child || this.exited) {
       return Promise.reject(
@@ -650,6 +801,11 @@ class JsonRpcStdioClient {
     });
   }
 
+  /**
+   * @param {string} method
+   * @param {Record<string, unknown>} [params]
+   * @returns {void}
+   */
   notify(method, params = {}) {
     if (!this.child || this.exited) {
       throw new ChildExitError(`cannot send ${method}; child is not running`, this.exitInfo);
@@ -657,24 +813,46 @@ class JsonRpcStdioClient {
     this.sendObject({ jsonrpc: "2.0", method, params }, "c->s notification");
   }
 
+  /**
+   * @param {unknown} id
+   * @param {unknown} result
+   * @returns {void}
+   */
   sendResponse(id, result) {
     this.sendObject({ jsonrpc: "2.0", id, result }, "c->s response");
   }
 
-  sendError(id, code, message, data = undefined) {
+  /**
+   * @param {unknown} id
+   * @param {number} code
+   * @param {string} message
+   * @param {unknown} [data]
+   * @returns {void}
+   */
+  sendError(id, code, message, data) {
+    /** @type {Record<string, unknown>} */
     const error = { code, message };
     if (data !== undefined) error.data = data;
     this.sendObject({ jsonrpc: "2.0", id, error }, "c->s response_error");
   }
 
+  /**
+   * @param {Record<string, unknown>} message
+   * @param {string} eventName
+   * @returns {void}
+   */
   sendObject(message, eventName) {
-    if (!this.child?.stdin?.writable) {
+    if (this.child === undefined || !this.child.stdin.writable) {
       throw new ChildExitError("child stdin is not writable", this.exitInfo);
     }
     this.logger.event(eventName, message);
     this.child.stdin.write(`${JSON.stringify(message)}\n`);
   }
 
+  /**
+   * @param {ProbeError} error
+   * @returns {void}
+   */
   rejectAllPending(error) {
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timer);
@@ -683,6 +861,10 @@ class JsonRpcStdioClient {
     this.pending.clear();
   }
 
+  /**
+   * @param {number} timeoutMs
+   * @returns {Promise<unknown>}
+   */
   async initialize(timeoutMs) {
     const result = await this.request(
       "initialize",
@@ -702,20 +884,36 @@ class JsonRpcStdioClient {
     return result;
   }
 
+  /**
+   * @param {number} timeoutMs
+   * @returns {Promise<unknown>}
+   */
   async listTools(timeoutMs) {
     return this.request("tools/list", {}, timeoutMs);
   }
 
-  async callTool(name, args, timeoutMs, requestMeta = undefined) {
+  /**
+   * @param {string} name
+   * @param {Record<string, unknown>} args
+   * @param {number} timeoutMs
+   * @param {Record<string, unknown>} [requestMeta]
+   * @returns {Promise<unknown>}
+   */
+  async callTool(name, args, timeoutMs, requestMeta) {
+    /** @type {Record<string, unknown>} */
     const params = { name, arguments: args };
     if (requestMeta !== undefined) params._meta = requestMeta;
     return this.request("tools/call", params, timeoutMs);
   }
 
+  /**
+   * @returns {Promise<void>}
+   */
   async close() {
     if (!this.child || this.exited) return;
     const child = this.child;
-    await new Promise((resolve) => {
+    /** @type {Promise<void>} */
+    const closed = new Promise((resolve) => {
       let done = false;
       const finish = () => {
         if (done) return;
@@ -743,17 +941,23 @@ class JsonRpcStdioClient {
       }, this.shutdownTimeoutMs);
       timer.unref();
     });
+    await closed;
   }
 }
 
+/**
+ * @param {{ mode: string, elicitationTimeoutMs: number, logger: EventLogger }} options
+ * @returns {ElicitationHandler}
+ */
 function createElicitationHandler({ mode, elicitationTimeoutMs, logger }) {
   let acceptedOnce = false;
   return async (params, context) => {
+    const message = isRecord(params) ? params.message : undefined;
     if (mode === "deny") {
       logger.event("elicitation.auto_decision", {
         count: context.count,
         action: "decline",
-        message: params?.message,
+        message,
       });
       return { action: "decline" };
     }
@@ -764,14 +968,14 @@ function createElicitationHandler({ mode, elicitationTimeoutMs, logger }) {
         logger.event("elicitation.auto_decision", {
           count: context.count,
           action: "accept",
-          message: params?.message,
+          message,
         });
         return { action: "accept", content: {} };
       }
       logger.event("elicitation.accept_once_exhausted", {
         count: context.count,
         action: "decline",
-        message: params?.message,
+        message,
       });
       return { action: "decline" };
     }
@@ -784,11 +988,18 @@ function createElicitationHandler({ mode, elicitationTimeoutMs, logger }) {
   };
 }
 
+/**
+ * @param {unknown} params
+ * @param {{ elicitationTimeoutMs: number, logger: EventLogger }} context
+ * @returns {Promise<ElicitationDecision>}
+ */
 async function promptForElicitation(params, { elicitationTimeoutMs, logger }) {
+  const record = isRecord(params) ? params : undefined;
   process.stderr.write("\nMCP elicitation/create request\n");
-  process.stderr.write(`Message: ${params?.message ?? "(none)"}\n`);
+  const message = typeof record?.message === "string" ? record.message : "(none)";
+  process.stderr.write(`Message: ${message}\n`);
   process.stderr.write(
-    `Requested schema: ${JSON.stringify(sanitizeForLog(params?.requestedSchema ?? {}))}\n`,
+    `Requested schema: ${JSON.stringify(sanitizeForLog(record?.requestedSchema ?? {}))}\n`,
   );
   process.stderr.write(
     'Actions: accept, decline, cancel. Use `accept {"field":"value"}` to provide JSON content if needed.\n',
@@ -796,20 +1007,15 @@ async function promptForElicitation(params, { elicitationTimeoutMs, logger }) {
 
   const rl = createInterface({ input: process.stdin, output: process.stderr });
   try {
-    const answer = await Promise.race([
-      rl.question("Elicitation response [decline]: "),
-      new Promise((_, reject) =>
-        setTimeout(
-          () =>
-            reject(
-              new TimeoutError(`elicitation prompt timed out after ${elicitationTimeoutMs}ms`),
-            ),
-          elicitationTimeoutMs,
-        ),
-      ),
-    ]);
+    /** @type {Promise<never>} */
+    const timeout = new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new TimeoutError(`elicitation prompt timed out after ${elicitationTimeoutMs}ms`));
+      }, elicitationTimeoutMs);
+    });
+    const answer = await Promise.race([rl.question("Elicitation response [decline]: "), timeout]);
     const trimmed = answer.trim();
-    if (!trimmed || /^d(?:ecline)?$/i.test(trimmed)) {
+    if (trimmed === "" || /^d(?:ecline)?$/i.test(trimmed)) {
       logger.event("elicitation.operator_decision", { action: "decline" });
       return { action: "decline" };
     }
@@ -819,12 +1025,17 @@ async function promptForElicitation(params, { elicitationTimeoutMs, logger }) {
     }
     if (/^a(?:ccept)?(?:\s|$)/i.test(trimmed)) {
       const jsonPart = trimmed.replace(/^a(?:ccept)?/i, "").trim();
+      /** @type {Record<string, unknown>} */
       let content = {};
-      if (jsonPart) {
+      if (jsonPart !== "") {
         try {
-          content = JSON.parse(jsonPart);
+          const parsed = /** @type {unknown} */ (JSON.parse(jsonPart));
+          if (isRecord(parsed)) content = parsed;
         } catch (error) {
-          throw new Error(`invalid accept JSON content: ${error.message}`);
+          throw new Error(
+            `invalid accept JSON content: ${error instanceof Error ? error.message : String(error)}`,
+            { cause: error },
+          );
         }
       }
       logger.event("elicitation.operator_decision", {
@@ -839,8 +1050,12 @@ async function promptForElicitation(params, { elicitationTimeoutMs, logger }) {
   }
 }
 
+/**
+ * @param {unknown} schema
+ * @returns {string}
+ */
 function summarizeJsonSchemaType(schema) {
-  if (!schema || typeof schema !== "object") return "unknown";
+  if (!isRecord(schema)) return "unknown";
   if (typeof schema.type === "string") return schema.type;
   if (Array.isArray(schema.type)) return schema.type.join("|");
   if (Array.isArray(schema.anyOf)) return schema.anyOf.map(summarizeJsonSchemaType).join("|");
@@ -851,9 +1066,13 @@ function summarizeJsonSchemaType(schema) {
   return "unknown";
 }
 
+/**
+ * @param {unknown} schema
+ * @returns {string}
+ */
 function summarizeInputSchema(schema) {
-  if (!schema || typeof schema !== "object") return "(no schema)";
-  const props = schema.properties && typeof schema.properties === "object" ? schema.properties : {};
+  if (!isRecord(schema)) return "(no schema)";
+  const props = isRecord(schema.properties) ? schema.properties : {};
   const required = new Set(Array.isArray(schema.required) ? schema.required : []);
   const names = Object.keys(props);
   if (names.length === 0) return "(no input properties)";
@@ -864,43 +1083,65 @@ function summarizeInputSchema(schema) {
     .join(", ");
 }
 
+/**
+ * @param {unknown} initResult
+ * @param {unknown} toolsResult
+ * @returns {void}
+ */
 function printDiscoverSummary(initResult, toolsResult) {
-  const tools = Array.isArray(toolsResult?.tools) ? toolsResult.tools : [];
+  const init = isRecord(initResult) ? initResult : undefined;
+  const tools = isRecord(toolsResult) && Array.isArray(toolsResult.tools) ? toolsResult.tools : [];
   process.stdout.write("Server info:\n");
-  process.stdout.write(
-    `${JSON.stringify(sanitizeForLog(initResult?.serverInfo ?? null), null, 2)}\n`,
-  );
-  if (initResult?.protocolVersion)
-    process.stdout.write(`Protocol version: ${initResult.protocolVersion}\n`);
-  if (initResult?.capabilities)
+  process.stdout.write(`${JSON.stringify(sanitizeForLog(init?.serverInfo ?? null), null, 2)}\n`);
+  const hasProtocolVersion = Boolean(init?.protocolVersion);
+  if (hasProtocolVersion)
+    process.stdout.write(`Protocol version: ${String(init?.protocolVersion)}\n`);
+  const capabilities = isRecord(init?.capabilities) ? init.capabilities : undefined;
+  if (capabilities !== undefined)
     process.stdout.write(
-      `Server capability keys: ${Object.keys(initResult.capabilities).join(", ") || "(none)"}\n`,
+      `Server capability keys: ${
+        Object.keys(capabilities).join(", ") !== ""
+          ? Object.keys(capabilities).join(", ")
+          : "(none)"
+      }\n`,
     );
   process.stdout.write(`\nTools (${tools.length}):\n`);
   for (const tool of tools) {
-    const description = tool.description ? ` - ${truncate(tool.description, 120)}` : "";
-    process.stdout.write(`- ${tool.name}${description}\n`);
-    process.stdout.write(`  input: ${summarizeInputSchema(tool.inputSchema)}\n`);
+    const record = isRecord(tool) ? tool : undefined;
+    const described = Boolean(record?.description);
+    const description = described ? ` - ${String(truncate(record?.description, 120))}` : "";
+    process.stdout.write(`- ${String(record?.name)}${description}\n`);
+    process.stdout.write(`  input: ${summarizeInputSchema(record?.inputSchema)}\n`);
   }
 }
 
+/**
+ * @param {unknown} result
+ * @returns {{ isError: boolean, content: unknown, structuredContentKeys: string[], resultKeys: string[] }}
+ */
 function summarizeToolResult(result) {
+  const record = isRecord(result) ? result : undefined;
+  const structured = record?.structuredContent;
   return {
-    isError: Boolean(result?.isError),
-    content: summarizeContentBlocks(result?.content ?? []),
+    isError: Boolean(record?.isError),
+    content: summarizeContentBlocks(record?.content ?? []),
     structuredContentKeys:
-      result?.structuredContent && typeof result.structuredContent === "object"
-        ? Object.keys(result.structuredContent).slice(0, 20)
+      structured !== null && structured !== undefined && typeof structured === "object"
+        ? Object.keys(structured).slice(0, 20)
         : [],
     resultKeys:
-      result && typeof result === "object"
-        ? Object.keys(result).filter((key) => !["content", "structuredContent"].includes(key))
+      record !== undefined
+        ? Object.keys(record).filter((key) => !["content", "structuredContent"].includes(key))
         : [],
   };
 }
 
+/**
+ * @param {ProbeOptions} options
+ * @returns {Record<string, unknown> | undefined}
+ */
 function buildRequestMeta(options) {
-  if (!options.withTurnMetadata) return undefined;
+  if (!options.withTurnMetadata) return;
   const id = randomUUID().replaceAll("-", "").slice(0, 12);
   return {
     "x-codex-turn-metadata": {
@@ -914,6 +1155,12 @@ function buildRequestMeta(options) {
   };
 }
 
+/**
+ * @param {string} toolName
+ * @param {unknown} result
+ * @param {ProbeStats} stats
+ * @returns {void}
+ */
 function printGenericToolResultSummary(toolName, result, stats) {
   process.stdout.write(`${toolName} result:\n`);
   process.stdout.write(`${JSON.stringify(summarizeToolResult(result), null, 2)}\n`);
@@ -928,6 +1175,12 @@ function printGenericToolResultSummary(toolName, result, stats) {
   );
 }
 
+/**
+ * @param {string} app
+ * @param {unknown} result
+ * @param {ProbeStats} stats
+ * @returns {void}
+ */
 function printToolResultSummary(app, result, stats) {
   process.stdout.write(`get_app_state result for ${app}:\n`);
   process.stdout.write(`${JSON.stringify(summarizeToolResult(result), null, 2)}\n`);
@@ -942,6 +1195,13 @@ function printToolResultSummary(app, result, stats) {
   );
 }
 
+/**
+ * @template T
+ * @param {ProbeOptions} options
+ * @param {string} approvalMode
+ * @param {(client: JsonRpcStdioClient) => Promise<T>} fn
+ * @returns {Promise<T>}
+ */
 async function withMcpClient(options, approvalMode, fn) {
   validateInstall(options);
   const logger = new EventLogger();
@@ -953,27 +1213,35 @@ async function withMcpClient(options, approvalMode, fn) {
     shutdownTimeoutMs: options.shutdownTimeoutMs,
     elicitationHandler: createElicitationHandler({
       mode: approvalMode,
-      elicitationTimeoutMs: options.elicitationTimeoutMs,
+      elicitationTimeoutMs: options.elicitationTimeoutMs ?? options.toolTimeoutMs,
       logger,
     }),
   });
 
+  /** @type {(() => void) | undefined} */
   let signalHandler;
   try {
     client.start();
     signalHandler = () => {
       logger.event("process.signal", { signal: "SIGINT" });
-      void client.close().finally(() => process.exit(130));
+      client
+        .close()
+        .finally(() => process.exit(130))
+        .catch(() => null);
     };
     process.once("SIGINT", signalHandler);
     const result = await fn(client);
     return result;
   } finally {
-    if (signalHandler) process.off("SIGINT", signalHandler);
+    if (signalHandler !== undefined) process.off("SIGINT", signalHandler);
     await client.close();
   }
 }
 
+/**
+ * @param {ProbeOptions} options
+ * @returns {Promise<number>}
+ */
 async function runDiscover(options) {
   await withMcpClient(options, "deny", async (client) => {
     const initResult = await client.initialize(options.startupTimeoutMs);
@@ -983,6 +1251,10 @@ async function runDiscover(options) {
   return EXIT.OK;
 }
 
+/**
+ * @param {ProbeOptions} options
+ * @returns {Promise<number>}
+ */
 async function runApps(options) {
   const result = await withMcpClient(options, "deny", async (client) => {
     await client.initialize(options.startupTimeoutMs);
@@ -996,7 +1268,8 @@ async function runApps(options) {
     return { toolResult, stats: client.stats };
   });
 
-  if (result.toolResult?.isError) {
+  const failed = isRecord(result.toolResult) && Boolean(result.toolResult.isError);
+  if (failed) {
     throw new ToolResultError(
       "list_apps returned an MCP tool error",
       summarizeToolResult(result.toolResult),
@@ -1006,8 +1279,12 @@ async function runApps(options) {
   return EXIT.OK;
 }
 
+/**
+ * @param {ProbeOptions} options
+ * @returns {Promise<number>}
+ */
 async function runState(options) {
-  const result = await withMcpClient(options, options.approval, async (client) => {
+  const result = await withMcpClient(options, options.approval ?? "deny", async (client) => {
     await client.initialize(options.startupTimeoutMs);
     const toolResult = await client.callTool(
       "get_app_state",
@@ -1015,7 +1292,7 @@ async function runState(options) {
       options.toolTimeoutMs,
       buildRequestMeta(options),
     );
-    printToolResultSummary(options.app, toolResult, client.stats);
+    printToolResultSummary(options.app ?? "", toolResult, client.stats);
     return { toolResult, stats: client.stats };
   });
 
@@ -1035,7 +1312,8 @@ async function runState(options) {
     );
   }
 
-  if (result.toolResult?.isError) {
+  const failed = isRecord(result.toolResult) && Boolean(result.toolResult.isError);
+  if (failed) {
     throw new ToolResultError(
       "get_app_state returned an MCP tool error",
       summarizeToolResult(result.toolResult),
@@ -1045,6 +1323,10 @@ async function runState(options) {
   return EXIT.OK;
 }
 
+/**
+ * @param {ProbeOptions} options
+ * @returns {Promise<number>}
+ */
 async function runLogs(options) {
   if (process.platform !== "darwin") {
     throw new ProbeError("logs mode requires macOS unified logging (`log show`)", EXIT.FAILURE);
@@ -1057,7 +1339,7 @@ async function runLogs(options) {
     "--style",
     "compact",
     "--last",
-    options.since,
+    options.since ?? "",
     "--predicate",
     predicate,
     "--info",
@@ -1076,6 +1358,11 @@ async function runLogs(options) {
   let stderrLines = 0;
   let truncated = false;
 
+  /**
+   * @param {string} line
+   * @param {"stdout" | "stderr"} stream
+   * @returns {void}
+   */
   const printLine = (line, stream) => {
     if (stream === "stdout") {
       if (stdoutLines < options.maxLogLines) {
@@ -1093,7 +1380,7 @@ async function runLogs(options) {
     }
   };
 
-  child.stdout.on("data", (chunk) => {
+  child.stdout.on("data", (/** @type {string} */ chunk) => {
     stdoutBuffer += chunk;
     let newlineIndex;
     while ((newlineIndex = stdoutBuffer.indexOf("\n")) !== -1) {
@@ -1102,7 +1389,7 @@ async function runLogs(options) {
       printLine(line, "stdout");
     }
   });
-  child.stderr.on("data", (chunk) => {
+  child.stderr.on("data", (/** @type {string} */ chunk) => {
     stderrBuffer += chunk;
     let newlineIndex;
     while ((newlineIndex = stderrBuffer.indexOf("\n")) !== -1) {
@@ -1112,7 +1399,8 @@ async function runLogs(options) {
     }
   });
 
-  const exitInfo = await new Promise((resolve, reject) => {
+  /** @type {Promise<ExitInfo>} */
+  const exitPromise = new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       child.kill("SIGTERM");
       reject(
@@ -1130,37 +1418,52 @@ async function runLogs(options) {
       resolve({ code, signal });
     });
   });
+  const exitInfo = await exitPromise;
 
-  if (stdoutBuffer) printLine(stdoutBuffer, "stdout");
-  if (stderrBuffer) printLine(stderrBuffer, "stderr");
+  if (stdoutBuffer !== "") printLine(stdoutBuffer, "stdout");
+  if (stderrBuffer !== "") printLine(stderrBuffer, "stderr");
 
   logger.event("logs.exit", { ...exitInfo, stdoutLines, stderrLines, truncated });
   if (exitInfo.code !== 0) {
     throw new ProbeError(
-      `log show failed with code=${exitInfo.code} signal=${exitInfo.signal}`,
+      `log show failed with code=${String(exitInfo.code)} signal=${String(exitInfo.signal)}`,
       EXIT.FAILURE,
     );
   }
   return EXIT.OK;
 }
 
+/**
+ * @param {unknown} error
+ * @param {ProbeOptions | { help: true } | undefined} options
+ * @returns {void}
+ */
 function printNextDiagnostics(error, options) {
   const script = "tools/probe-codex-computer-use-mcp.mjs";
+  const parsed =
+    options !== undefined && "command" in options && typeof options.command === "string"
+      ? options
+      : undefined;
   process.stderr.write("\nNext diagnostics:\n");
-  if (options?.command !== "logs") {
+  if (parsed?.command !== "logs") {
     process.stderr.write(`  node ${script} logs --since 5m\n`);
     process.stderr.write(
-      `  node ${script} discover --client ${shellQuote(options?.client ?? DEFAULT_CLIENT)} --cwd ${shellQuote(options?.cwd ?? DEFAULT_CWD)}\n`,
+      `  node ${script} discover --client ${shellQuote(parsed?.client ?? DEFAULT_CLIENT)} --cwd ${shellQuote(parsed?.cwd ?? DEFAULT_CWD)}\n`,
     );
   }
   if (error instanceof TimeoutError) {
-    const retryCommand =
-      options?.command === "state" || options?.command === "deny"
-        ? `${options.command} --app ${shellQuote(options.app)}${options.command === "state" ? ` --approval ${options.approval}` : ""} --tool-timeout-ms 90000`
-        : options?.command === "apps"
-          ? "apps --tool-timeout-ms 90000"
-          : "discover --startup-timeout-ms 30000 --list-timeout-ms 30000";
-    process.stderr.write(`  node ${script} ${retryCommand}\n`);
+    /**
+     * @returns {string}
+     */
+    const retryCommand = () => {
+      if (parsed?.command === "state" || parsed?.command === "deny")
+        return `${parsed.command} --app ${shellQuote(parsed.app)}${
+          parsed.command === "state" ? ` --approval ${String(parsed.approval)}` : ""
+        } --tool-timeout-ms 90000`;
+      if (parsed?.command === "apps") return "apps --tool-timeout-ms 90000";
+      return "discover --startup-timeout-ms 30000 --list-timeout-ms 30000";
+    };
+    process.stderr.write(`  node ${script} ${retryCommand()}\n`);
   }
   if (error instanceof MissingInstallError) {
     process.stderr.write(
@@ -1170,19 +1473,26 @@ function printNextDiagnostics(error, options) {
       '  find "$CODEX_HOME/computer-use" -iname SkyComputerUseClient -type f -print\n',
     );
   }
-  process.stderr.write(`  ${shellQuote(options?.client ?? DEFAULT_CLIENT)} --help\n`);
-  process.stderr.write(`  ${shellQuote(options?.client ?? DEFAULT_CLIENT)} help mcp\n`);
+  process.stderr.write(`  ${shellQuote(parsed?.client ?? DEFAULT_CLIENT)} --help\n`);
+  process.stderr.write(`  ${shellQuote(parsed?.client ?? DEFAULT_CLIENT)} help mcp\n`);
 }
 
+/**
+ * @param {string | undefined} value
+ * @returns {string}
+ */
 function shellQuote(value) {
-  const s = String(value ?? "");
+  const s = value ?? "";
   if (/^[A-Za-z0-9_./:=+-]+$/.test(s)) return s;
   return `'${s.replaceAll("'", "'\\''")}'`;
 }
 
+/**
+ * @returns {Promise<number>}
+ */
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  if (options.help) {
+  if (options.help === true) {
     printHelp();
     return EXIT.OK;
   }
@@ -1206,11 +1516,16 @@ try {
   const code = await main();
   process.exitCode = code;
 } catch (error) {
-  const exitCode = error instanceof ProbeError ? error.exitCode : EXIT.FAILURE;
-  process.stderr.write(`ERROR: ${error.message}\n`);
-  if (error.details)
-    process.stderr.write(`Details: ${JSON.stringify(sanitizeForLog(error.details), null, 2)}\n`);
+  const probeError = error instanceof ProbeError ? error : undefined;
+  const exitCode = probeError !== undefined ? probeError.exitCode : EXIT.FAILURE;
+  process.stderr.write(`ERROR: ${error instanceof Error ? error.message : String(error)}\n`);
+  const detailed = probeError !== undefined && Boolean(probeError.details);
+  if (detailed)
+    process.stderr.write(
+      `Details: ${JSON.stringify(sanitizeForLog(probeError.details), null, 2)}\n`,
+    );
   if (!(error instanceof UsageError)) {
+    /** @type {ProbeOptions | { help: true } | undefined} */
     let parsedOptions;
     try {
       parsedOptions = parseArgs(process.argv.slice(2));

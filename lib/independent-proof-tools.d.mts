@@ -18,5 +18,5 @@ export function callIndependentProof(
   session: IndependentProofSession,
   name: string,
   input: unknown,
-  options?: { signal?: AbortSignal },
+  options?: { signal?: AbortSignal | undefined },
 ): ReturnType<IndependentProofSession["execute"]>;
