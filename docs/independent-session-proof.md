@@ -32,11 +32,11 @@ provided. A missing target refuses all native access.
 Guest code uses only these registered capabilities:
 
 ```js
-var state = macuse.call("observe", {app: "com.macuse.actuator-fixture.<UUID>"});
+var state = macuse.call("observe", { app: "com.macuse.actuator-fixture.<UUID>" });
 var image = macuse.call("screenshot", {
   app: state.app.bundleId,
   observationId: state.observationId,
-  windowToken: state.windows[0].token
+  windowToken: state.windows[0].token,
 });
 ```
 

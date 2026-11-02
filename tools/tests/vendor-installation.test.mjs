@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveVendorCodex } from "../../lib/vendor-installation.mjs";
 
-test("a selected package never silently falls back to a stale legacy executable", t => {
+test("a selected package never silently falls back to a stale legacy executable", (t) => {
   const root = mkdtempSync(join(tmpdir(), "macuse-codex-layout-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   mkdirSync(join(root, "codex-cli"), { recursive: true });
@@ -26,11 +26,14 @@ test("a selected package never silently falls back to a stale legacy executable"
   symlinkSync("missing-descriptor.json", descriptor);
   assert.throws(() => resolveVendorCodex(root), /Invalid Codex package descriptor/);
   rmSync(descriptor);
-  writeFileSync(descriptor, JSON.stringify({ layoutVersion: 1, version: "next", entrypoint: "missing" }));
+  writeFileSync(
+    descriptor,
+    JSON.stringify({ layoutVersion: 1, version: "next", entrypoint: "missing" }),
+  );
   assert.throws(() => resolveVendorCodex(root), /Selected Codex executable is unavailable/);
 });
 
-test("missing, directory and non-executable legacy targets fail before launch", t => {
+test("missing, directory and non-executable legacy targets fail before launch", (t) => {
   const root = mkdtempSync(join(tmpdir(), "macuse-codex-unavailable-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const path = join(root, "codex");

@@ -39,7 +39,7 @@ See [saved-session recovery](usage.md#saved-session-recovery) for first-install 
 When replacing a saved tool selection through the Pi SDK, apply the final selection after extension binding:
 
 ```ts
-const selected = ['macuse', 'computer_history_status'];
+const selected = ["macuse", "computer_history_status"];
 const { session } = await createAgentSession({ ...options, tools: selected });
 await session.bindExtensions(bindings);
 session.setActiveToolsByName(selected);
@@ -53,15 +53,15 @@ Use `[]` to deliberately deselect all tools. This shared public method cannot en
 
 Default paths are resolved from the local installation rather than copied versioned caches:
 
-| Component | Default location |
-| --- | --- |
-| ChatGPT resources | `/Applications/ChatGPT.app/Contents/Resources` |
-| Native runtime launch manifest | `/Applications/ChatGPT.app/Contents/Resources/cua_node/manifest.json` |
-| Vendor Node packages | The manifest's `node_modules` directory, containing `@oai/cua-repl` and `@oai/sky` |
-| Computer Use service | `$CODEX_HOME/computer-use/Codex Computer Use.app` |
-| Codex package descriptor | ChatGPT resources under `codex-cli/codex-package.json` (layout version 1) |
-| Codex executable | The descriptor's package-relative `entrypoint`; older installations without a descriptor use resources under `codex` |
-| Auxiliary plugin roots | ChatGPT resources under `plugins/openai-bundled/plugins/record-and-replay` and `computer-history` |
+| Component                      | Default location                                                                                                     |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| ChatGPT resources              | `/Applications/ChatGPT.app/Contents/Resources`                                                                       |
+| Native runtime launch manifest | `/Applications/ChatGPT.app/Contents/Resources/cua_node/manifest.json`                                                |
+| Vendor Node packages           | The manifest's `node_modules` directory, containing `@oai/cua-repl` and `@oai/sky`                                   |
+| Computer Use service           | `$CODEX_HOME/computer-use/Codex Computer Use.app`                                                                    |
+| Codex package descriptor       | ChatGPT resources under `codex-cli/codex-package.json` (layout version 1)                                            |
+| Codex executable               | The descriptor's package-relative `entrypoint`; older installations without a descriptor use resources under `codex` |
+| Auxiliary plugin roots         | ChatGPT resources under `plugins/openai-bundled/plugins/record-and-replay` and `computer-history`                    |
 
 Both the sandboxed primary runtime and the auxiliary app-server resolve the selected installation's Codex executable. A present package descriptor takes precedence over the legacy path. Invalid descriptors, unsupported layouts, escaping entrypoints, and missing/non-executable targets fail before launch; macuse never silently selects a stale legacy binary or searches `PATH`. Auxiliary resolution stays lazy, so unavailable optional recording/history software does not prevent loading the extension or reading session status. Until that runtime starts, its status reports `codexBin:null` unless an explicit override was supplied.
 

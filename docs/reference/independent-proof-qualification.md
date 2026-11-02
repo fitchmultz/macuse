@@ -54,10 +54,10 @@ The complete integrated source cohort passed all 52 named checks across CLI, MCP
 
 Key source identities:
 
-| Input | SHA-256 |
-| --- | --- |
-| Qualification runner | `77d394297546e3be9383188af75b6d9cb9b2898c3d8e554a16aad346343f63af` |
-| Independent session | `0c508cd6d325561e455aaebff5f8dc4fc602b602d778682cbd7d9c189c5c413e` |
+| Input                 | SHA-256                                                            |
+| --------------------- | ------------------------------------------------------------------ |
+| Qualification runner  | `77d394297546e3be9383188af75b6d9cb9b2898c3d8e554a16aad346343f63af` |
+| Independent session   | `0c508cd6d325561e455aaebff5f8dc4fc602b602d778682cbd7d9c189c5c413e` |
 | Native parent wrapper | `a98cb82a053ae2300fa7b4f6ad3ad2d084915d730271fd66c9490d61d3b81749` |
 
 Each transport delivered two 43,856-byte PNGs at 960×504 pixels, with a 480×252-point fixture window and scale 2. The original selection was observed as Energy, not assumed. A separate call confirmed a binding survived a native observation before the reset invalidation check. Both original fields and Energy were verified restored. The actual context-changing setter remained an unknown effect in the evidence even after inspection/reset. Final settlement had zero pending host calls; sampled helpers/transports and all four fixtures exited. No unexpected stderr was present. No screenshot bytes are published here.

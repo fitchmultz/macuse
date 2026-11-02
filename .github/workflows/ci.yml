@@ -42,14 +42,14 @@ jobs:
           npm audit --prefix "$fresh" --package-lock-only
       - run: npm run check:compat
         env:
-          PI_OFFLINE: '1'
+          PI_OFFLINE: "1"
 
   native-hosts:
     name: Native and Pi hosts (macOS)
     runs-on: macos-latest
     timeout-minutes: 6
     env:
-      PI_TELEMETRY: '0'
+      PI_TELEMETRY: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

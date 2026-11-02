@@ -38,17 +38,17 @@ Large or dynamic apps can exceed the experimental helper's complete-snapshot lim
 
 A successful `ok` means only those named checks passed. The report keeps `fullNativeQualification` and `chatgptIndependenceQualified` false and lists unattempted gates. PNG metadata is not visual content verification or a proven coordinate-action mapping.
 
-| Contract | Required evidence |
-| --- | --- |
-| Exact target | Resolve one exact running app identity; retain PID, window, document, and element identity. Reject ambiguity, replacement windows, stale targets, and changed field values before dispatch. |
-| Complete observations | Inspect the actual app/window tree before choosing an action. A truncated tree must not authorize mutation of an unidentified target. |
-| Native action | Perform a bounded accessibility action and independently observe its actual result. An AX return code alone does not prove the UI outcome. |
-| Screenshot | Capture the intended window, decode the actual image, verify dimensions and content, and report the pixel-to-window mapping. Do not assume Retina scaling or OS-point coordinates. |
-| Unicode | Replace a known selected range in a disposable already-focused text field; verify exact value and preservation of unselected text. No clipboard/keyboard fallback or replay. |
-| Focus and pointer | Capture native activation/window transitions and pointer endpoints for the controlled operation. Equal endpoints do not exclude transient changes; absence of input attribution is not non-interruption proof. |
-| Refusal | Missing mutation authorization, app mismatch, stale observation, and unsupported target/action must fail without dispatch. Exercise each refusal at its owning boundary. |
-| Uncertain effects | Timeout, native error after dispatch, or failed readback must retain attempted/unknown evidence. Never automatically replay an attempted action. |
-| Cleanup | Capture original state before the first mutation, restore it in `finally`, and independently verify restoration. Cleanup failure fails the run even when the main action succeeded. |
+| Contract              | Required evidence                                                                                                                                                                                              |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Exact target          | Resolve one exact running app identity; retain PID, window, document, and element identity. Reject ambiguity, replacement windows, stale targets, and changed field values before dispatch.                    |
+| Complete observations | Inspect the actual app/window tree before choosing an action. A truncated tree must not authorize mutation of an unidentified target.                                                                          |
+| Native action         | Perform a bounded accessibility action and independently observe its actual result. An AX return code alone does not prove the UI outcome.                                                                     |
+| Screenshot            | Capture the intended window, decode the actual image, verify dimensions and content, and report the pixel-to-window mapping. Do not assume Retina scaling or OS-point coordinates.                             |
+| Unicode               | Replace a known selected range in a disposable already-focused text field; verify exact value and preservation of unselected text. No clipboard/keyboard fallback or replay.                                   |
+| Focus and pointer     | Capture native activation/window transitions and pointer endpoints for the controlled operation. Equal endpoints do not exclude transient changes; absence of input attribution is not non-interruption proof. |
+| Refusal               | Missing mutation authorization, app mismatch, stale observation, and unsupported target/action must fail without dispatch. Exercise each refusal at its owning boundary.                                       |
+| Uncertain effects     | Timeout, native error after dispatch, or failed readback must retain attempted/unknown evidence. Never automatically replay an attempted action.                                                               |
+| Cleanup               | Capture original state before the first mutation, restore it in `finally`, and independently verify restoration. Cleanup failure fails the run even when the main action succeeded.                            |
 
 Activity Monitor checks may select only a named tab. Capture its actual original tab; do not assume CPU. Never interact with Stop, Inspector, process actions, or termination controls. A helper failure must not cause a blind second press. Refresh the exact target and select the original tab only from a known, unambiguous state.
 

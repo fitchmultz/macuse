@@ -26,13 +26,13 @@ Bindings persist in that session. The next call can use them:
 
 ## Tools
 
-| Tool | Purpose |
-| --- | --- |
-| `macuse` | Run code against the installed `cua` computer API in a persistent sandboxed session. |
+| Tool                 | Purpose                                                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `macuse`             | Run code against the installed `cua` computer API in a persistent sandboxed session.                                     |
 | `macuse_insert_text` | Replace only the current selection in an already-focused field through native Accessibility, preserving unselected text. |
-| `macuse_reset` | Clear JavaScript bindings and app observations; it does not undo GUI actions. |
-| `macuse_tools` | Pi-only activation of the eight recording/history tools below. It starts no recording. |
-| `macuse_enable` | Pi-only recovery: select the four permitted entry tools. |
+| `macuse_reset`       | Clear JavaScript bindings and app observations; it does not undo GUI actions.                                            |
+| `macuse_tools`       | Pi-only activation of the eight recording/history tools below. It starts no recording.                                   |
+| `macuse_enable`      | Pi-only recovery: select the four permitted entry tools.                                                                 |
 
 The four entry tools and the separate `macuse_enable` recovery tool start active on ordinary Pi. Eight auxiliary tools are registered but inactive until requested through `macuse_tools`: `event_stream_start`, `event_stream_status`, `event_stream_stop`, `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, and `computer_history_update_settings`. Pi's live entry/auxiliary selection survives reload, including newly added `defaultTools` on hosts supporting that behavior. Saved declarations survive resume, fork and compaction; owned runtime bindings and observations still reset at lifecycle boundaries. Host allowlists/exclusions are never widened, and explicit CLI `--tools` selections take precedence over saved declarations. SDK callers replacing a saved selection must apply their final selection after binding extensions; see [SDK selection](codex-computer-use-local-install.md#sdk-tool-selection). The MCP server exposes eleven tools: the three primary tools plus all eight auxiliary tools.
 
