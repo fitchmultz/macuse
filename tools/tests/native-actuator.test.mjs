@@ -5,14 +5,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import test from "node:test";
+import nodeTest from "node:test";
 import { NativeActuator } from "../native-actuator.mjs";
 
 const exec = promisify(execFile);
 /** @param {unknown} error @returns {boolean} */
 const noDispatch = (error) => {
-  if (!(error instanceof Error)) return false;
-  if (!("dispatched" in error && "mutationAttempted" in error && "outcome" in error)) return false;
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  if (!("dispatched" in error && "mutationAttempted" in error && "outcome" in error)) {
+    return false;
+  }
   return (
     error.dispatched === false &&
     error.mutationAttempted === false &&
@@ -20,7 +24,7 @@ const noDispatch = (error) => {
   );
 };
 
-await test("actuator rejects non-JSON and malformed Unicode before native dispatch", async () => {
+nodeTest("actuator rejects non-JSON and malformed Unicode before native dispatch", async () => {
   const actuator = new NativeActuator();
   const cycle = {};
   cycle.self = cycle;
@@ -44,7 +48,7 @@ await test("actuator rejects non-JSON and malformed Unicode before native dispat
   }
 });
 
-await test("full wire framing budget refuses a near-limit act as not dispatched", async () => {
+nodeTest("full wire framing budget refuses a near-limit act as not dispatched", async () => {
   const actuator = new NativeActuator();
   const args = { value: "x".repeat(1_000_000 - Buffer.byteLength(JSON.stringify({ value: "" }))) };
   assert.equal(Buffer.byteLength(JSON.stringify(args)), 1_000_000);
@@ -61,7 +65,7 @@ await test("full wire framing budget refuses a near-limit act as not dispatched"
   }
 });
 
-await test(
+nodeTest(
   "native process denies missing authority and stale observation without touching an app",
   { skip: process.platform !== "darwin" },
   async () => {
@@ -93,7 +97,7 @@ await test(
   },
 );
 
-await test(
+nodeTest(
   "native wire rejects an oversized unterminated request before parsing or AX access",
   { skip: process.platform !== "darwin", timeout: 30_000 },
   async () => {
@@ -112,7 +116,9 @@ await test(
         const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
         let output = "";
         child.stdout.on("data", (chunk) => {
-          if (!Buffer.isBuffer(chunk)) return;
+          if (!Buffer.isBuffer(chunk)) {
+            return;
+          }
           output += chunk.toString();
         });
         child.stdin.on("error", () => null); // Native rejection may close the pipe while the final bytes are buffered.
@@ -131,7 +137,7 @@ await test(
   },
 );
 
-await test(
+nodeTest(
   "stop during cold compilation drains owned processes and cancels queued dispatch, then permits a fresh session",
   { skip: process.platform !== "darwin", timeout: 30_000 },
   async () => {

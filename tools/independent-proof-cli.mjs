@@ -14,9 +14,7 @@ async function main() {
   });
   const [command = "help", tool = "macuse_independent_proof", json = "{}"] = positionals;
   if (values.help === true || command === "help") {
-    console.log(
-      'Opt-in independent fixture proof. Production macuse is unchanged.\nUsage: node tools/independent-proof-cli.mjs tools | call <tool> <JSON> | session\nOperator target: MACUSE_INDEPENDENT_PROOF_TARGET JSON. Without a target only pure JavaScript is available.\nSession input: one {"tool":"macuse_independent_proof","input":{"code":"var retained=41; retained"}} per LF-delimited line. No automatic replay.',
-    );
+    printCliUsage();
     return;
   }
   /** @param {unknown} value */
@@ -26,7 +24,27 @@ async function main() {
     print(independentProofTools);
     return;
   }
-  if (!["call", "session"].includes(command)) throw new Error(`Unknown proof command: ${command}`);
+  if (!["call", "session"].includes(command)) {
+    throw new Error(`Unknown proof command: ${command}`);
+  }
+  await runProofSession({ values, command, tool, json, print });
+}
+
+/** Print the independent proof CLI usage banner. */
+function printCliUsage() {
+  console.log(
+    'Opt-in independent fixture proof. Production macuse is unchanged.\nUsage: node tools/independent-proof-cli.mjs tools | call <tool> <JSON> | session\nOperator target: MACUSE_INDEPENDENT_PROOF_TARGET JSON. Without a target only pure JavaScript is available.\nSession input: one {"tool":"macuse_independent_proof","input":{"code":"var retained=41; retained"}} per LF-delimited line. No automatic replay.',
+  );
+}
+
+/**
+ * @typedef {{ values: { help?: boolean | undefined, pretty?: boolean | undefined }, command: string, tool: string, json: string, print: (value: unknown) => void }} ProofRun
+ */
+/**
+ * Run one call or session command against a fresh proof session.
+ * @param {ProofRun} run
+ */
+async function runProofSession(run) {
   const session = new IndependentProofSession();
   const controller = new AbortController();
   const cancel = () => {
@@ -41,21 +59,35 @@ async function main() {
    */
   const call = async (name, input) => {
     const result = await callIndependentProof(session, name, input, { signal: controller.signal });
-    print(result);
-    if (result.isError) process.exitCode = 1;
+    run.print(result);
+    if (result.isError) {
+      process.exitCode = 1;
+    }
+  };
+  /**
+   * Pump JSONL proof requests from stdin until the abort signal fires.
+   * @param {(name: string, input: unknown) => Promise<void>} dispatch
+   * @param {AbortSignal} signal
+   */
+  const pumpStdin = async (dispatch, signal) => {
+    for await (const line of readProofLines(process.stdin)) {
+      /** @type {unknown} */
+      const parsed = JSON.parse(line);
+      const request = isRecord(parsed) ? parsed : {};
+      await dispatch(typeof request.tool === "string" ? request.tool : "", request.input);
+      if (signal.aborted) {
+        break;
+      }
+    }
   };
   try {
-    if (command === "call") await call(tool, JSON.parse(json));
-    else {
-      if (values.pretty === true)
+    if (run.command === "call") {
+      await call(run.tool, JSON.parse(run.json));
+    } else {
+      if (run.values.pretty === true) {
         throw new Error("session does not accept --pretty; output is JSONL.");
-      for await (const line of readProofLines(process.stdin)) {
-        /** @type {unknown} */
-        const parsed = JSON.parse(line);
-        const request = isRecord(parsed) ? parsed : {};
-        await call(typeof request.tool === "string" ? request.tool : "", request.input);
-        if (controller.signal.aborted) break;
       }
+      await pumpStdin(call, controller.signal);
     }
   } finally {
     const stopped = await session.stop();

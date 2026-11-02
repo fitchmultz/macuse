@@ -12,11 +12,11 @@ export function restoreMacuseImages(
   model: { id: string; api: string } | undefined,
 ): unknown;
 export function macuseImageIndex(): {
-  reset(): void;
-  messageEnd(message: AgentMessage, resizeOptions?: ModelImageResizeOptions): Promise<void>;
-  select(
+  reset: () => void;
+  messageEnd: (message: AgentMessage, resizeOptions?: ModelImageResizeOptions) => Promise<void>;
+  select: (
     manager: ExtensionContext["sessionManager"],
     messages: AgentMessage[],
     resizeOptions?: ModelImageResizeOptions,
-  ): Promise<Map<string, AgentMessage>>;
+  ) => Promise<Map<string, AgentMessage>>;
 };

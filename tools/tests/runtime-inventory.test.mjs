@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
-import test from "node:test";
+import nodeTest from "node:test";
 
 const exec = promisify(execFile);
 const cli = new URL("../macuse.mjs", import.meta.url);
@@ -83,67 +83,88 @@ async function fixture() {
   return root;
 }
 
-await test("runtime CLI fingerprints actual selected files without executing vendor code and detects binary drift", async () => {
-  const root = await fixture();
-  const options = { env: { ...process.env, MACUSE_CHATGPT_RESOURCES: root } };
-  try {
-    const first = parseReport(
-      (await exec(process.execPath, [cli.pathname, "runtime"], options)).stdout,
-    );
-    assert.equal(first.ok, true);
-    assert.equal(first.scope, "primary-launch-files");
-    assert.deepEqual(first.versions, {
-      node: "24.fixture",
-      runtime: "fixture-runtime",
-      cuaRepl: "1.fixture",
-      sky: "2.fixture",
-      codex: "3.fixture",
-    });
-    const binary = artifactsOf(first).find((artifact) => artifact.name === "codex");
-    if (binary === undefined) assert.fail("Expected a codex artifact");
-    assert.equal(binary.sha256, "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
-    assert.equal(binary.bytes, 3);
-    assert.equal(binary.realpath, await realpath(join(root, "codex-cli/bin/actual")));
-    await writeFile(join(root, "codex-cli/bin/actual"), "changed");
-    const out = join(root, "inventory.json");
-    await exec(process.execPath, [cli.pathname, "runtime", "--out", out], options);
-    const changed = parseReport(await readFile(out, "utf8"));
-    const changedCodex = artifactsOf(changed).find((artifact) => artifact.name === "codex");
-    if (changedCodex === undefined) assert.fail("Expected a changed codex artifact");
-    assert.notEqual(changedCodex.sha256, binary.sha256);
-    assert.equal(
-      versionsOf(changed).codex,
-      versionsOf(first).codex,
-      "same declared version must not hide changed bytes",
-    );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+nodeTest(
+  "runtime CLI fingerprints actual selected files without executing vendor code and detects binary drift",
+  async () => {
+    const root = await fixture();
+    const options = { env: { ...process.env, MACUSE_CHATGPT_RESOURCES: root } };
+    try {
+      const first = parseReport(
+        (await exec(process.execPath, [cli.pathname, "runtime"], options)).stdout,
+      );
+      assert.equal(first.ok, true);
+      assert.equal(first.scope, "primary-launch-files");
+      assert.deepEqual(first.versions, {
+        node: "24.fixture",
+        runtime: "fixture-runtime",
+        cuaRepl: "1.fixture",
+        sky: "2.fixture",
+        codex: "3.fixture",
+      });
+      const binary = artifactsOf(first).find((artifact) => artifact.name === "codex");
+      if (binary === undefined) {
+        assert.fail("Expected a codex artifact");
+      }
+      assert.equal(
+        binary.sha256,
+        "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+      );
+      assert.equal(binary.bytes, 3);
+      assert.equal(binary.realpath, await realpath(join(root, "codex-cli/bin/actual")));
+      await writeFile(join(root, "codex-cli/bin/actual"), "changed");
+      const out = join(root, "inventory.json");
+      await exec(process.execPath, [cli.pathname, "runtime", "--out", out], options);
+      const changed = parseReport(await readFile(out, "utf8"));
+      const changedCodex = artifactsOf(changed).find((artifact) => artifact.name === "codex");
+      if (changedCodex === undefined) {
+        assert.fail("Expected a changed codex artifact");
+      }
+      assert.notEqual(changedCodex.sha256, binary.sha256);
+      assert.equal(
+        versionsOf(changed).codex,
+        versionsOf(first).codex,
+        "same declared version must not hide changed bytes",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
 
-await test("runtime CLI returns nonzero structured missing-artifact evidence without falling back", async () => {
-  const root = await fixture();
-  try {
-    await rm(join(root, "cua_node/bin/node_repl"));
-    await assert.rejects(
-      exec(process.execPath, [cli.pathname, "runtime"], {
-        env: { ...process.env, MACUSE_CHATGPT_RESOURCES: root },
-      }),
-      (/** @type {unknown} */ error) => {
-        if (!isExecFailure(error)) return false;
-        assert.equal(error.code, 1);
-        const report = parseReport(error.stdout);
-        assert.equal(report.ok, false);
-        const nodeArtifact = artifactsOf(report).find((artifact) => artifact.name === "node-repl");
-        if (nodeArtifact === undefined) assert.fail("Expected a node-repl artifact");
-        assert.match(String(nodeArtifact.error), /ENOENT/);
-        const codexArtifact = artifactsOf(report).find((artifact) => artifact.name === "codex");
-        if (codexArtifact === undefined) assert.fail("Expected a codex artifact");
-        assert.ok(codexArtifact.sha256 !== undefined && codexArtifact.sha256 !== null);
-        return true;
-      },
-    );
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
-});
+nodeTest(
+  "runtime CLI returns nonzero structured missing-artifact evidence without falling back",
+  async () => {
+    const root = await fixture();
+    try {
+      await rm(join(root, "cua_node/bin/node_repl"));
+      await assert.rejects(
+        exec(process.execPath, [cli.pathname, "runtime"], {
+          env: { ...process.env, MACUSE_CHATGPT_RESOURCES: root },
+        }),
+        (/** @type {unknown} */ error) => {
+          if (!isExecFailure(error)) {
+            return false;
+          }
+          assert.equal(error.code, 1);
+          const report = parseReport(error.stdout);
+          assert.equal(report.ok, false);
+          const nodeArtifact = artifactsOf(report).find(
+            (artifact) => artifact.name === "node-repl",
+          );
+          if (nodeArtifact === undefined) {
+            assert.fail("Expected a node-repl artifact");
+          }
+          assert.match(String(nodeArtifact.error), /ENOENT/);
+          const codexArtifact = artifactsOf(report).find((artifact) => artifact.name === "codex");
+          if (codexArtifact === undefined) {
+            assert.fail("Expected a codex artifact");
+          }
+          assert.ok(codexArtifact.sha256 !== undefined && codexArtifact.sha256 !== null);
+          return true;
+        },
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);

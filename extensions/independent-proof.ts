@@ -4,27 +4,45 @@ import { IndependentProofSession } from "../lib/independent-proof-session.mjs";
 import { callIndependentProof, independentProofTools } from "../lib/independent-proof-tools.mjs";
 
 // Explicit -e opt-in only; this file is not in the package's pi.extensions manifest.
-export default function independentProof(pi: ExtensionAPI) {
+interface IndependentErrorMarker {
+  independent?: { isError?: boolean };
+}
+
+const isIndependentErrorMarker = (value: unknown): value is IndependentErrorMarker =>
+  typeof value === "object" && value !== null;
+
+export default function independentProof(pi: ExtensionAPI): void {
   let session: IndependentProofSession | undefined;
   let stopping: Promise<void> | undefined;
-  const getSession = () => {
-    if (stopping) throw new Error("Independent proof is stopping; no execution admitted.");
-    return (session ??= new IndependentProofSession());
+  const getSession = (): IndependentProofSession => {
+    if (stopping) {
+      throw new Error("Independent proof is stopping; no execution admitted.");
+    }
+    if (session === undefined) {
+      session = new IndependentProofSession();
+    }
+    return session;
   };
-  const stop = () =>
-    (stopping ??= Promise.resolve()
-      .then(async () => {
-        const stopped = await session?.stop();
-        if (stopped && (!stopped.settled || !stopped.workerStopped || !stopped.nativeStopped))
-          throw new Error(
-            "Independent proof shutdown is unsettled. Retaining the blocked session; inspect fresh fixture state and never replay actions.",
-          );
-        session = undefined;
-      })
-      .finally(() => {
-        stopping = undefined;
-      }));
-  for (const tool of independentProofTools)
+  const stop = (): Promise<void> => {
+    if (stopping === undefined) {
+      stopping = Promise.resolve()
+        .then(async () => {
+          const stopped = await session?.stop();
+          if (stopped && (!stopped.settled || !stopped.workerStopped || !stopped.nativeStopped)) {
+            throw new Error(
+              "Independent proof shutdown is unsettled. Retaining the blocked session; inspect fresh fixture state and never replay actions.",
+            );
+          }
+          session = undefined;
+          return;
+        })
+        .finally(() => {
+          stopping = undefined;
+        });
+    }
+    return stopping;
+  };
+  for (const tool of independentProofTools) {
     pi.registerTool({
       name: tool.name,
       label: tool.name,
@@ -49,11 +67,18 @@ export default function independentProof(pi: ExtensionAPI) {
         return callIndependentProof(getSession(), tool.name, params, { signal });
       },
     });
+  }
   // Both hosts preserve partial failure evidence while marking the tool result as failed.
   pi.on("tool_result", (event) => {
-    const isError = independentProofTools.some((tool) => tool.name === event.toolName)
-      ? (event.details as { independent?: { isError?: boolean } } | undefined)?.independent?.isError
-      : undefined;
+    let isError: boolean | undefined;
+    if (
+      event.toolName === "macuse_independent_proof" ||
+      event.toolName === "macuse_independent_proof_reset"
+    ) {
+      if (isIndependentErrorMarker(event.details)) {
+        isError = event.details.independent?.isError;
+      }
+    }
     return isError === true ? { isError: true } : undefined;
   });
   pi.on("session_start", stop);

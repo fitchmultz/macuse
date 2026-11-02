@@ -6,7 +6,8 @@ import { cp, mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { crc32, deflateSync, zstdDecompressSync } from "node:zlib";
+import { zstdDecompressSync } from "node:zlib";
+import { call, content, details, originalImage, redacted } from "./validate-pi-host-fixtures.mjs";
 
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
   console.log(
@@ -17,6 +18,8 @@ if (process.argv.includes("--help") || process.argv.includes("-h")) {
 /** @typedef {typeof import("@earendil-works/pi-coding-agent")} PiPublic */
 /** @typedef {typeof import("@earendil-works/pi-ai")} PiAiPublic */
 /** @typedef {import("@earendil-works/pi-coding-agent").ToolDefinition} ToolDefinition */
+/** @typedef {PiSession["messages"][number]} AgentMessage */
+/** @typedef {Extract<AgentMessage, { role: "toolResult" }>["content"][number]} ContentBlock */
 /** @typedef {Awaited<ReturnType<PiPublic["createAgentSession"]>>["session"]} PiSession */
 /**
  * @param {unknown} value
@@ -25,6 +28,23 @@ if (process.argv.includes("--help") || process.argv.includes("-h")) {
 const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 /** @param {unknown} value @returns {value is unknown[]} */
 const isUnknownArray = (value) => Array.isArray(value);
+/** @param {ContentBlock} block @returns {block is Extract<ContentBlock, {type: "image"}>} */
+const isImageBlock = (block) => block.type === "image";
+/**
+ * Tool definitions exposed by every loaded extension.
+ * @param {ReturnType<import("@earendil-works/pi-coding-agent").DefaultResourceLoader["getExtensions"]>["extensions"]} extensions
+ * @returns {ToolDefinition[]}
+ */
+const collectHostTools = (extensions) => {
+  const collected = [];
+  for (const extension of extensions) {
+    for (const { definition: tool } of extension.tools.values()) {
+      collected.push(tool);
+    }
+  }
+  return collected;
+};
+
 /**
  * @param {unknown} value
  * @returns {value is string | ArrayBuffer | ArrayBufferView}
@@ -34,6 +54,21 @@ const isRequestBody = (value) =>
 globalThis.fetch = async () => {
   throw new Error("Unexpected network in offline Pi probe");
 };
+/**
+ * Shut down the host session, if one was created.
+ * @param {PiSession | undefined} session
+ * @returns {Promise<void>}
+ */
+const shutdownSession = async (session) => {
+  if (session) {
+    try {
+      await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+    } finally {
+      session.dispose();
+    }
+  }
+};
+
 const root =
   process.argv[2] !== undefined && process.argv[2] !== ""
     ? resolve(process.argv[2])
@@ -83,68 +118,6 @@ const extensionPath =
     ? join(resolve(process.argv[3]), "extensions/macuse.ts")
     : fileURLToPath(new URL("../extensions/macuse.ts", import.meta.url));
 
-/**
- * @param {number} width
- * @param {number} height
- * @returns {string}
- */
-function png(width, height) {
-  /**
-   * @param {string} name
-   * @param {Buffer} bytes
-   * @returns {Buffer}
-   */
-  const chunk = (name, bytes) => {
-    const data = Buffer.concat([Buffer.from(name), bytes]),
-      length = Buffer.alloc(4),
-      crc = Buffer.alloc(4);
-    length.writeUInt32BE(bytes.length);
-    crc.writeUInt32BE(crc32(data));
-    return Buffer.concat([length, data, crc]);
-  };
-  const header = Buffer.alloc(13);
-  header.writeUInt32BE(width);
-  header.writeUInt32BE(height, 4);
-  header[8] = 8;
-  header[9] = 6;
-  return Buffer.concat([
-    Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
-    chunk("IHDR", header),
-    chunk("IDAT", deflateSync(Buffer.alloc((width * 4 + 1) * height))),
-    chunk("IEND", Buffer.alloc(0)),
-  ]).toString("base64");
-}
-/** @type {ContentBlock[]} */
-const content = [
-  { type: "text", text: "Controlled synthetic image" },
-  { type: "image", mimeType: "image/png", data: png(4000, 3000) },
-];
-const details = {
-  macuse: {
-    isError: true,
-    originalContent: content,
-    actions: [{ dispatched: true, outcome: "unknown" }],
-  },
-};
-/** @typedef {PiSession["messages"][number]} AgentMessage */
-/** @typedef {Extract<AgentMessage, { role: "toolResult" }>["content"][number]} ContentBlock */
-/** @typedef {import("@earendil-works/pi-ai").FauxContentBlock} FauxContentBlock */
-/** @typedef {Extract<FauxContentBlock, { type: "toolCall" }>} FauxToolCall */
-/** @type {FauxToolCall} */
-const call = {
-  type: "toolCall",
-  name: "macuse",
-  id: "call_image|fc_image",
-  arguments: { code: "synthetic fixture only" },
-};
-/** @type {ContentBlock[]} */
-const redacted = [
-  { type: "text", text: "Redacted screenshot" },
-  { type: "image", mimeType: "image/png", data: png(64, 64) },
-];
-const originalImage = content[1];
-if (originalImage === undefined || originalImage.type !== "image")
-  assert.fail("Fixture content must include the oversized image");
 // Astra is a user-configured route, not guaranteed to be in the host catalog.
 const responsesModel = openaiProvider()
   .getModels()
@@ -159,8 +132,9 @@ try {
   // Copy unchanged sources into a disposable selected-host consumer; never
   // replace dependencies in the source checkout or selected host.
   const packageRoot = dirname(dirname(extensionPath));
-  for (const path of ["extensions", "lib", "package.json"])
+  for (const path of ["extensions", "lib", "package.json"]) {
     await cp(join(packageRoot, path), join(scratch, path), { recursive: true });
+  }
   /** @type {[string, string][]} */
   const links = [
     ["@earendil-works/pi-coding-agent", root],
@@ -215,7 +189,9 @@ try {
     extensionFactories: [
       (pi) => {
         pi.on("tool_result", (event) => {
-          if (event.toolCallId === "call_redacted|fc_redacted") return { content: redacted };
+          if (event.toolCallId === "call_redacted|fc_redacted") {
+            return { content: redacted };
+          }
           if (event.toolCallId === "call_text_redacted|fc_text_redacted") {
             /** @type {ContentBlock[]} */
             const replaced = [{ type: "text", text: "Redacted text" }, originalImage];
@@ -228,11 +204,11 @@ try {
   });
   await resourceLoader.reload();
   assert.deepEqual(resourceLoader.getExtensions().errors, []);
-  for (const extension of resourceLoader.getExtensions().extensions) {
-    for (const { definition: tool } of extension.tools.values()) {
-      tools.push(tool);
-      // Replace only desktop execution; the selected host loads real hooks and image helpers.
-      if (tool.name === "macuse") tool.execute = async () => structuredClone({ content, details });
+  for (const tool of collectHostTools(resourceLoader.getExtensions().extensions)) {
+    tools.push(tool);
+    // Replace only desktop execution; the selected host loads real hooks and image helpers.
+    if (tool.name === "macuse") {
+      tool.execute = async () => structuredClone({ content, details });
     }
   }
   assert.ok(
@@ -269,12 +245,10 @@ try {
     "Native tool execution must produce a toolResult message",
   );
   assert.equal(normalized.isError, true, "Actual host did not apply macuse partial-failure hook");
-  const resizedImage = normalized.content.find((c) => c.type === "image");
-  // tsgo cannot narrow find() results while tsgolint treats the discriminant
-  // predicate as narrowing the result; both cannot be satisfied at once.
-  // oxlint-disable-next-line no-unnecessary-condition
-  if (resizedImage === undefined || resizedImage.type !== "image")
+  const resizedImage = normalized.content.find(isImageBlock);
+  if (resizedImage === undefined) {
     assert.fail("Resized image block expected");
+  }
   const normalizedImageData = resizedImage.data;
   assert.notEqual(
     resizedImage.data,
@@ -350,7 +324,9 @@ try {
    * @returns {Record<string, unknown>}
    */
   const callOutputItem = (request, callId) => {
-    if (request === undefined) assert.fail("Fixture request missing");
+    if (request === undefined) {
+      assert.fail("Fixture request missing");
+    }
     const input = isUnknownArray(request.input) ? request.input : [];
     const item = input.find(
       (candidate) =>
@@ -358,8 +334,9 @@ try {
         candidate.type === "function_call_output" &&
         (callId === undefined || candidate.call_id === callId),
     );
-    if (item === undefined || !isRecord(item))
+    if (item === undefined || !isRecord(item)) {
       assert.fail(`function_call_output ${callId ?? "(first)"} missing`);
+    }
     return item;
   };
   /**
@@ -367,7 +344,9 @@ try {
    * @returns {Record<string, unknown>[]}
    */
   const itemBlocks = (item) => {
-    if (!Array.isArray(item.output)) assert.fail("function_call_output output missing");
+    if (!Array.isArray(item.output)) {
+      assert.fail("function_call_output output missing");
+    }
     return item.output.filter(isRecord);
   };
   const messages = sm.buildSessionContext().messages;
@@ -380,7 +359,7 @@ try {
    * @returns {Promise<Record<string, unknown> | undefined>}
    */
   const send = async (adapter, current, auth, baseMessages) => {
-    const messages = await runner.emitContext(baseMessages);
+    const contextMessages = await runner.emitContext(baseMessages);
     const response = await adapter
       .streamSimple(
         current,
@@ -389,7 +368,7 @@ try {
           tools: tools.filter((t) =>
             ["macuse", "macuse_insert_text", "macuse_reset", "macuse_tools"].includes(t.name),
           ),
-          messages: convertToLlm(messages),
+          messages: convertToLlm(contextMessages),
         }),
         {
           apiKey: auth,
@@ -435,7 +414,9 @@ try {
     }
     await session.setModel(current);
     payload = await send(adapter, current, auth, messages);
-    if (payload === undefined) assert.fail("Fixture request missing");
+    if (payload === undefined) {
+      assert.fail("Fixture request missing");
+    }
     const toolsPayload = payload.tools;
     assert.ok(
       Array.isArray(toolsPayload) &&
@@ -449,34 +430,45 @@ try {
     );
     const output = callOutputItem(payload);
     const outputImage = itemBlocks(output).find((p) => p.type === "input_image");
-    if (outputImage === undefined) assert.fail("input_image part missing");
+    if (outputImage === undefined) {
+      assert.fail("input_image part missing");
+    }
     assert.equal(outputImage.image_url, `data:image/png;base64,${originalImage.data}`);
     assert.equal(outputImage.detail, "auto");
     assert.equal(JSON.stringify(output).includes("displayed at"), false);
     const redactedItem = callOutputItem(payload, "call_redacted");
     const redactedImage = itemBlocks(redactedItem).find((part) => part.type === "input_image");
-    if (redactedImage === undefined) assert.fail("Redacted input_image part missing");
+    if (redactedImage === undefined) {
+      assert.fail("Redacted input_image part missing");
+    }
     const redactedImageBlock = redacted[1];
-    if (redactedImageBlock === undefined || redactedImageBlock.type !== "image")
+    if (redactedImageBlock === undefined || redactedImageBlock.type !== "image") {
       assert.fail("Redacted fixture image missing");
+    }
     assert.equal(redactedImage.image_url, `data:image/png;base64,${redactedImageBlock.data}`);
     const redactedText = itemBlocks(redactedItem).find((part) => part.type === "input_text");
-    if (redactedText === undefined) assert.fail("Redacted input_text part missing");
+    if (redactedText === undefined) {
+      assert.fail("Redacted input_text part missing");
+    }
     assert.equal(redactedText.text, "Redacted screenshot");
     const textRedactedItem = callOutputItem(payload, "call_text_redacted");
     const textRedactedText = itemBlocks(textRedactedItem).find(
       (part) => part.type === "input_text",
     );
-    if (textRedactedText === undefined) assert.fail("Redacted text input_text part missing");
+    if (textRedactedText === undefined) {
+      assert.fail("Redacted text input_text part missing");
+    }
     assert.equal(
       typeof textRedactedText.text === "string" &&
         textRedactedText.text.startsWith("Redacted text"),
       true,
     );
-    for (const replacement of [
-      { timestamp: normalized.timestamp + 1 },
-      { toolCallId: "call_image|fc_other" },
-    ]) {
+    /**
+     * A different wire identity for the same result must not restore originals.
+     * @param {{ timestamp: number } | { toolCallId: string }} replacement
+     * @returns {Promise<void>}
+     */
+    const verifyChangedIdentity = async (replacement) => {
       const changedIdentity = await send(
         adapter,
         current,
@@ -489,12 +481,20 @@ try {
       );
       const changedItem = callOutputItem(changedIdentity, "call_image");
       const changedImage = itemBlocks(changedItem).find((part) => part.type === "input_image");
-      if (changedImage === undefined) assert.fail("Changed-identity input_image part missing");
+      if (changedImage === undefined) {
+        assert.fail("Changed-identity input_image part missing");
+      }
       assert.equal(
         changedImage.image_url,
         `data:image/png;base64,${normalizedImageData}`,
         "Different full result identity must not restore originals",
       );
+    };
+    for (const replacement of [
+      { timestamp: normalized.timestamp + 1 },
+      { toolCallId: "call_image|fc_other" },
+    ]) {
+      await verifyChangedIdentity(replacement);
     }
     const filtered = await send(
       adapter,
@@ -510,11 +510,15 @@ try {
     );
     assert.equal(JSON.stringify(filtered).includes("input_image"), false);
     const originalLeaf = sm.getLeafId();
-    if (originalLeaf === null) assert.fail("Session leaf missing before branch");
+    if (originalLeaf === null) {
+      assert.fail("Session leaf missing before branch");
+    }
     const resultEntry = sm
       .getEntries()
       .find((entry) => entry.type === "message" && entry.message.role === "toolResult");
-    if (resultEntry === undefined) assert.fail("toolResult session entry missing");
+    if (resultEntry === undefined) {
+      assert.fail("toolResult session entry missing");
+    }
     sm.appendContextEdit(resultEntry.id, {
       content: [{ type: "text", text: "Image removed by persisted context edit" }],
     });
@@ -530,12 +534,16 @@ try {
     const branchedImage = itemBlocks(callOutputItem(branched)).find(
       (p) => p.type === "input_image",
     );
-    if (branchedImage === undefined) assert.fail("Branched input_image part missing");
+    if (branchedImage === undefined) {
+      assert.fail("Branched input_image part missing");
+    }
     assert.equal(branchedImage.image_url, `data:image/png;base64,${originalImage.data}`);
     await runner.emit({ type: "session_start", reason: "resume" });
     const resumed = await send(adapter, current, auth, sm.buildSessionContext().messages);
     const resumedImage = itemBlocks(callOutputItem(resumed)).find((p) => p.type === "input_image");
-    if (resumedImage === undefined) assert.fail("Resumed input_image part missing");
+    if (resumedImage === undefined) {
+      assert.fail("Resumed input_image part missing");
+    }
     assert.equal(resumedImage.image_url, `data:image/png;base64,${originalImage.data}`);
   }
   sm.appendCompaction("Synthetic retained-none boundary", null, 100);
@@ -570,13 +578,7 @@ try {
   );
 } finally {
   try {
-    if (session) {
-      try {
-        await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
-      } finally {
-        session.dispose();
-      }
-    }
+    await shutdownSession(session);
   } finally {
     await rm(scratch, { recursive: true, force: true });
   }

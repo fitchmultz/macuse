@@ -45,16 +45,18 @@ const isNativeObservation = (value) =>
   isNativeSnapshot(value.after) &&
   Array.isArray(value.transitions) &&
   isRecord(value.coverage);
+/** @param {Record<string, unknown>} value @returns {boolean} */
+const hasNativeWindowsState = (value) =>
+  (typeof value.windowsCount === "number" || value.windowsCount === null) &&
+  typeof value.windowsError === "number" &&
+  (value.windows === null || (Array.isArray(value.windows) && value.windows.every(isNativeWindow)));
 /** @param {unknown} value @returns {value is NativeAppState} */
 const isNativeAppState = (value) =>
   isRecord(value) &&
   typeof value.pid === "number" &&
   (value.app === null || isNativeApplication(value.app)) &&
   typeof value.accessibilityTrusted === "boolean" &&
-  (typeof value.windowsCount === "number" || value.windowsCount === null) &&
-  typeof value.windowsError === "number" &&
-  (value.windows === null ||
-    (Array.isArray(value.windows) && value.windows.every(isNativeWindow))) &&
+  hasNativeWindowsState(value) &&
   (value.focusedWindow === null || isNativeWindow(value.focusedWindow)) &&
   (value.focusedElement === null || isRecord(value.focusedElement));
 /** @param {unknown} value @returns {value is NativeTextResult} */
@@ -74,8 +76,10 @@ const source = fileURLToPath(new URL("./macos-native.swift", import.meta.url));
 /** @type {Promise<string> | undefined} */
 let compiled;
 async function executable() {
-  if (process.platform !== "darwin") throw new Error("Native Accessibility requires macOS");
-  if (!compiled)
+  if (process.platform !== "darwin") {
+    throw new Error("Native Accessibility requires macOS");
+  }
+  if (!compiled) {
     compiled = (async () => {
       const hash = createHash("sha256")
         .update(await readFile(source))
@@ -100,7 +104,9 @@ async function executable() {
           });
           let stderr = "";
           compiler.stderr.on("data", (chunk) => {
-            if (!Buffer.isBuffer(chunk)) return;
+            if (!Buffer.isBuffer(chunk)) {
+              return;
+            }
             stderr = (stderr + chunk.toString()).slice(-8000);
           });
           compiler.once("error", reject);
@@ -121,6 +127,7 @@ async function executable() {
       }
       return binary;
     })();
+  }
   try {
     return await compiled;
   } catch (error) {
@@ -136,11 +143,19 @@ async function executable() {
  * @returns {boolean}
  */
 export function nativeWindowClosed(before, after) {
-  if (after !== null && after.windowsCount === 0) return true;
-  if (!before.nativeWindowIdentity || after === null) return false;
-  if (after.windowsCount === null) return false;
+  if (after !== null && after.windowsCount === 0) {
+    return true;
+  }
+  if (!before.nativeWindowIdentity || after === null) {
+    return false;
+  }
+  if (after.windowsCount === null) {
+    return false;
+  }
   const windows = after.windows;
-  if (windows === null || windows.length === 0) return false;
+  if (windows === null || windows.length === 0) {
+    return false;
+  }
   return windows.every((window) =>
     before.url !== null && before.url !== ""
       ? window.document !== null && window.document !== before.url
@@ -153,17 +168,23 @@ export function nativeWindowClosed(before, after) {
  * @returns {string}
  */
 export function nativeTextUnavailableReason(state) {
-  if (!state) return "Native inspection returned no app state.";
-  if (!state.accessibilityTrusted)
+  if (!state) {
+    return "Native inspection returned no app state.";
+  }
+  if (!state.accessibilityTrusted) {
     return "Native Accessibility access is unavailable (accessibilityTrusted=false). Enable Accessibility for the parent host in System Settings > Privacy & Security > Accessibility, then restart it.";
-  if (!state.focusedWindow || !state.focusedElement)
+  }
+  if (!state.focusedWindow || !state.focusedElement) {
     return state.windowsError !== 0
       ? `Native window inspection failed (AX error ${state.windowsError}); focused text insertion capability is unknown.`
       : "Native inspection found no focused window/control; text insertion capability is unknown.";
-  if (state.focusedElement.selectedTextError === -25205)
+  }
+  if (state.focusedElement.selectedTextError === -25205) {
     return "This focused control does not support verified native text insertion (AXSelectedText unsupported; AX error -25205).";
-  if (state.focusedElement.selectedTextError !== 0)
+  }
+  if (state.focusedElement.selectedTextError !== 0) {
     return `Native selected-text inspection failed (AX error ${state.focusedElement.selectedTextError}).`;
+  }
   return "This focused control does not support verified native text insertion (AXSelectedText is not settable).";
 }
 
@@ -176,22 +197,25 @@ export class MacOSNative {
   #starting;
   /** @type {Promise<void> | undefined} */
   #stopping;
-  /** @type {Map<number, PendingCall>} */
-  // JavaScript class fields cannot be readonly; the map itself is never
-  // reassigned, only mutated.
-  // oxlint-disable-next-line prefer-readonly
+  /** @readonly @type {Map<number, PendingCall>} */
   #pending = new Map();
   #nextId = 0;
 
   async #start() {
-    if (this.#stopping) await this.#stopping;
-    if (this.#child) return this.#child;
-    if (!this.#starting)
+    if (this.#stopping) {
+      await this.#stopping;
+    }
+    if (this.#child) {
+      return this.#child;
+    }
+    if (!this.#starting) {
       this.#starting = (async () => {
         const child = spawn(await executable(), [], { stdio: ["pipe", "pipe", "pipe"] });
         let stderr = "";
         child.stderr.on("data", (chunk) => {
-          if (!Buffer.isBuffer(chunk)) return;
+          if (!Buffer.isBuffer(chunk)) {
+            return;
+          }
           stderr = (stderr + chunk.toString()).slice(-4000);
         });
         const terminateQuietly = () => {
@@ -202,14 +226,20 @@ export class MacOSNative {
          * @param {boolean} [closed]
          */
         const fail = (error, closed = false) => {
-          if (this.#child !== child) return;
+          if (this.#child !== child) {
+            return;
+          }
           if (!closed && child.pid !== undefined) {
-            for (const pending of this.#pending.values()) pending.failure ??= error;
+            for (const pending of this.#pending.values()) {
+              pending.failure ??= error;
+            }
             terminateQuietly();
             return;
           }
           this.#child = undefined;
-          for (const pending of this.#pending.values()) pending.reject(pending.failure ?? error);
+          for (const pending of this.#pending.values()) {
+            pending.reject(pending.failure ?? error);
+          }
         };
         child.once("error", fail);
         child.once("close", (code, signal) => {
@@ -229,20 +259,27 @@ export class MacOSNative {
           } catch {
             return;
           }
-          if (!isRecord(message)) return;
+          if (!isRecord(message)) {
+            return;
+          }
           const messageId = message.id;
           const pending = typeof messageId === "number" ? this.#pending.get(messageId) : undefined;
-          if (pending === undefined || pending.failure !== undefined) return;
+          if (pending === undefined || pending.failure !== undefined) {
+            return;
+          }
           const result = message.result;
-          if (isRecord(result) && typeof result.error === "string" && result.error !== "")
+          if (isRecord(result) && typeof result.error === "string" && result.error !== "") {
             pending.reject(Object.assign(new Error(result.error), { dispatched: false }));
-          else pending.resolve(result);
+          } else {
+            pending.resolve(result);
+          }
         });
         this.#child = child;
         return child;
       })().finally(() => {
         this.#starting = undefined;
       });
+    }
     return this.#starting;
   }
 
@@ -283,7 +320,9 @@ export class MacOSNative {
               dispatched: typeof error.dispatched === "boolean" ? error.dispatched : dispatched,
             }),
           );
-        } else resolve(result);
+        } else {
+          resolve(result);
+        }
       };
       /** @param {string} reason */
       const cancel = (reason) => {
@@ -321,10 +360,11 @@ export class MacOSNative {
    */
   async snapshot(options) {
     const result = await this.#request("snapshot", {}, options);
-    if (!isNativeSnapshot(result))
+    if (!isNativeSnapshot(result)) {
       throw Object.assign(new Error("Native helper returned an invalid snapshot."), {
         dispatched: false,
       });
+    }
     return result;
   }
   /**
@@ -334,10 +374,11 @@ export class MacOSNative {
    */
   async resolveApp(identifier, options) {
     const result = await this.#request("resolveApp", { identifier }, options);
-    if (!isNativeApplication(result))
+    if (!isNativeApplication(result)) {
       throw Object.assign(new Error("Native helper returned an invalid app identity."), {
         dispatched: false,
       });
+    }
     return result;
   }
   /**
@@ -347,10 +388,11 @@ export class MacOSNative {
    */
   async beginObservation(pids = [], options) {
     const result = await this.#request("beginObservation", { pids }, options);
-    if (!isObservationHandle(result))
+    if (!isObservationHandle(result)) {
       throw Object.assign(new Error("Native helper returned an invalid observation handle."), {
         dispatched: false,
       });
+    }
     return result;
   }
   /**
@@ -360,10 +402,11 @@ export class MacOSNative {
    */
   async endObservation(id, options) {
     const result = await this.#request("endObservation", { observationId: id }, options);
-    if (!isNativeObservation(result))
+    if (!isNativeObservation(result)) {
       throw Object.assign(new Error("Native helper returned an invalid observation."), {
         dispatched: false,
       });
+    }
     return result;
   }
   /**
@@ -373,10 +416,11 @@ export class MacOSNative {
    */
   async inspectApp(pid, options) {
     const result = await this.#request("inspectApp", { pid }, options);
-    if (!isNativeAppState(result))
+    if (!isNativeAppState(result)) {
       throw Object.assign(new Error("Native helper returned an invalid app state."), {
         dispatched: false,
       });
+    }
     return result;
   }
   /**
@@ -392,19 +436,26 @@ export class MacOSNative {
       );
     }
     const result = await this.#request("replaceSelectedText", args, options);
-    if (!isNativeTextResult(result))
+    if (!isNativeTextResult(result)) {
       throw Object.assign(new Error("Native helper returned an invalid text result."), {
         dispatched: false,
       });
+    }
     return result;
   }
 
   /** @returns {Promise<void>} */
   async stop() {
-    if (this.#starting !== undefined) await this.#starting.catch(() => null);
-    if (this.#stopping !== undefined) return this.#stopping;
+    if (this.#starting !== undefined) {
+      await this.#starting.catch(() => null);
+    }
+    if (this.#stopping !== undefined) {
+      return this.#stopping;
+    }
     const child = this.#child;
-    if (child === undefined) return;
+    if (child === undefined) {
+      return;
+    }
     /** @type {Promise<void>} */
     const exited = new Promise((resolve) => {
       const timer = setTimeout(() => child.kill("SIGKILL"), 1000);

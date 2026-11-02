@@ -7,10 +7,9 @@ import { tools } from "../lib/tools.mjs";
 import { VERSION } from "./macuse-utils.mjs";
 
 const session = new MacuseSession({ cwd: process.env.MACUSE_CWD ?? process.cwd() });
-// The low-level Server is deliberate here: this wrapper passes raw request
-// schemas and per-call _meta details that the high-level McpServer API does not
-// expose. The SDK deprecation notice itself reserves Server for this use.
-// oxlint-disable-next-line typescript/no-deprecated
+// The low-level Server exposes the shared JSON Schemas directly. McpServer's
+// registerTool accepts Zod schemas, which would duplicate the public schema.
+// oxlint-disable-next-line typescript/no-deprecated -- QX-002: SDK reserves Server for low-level operations.
 const server = new Server({ name: "macuse", version: VERSION }, { capabilities: { tools: {} } });
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools }));
 server.setRequestHandler(CallToolRequestSchema, async (request, { signal }) => {
@@ -38,13 +37,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request, { signal }) => {
 });
 // Protocol exposes onclose as a plain callback property, not an EventTarget,
 // so addEventListener is not available here.
-// oxlint-disable-next-line unicorn/prefer-add-event-listener
+// oxlint-disable-next-line unicorn/prefer-add-event-listener -- QX-003: SDK Protocol exposes a callback property.
 server.onclose = () => {
   session.stop().catch((/** @type {unknown} */ error) => {
     process.stderr.write(`macuse session stop failed: ${String(error)}\n`);
   });
 };
-for (const signal of ["SIGINT", "SIGTERM"])
+for (const signal of ["SIGINT", "SIGTERM"]) {
   process.once(signal, () => {
     (async () => {
       await session.stop();
@@ -53,4 +52,5 @@ for (const signal of ["SIGINT", "SIGTERM"])
       process.stderr.write(`macuse shutdown failed: ${String(error)}\n`);
     });
   });
+}
 await server.connect(new StdioServerTransport());

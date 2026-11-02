@@ -3,7 +3,7 @@ import { execFile } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { test } from "node:test";
+import { test as nodeTest } from "node:test";
 import { promisify } from "node:util";
 import { IsolatedExecutor } from "../../lib/isolated-executor.mjs";
 
@@ -18,11 +18,13 @@ const exec = promisify(execFile);
  */
 const at = (values, index) => {
   const found = values[index];
-  if (found === undefined) assert.fail(`Missing value at ${index}`);
+  if (found === undefined) {
+    assert.fail(`Missing value at ${index}`);
+  }
   return found;
 };
 
-await test(
+nodeTest(
   "isolated JSC persists bindings and completes asynchronous capability calls without ambient host APIs",
   mac,
   async () => {
@@ -77,7 +79,7 @@ await test(
   },
 );
 
-await test(
+nodeTest(
   "guest RPC cannot widen trusted mutation authorization or select unregistered capabilities",
   mac,
   async () => {
@@ -125,7 +127,7 @@ await test(
   },
 );
 
-await test(
+nodeTest(
   "deadline kills owned CPU-bound worker and large guest output is rejected",
   mac,
   async () => {
@@ -144,8 +146,8 @@ await test(
   },
 );
 
-for (const interruption of ["aborted", "stopped"])
-  await test(
+for (const interruption of ["aborted", "stopped"]) {
+  nodeTest(
     `${interruption} retains unknown host dispatch, blocks admission while pending, and never replays mutation`,
     mac,
     async () => {
@@ -219,8 +221,9 @@ for (const interruption of ["aborted", "stopped"])
       }
     },
   );
+}
 
-await test(
+nodeTest(
   "stop during cold compilation invalidates queued work, closes admission, drains children, and permits fresh execution",
   mac,
   async () => {
@@ -276,7 +279,7 @@ await test(
   },
 );
 
-await test(
+nodeTest(
   "RSS watchdog interrupts allocating worker rather than relying on the wall deadline",
   mac,
   async () => {

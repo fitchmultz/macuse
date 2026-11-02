@@ -23,8 +23,9 @@ const source = fileURLToPath(new URL("./native-actuator.swift", import.meta.url)
 /** @type {Promise<string> | undefined} */
 let compiling;
 async function executable() {
-  if (process.platform !== "darwin")
+  if (process.platform !== "darwin") {
     throw new Error("The experimental native actuator requires macOS.");
+  }
   compiling ??= (async () => {
     const hash = createHash("sha256")
       .update(await readFile(source))
@@ -61,8 +62,11 @@ async function executable() {
         });
         compiler.once("close", (code) => {
           clearTimeout(timer);
-          if (code === 0) resolve();
-          else reject(new Error(`Native actuator compilation failed: ${stderr}`));
+          if (code === 0) {
+            resolve();
+          } else {
+            reject(new Error(`Native actuator compilation failed: ${stderr}`));
+          }
         });
       });
       await compiled;
@@ -78,6 +82,67 @@ async function executable() {
     compiling = undefined;
     throw error;
   }
+}
+
+/**
+ * Validate one nested actuator argument value.
+ * @param {unknown} value
+ * @param {Set<object>} ancestors
+ * @returns {void}
+ */
+function validateActuatorValue(value, ancestors) {
+  if (value === null) {
+    return;
+  }
+  if (typeof value === "string" && !value.isWellFormed()) {
+    throw new TypeError("Actuator strings must be well-formed Unicode.");
+  }
+  if (typeof value === "number" && !Number.isFinite(value)) {
+    throw new TypeError("Actuator numbers must be finite.");
+  }
+  if (!["string", "boolean", "number", "object"].includes(typeof value)) {
+    throw new TypeError("Actuator arguments must contain only JSON values.");
+  }
+  if (typeof value === "object") {
+    validateActuatorObject(value, ancestors);
+  }
+}
+
+/**
+ * Validate one acyclic JSON array or object.
+ * @param {object} value
+ * @param {Set<object>} ancestors
+ * @returns {void}
+ */
+function validateActuatorObject(value, ancestors) {
+  if (
+    (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype) ||
+    ancestors.has(value)
+  ) {
+    throw new TypeError("Actuator arguments must contain only acyclic JSON arrays and objects.");
+  }
+  ancestors.add(value);
+  for (const item of Object.values(value)) {
+    validateActuatorValue(item, ancestors);
+  }
+  ancestors.delete(value);
+}
+
+/**
+ * Clone and validate actuator arguments for the native wire.
+ * @param {Record<string, unknown>} args
+ * @returns {unknown}
+ */
+function validatedActuatorArgs(args) {
+  const saved = structuredClone(args);
+  /** @type {Set<object>} */
+  const ancestors = new Set();
+  validateActuatorValue(saved, ancestors);
+  const json = JSON.stringify(saved);
+  if (Buffer.byteLength(json) > 1_000_000) {
+    throw new RangeError("Actuator arguments exceed one megabyte.");
+  }
+  return /** @type {unknown} */ (JSON.parse(json));
 }
 
 /** Opt-in feasibility adapter, not selected by production MacuseSession/backend defaults. */
@@ -97,9 +162,22 @@ export class NativeActuator {
 
   async #start() {
     await this.#stopping;
-    if (this.#child) return this.#child;
+    if (this.#child) {
+      return this.#child;
+    }
     const child = spawn(await executable(), [], { stdio: ["pipe", "pipe", "pipe"] });
     this.#child = child;
+    this.#wireActuatorLifecycle(child);
+    this.#actuatorMessages(child);
+    return child;
+  }
+
+  /**
+   * Wire actuator stderr, stdin errors, and process exit.
+   * @param {ActuatorProcess} child
+   * @returns {void}
+   */
+  #wireActuatorLifecycle(child) {
     let stderr = "";
     const terminateQuietly = () => {
       this.#terminate().catch(() => null);
@@ -108,16 +186,22 @@ export class NativeActuator {
       stderr = (stderr + chunk.toString()).slice(-4000);
     });
     child.once("error", (error) => {
-      if (this.#pending) this.#pending.failure = error;
+      if (this.#pending) {
+        this.#pending.failure = error;
+      }
     });
     child.stdin.on("error", (error) => {
-      if (this.#pending) this.#pending.failure = error;
+      if (this.#pending) {
+        this.#pending.failure = error;
+      }
       terminateQuietly();
     });
     child.once("close", (code, signal) => {
-      if (this.#child === child) this.#child = undefined;
+      if (this.#child === child) {
+        this.#child = undefined;
+      }
       const pending = this.#pending;
-      if (pending !== undefined)
+      if (pending !== undefined) {
         pending.reject(
           pending.failure ??
             new Error(
@@ -126,47 +210,78 @@ export class NativeActuator {
               }.`,
             ),
         );
+      }
     });
+  }
+
+  /**
+   * Buffer actuator stdout lines into pending-call settlement.
+   * @param {ActuatorProcess} child
+   * @returns {void}
+   */
+  #actuatorMessages(child) {
     let output = Buffer.alloc(0);
     let oversized = false;
+    const terminateQuietly = () => {
+      this.#terminate().catch(() => null);
+    };
     child.stdout.on("data", (chunk) => {
-      if (oversized) return;
+      if (oversized) {
+        return;
+      }
       output = Buffer.concat([output, chunk]);
       if (output.length > 20_000_000) {
         oversized = true;
         output = Buffer.alloc(0);
-        if (this.#pending)
+        if (this.#pending) {
           this.#pending.failure = new Error(
             "Native actuator output exceeds twenty megabytes; effect outcome may be unknown. Do not replay.",
           );
+        }
         terminateQuietly();
         return;
       }
       const end = output.indexOf(10);
-      if (end < 0) return;
-      const line = output.subarray(0, end).toString("utf8");
-      output = output.subarray(end + 1);
-      let parsed;
-      try {
-        parsed = /** @type {unknown} */ (JSON.parse(line));
-      } catch {
+      if (end < 0) {
         return;
       }
-      if (!isRecord(parsed)) return;
-      const message = parsed;
-      const pending = this.#pending;
-      if (!pending || pending.id !== message.id || pending.failure) return;
-      const result = isRecord(message.result) ? message.result : undefined;
-      if (result !== undefined && typeof result.error === "string" && result.error !== "")
-        pending.reject(
-          Object.assign(new Error(result.error), {
-            dispatched: false,
-            mutationAttempted: false,
-          }),
-        );
-      else pending.resolve(message.result);
+      const line = output.subarray(0, end).toString("utf8");
+      output = output.subarray(end + 1);
+      this.#settleReply(line);
     });
-    return child;
+  }
+
+  /**
+   * Settle the pending call from one actuator reply line.
+   * @param {string} line
+   * @returns {void}
+   */
+  #settleReply(line) {
+    let parsed;
+    try {
+      parsed = /** @type {unknown} */ (JSON.parse(line));
+    } catch {
+      return;
+    }
+    if (!isRecord(parsed)) {
+      return;
+    }
+    const message = parsed;
+    const pending = this.#pending;
+    if (!pending || pending.id !== message.id || pending.failure) {
+      return;
+    }
+    const result = isRecord(message.result) ? message.result : undefined;
+    if (result !== undefined && typeof result.error === "string" && result.error !== "") {
+      pending.reject(
+        Object.assign(new Error(result.error), {
+          dispatched: false,
+          mutationAttempted: false,
+        }),
+      );
+    } else {
+      pending.resolve(message.result);
+    }
   }
 
   /**
@@ -176,46 +291,16 @@ export class NativeActuator {
    * @returns {Promise<unknown>}
    */
   #request(method, args, { signal, timeoutMs = 15_000 } = {}) {
-    if (!isRecord(args))
+    if (!isRecord(args)) {
       return Promise.reject(new TypeError("Actuator arguments must be an object."));
-    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 60_000)
+    }
+    if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 60_000) {
       return Promise.reject(new RangeError("timeoutMs must be 100–60000."));
+    }
     /** @type {unknown} */
     let saved;
     try {
-      saved = structuredClone(args);
-      /** @type {Set<object>} */
-      const ancestors = new Set();
-      /**
-       * @param {unknown} value
-       * @returns {void}
-       */
-      const validate = (value) => {
-        if (value === null) return;
-        if (typeof value === "string" && !value.isWellFormed())
-          throw new TypeError("Actuator strings must be well-formed Unicode.");
-        if (typeof value === "number" && !Number.isFinite(value))
-          throw new TypeError("Actuator numbers must be finite.");
-        if (!["string", "boolean", "number", "object"].includes(typeof value))
-          throw new TypeError("Actuator arguments must contain only JSON values.");
-        if (typeof value === "object") {
-          if (
-            (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype) ||
-            ancestors.has(value)
-          )
-            throw new TypeError(
-              "Actuator arguments must contain only acyclic JSON arrays and objects.",
-            );
-          ancestors.add(value);
-          for (const item of Object.values(value)) validate(item);
-          ancestors.delete(value);
-        }
-      };
-      validate(saved);
-      const json = JSON.stringify(saved);
-      if (Buffer.byteLength(json) > 1_000_000)
-        throw new RangeError("Actuator arguments exceed one megabyte.");
-      saved = JSON.parse(json);
+      saved = validatedActuatorArgs(args);
     } catch (error) {
       return Promise.reject(
         Object.assign(error instanceof Error ? error : new Error(String(error)), {
@@ -238,86 +323,112 @@ export class NativeActuator {
           outcome: "not-dispatched",
         });
       }
-      /** @type {ActuatorProcess | undefined} */
-      let child;
-      try {
-        await closing;
-        if (generation !== this.#generation) throw new Error("Actuator stopped before dispatch.");
-        signal?.throwIfAborted();
-        child = await this.#start();
-        signal?.throwIfAborted();
-        if (generation !== this.#generation) throw new Error("Actuator stopped before dispatch.");
-      } catch (error) {
-        await this.#terminate();
-        throw Object.assign(new Error(error instanceof Error ? error.message : String(error)), {
-          dispatched: false,
-          mutationAttempted: false,
-          outcome: "not-dispatched",
-        });
-      }
-      const terminateQuietly = () => {
-        this.#terminate().catch(() => null);
-      };
-      /** @type {Promise<unknown>} */
-      const settled = new Promise((resolve, reject) => {
-        let dispatched = false;
-        /**
-         * @param {ActuatorError | null} error
-         * @param {unknown} [result]
-         * @returns {void}
-         */
-        const finish = (error, result) => {
-          clearTimeout(timer);
-          signal?.removeEventListener("abort", aborted);
-          this.#pending = undefined;
-          if (error !== null)
-            reject(
-              Object.assign(new Error(error.message), {
-                dispatched: error.dispatched ?? dispatched,
-                mutationAttempted: error.mutationAttempted ?? dispatched,
-                outcome: (error.dispatched ?? dispatched) ? "unknown" : "not-dispatched",
-              }),
-            );
-          else resolve(result);
-        };
-        /**
-         * @param {string} reason
-         * @returns {void}
-         */
-        const cancel = (reason) => {
-          const pending = this.#pending;
-          if (pending !== undefined)
-            pending.failure = new Error(
-              `Native ${method} ${reason}; ${
-                dispatched
-                  ? "effect may already have occurred. Do not replay."
-                  : "no mutation was dispatched."
-              }`,
-            );
-          this.#terminate().catch(() => null);
-        };
-        const aborted = () => cancel("aborted");
-        const timer = setTimeout(() => cancel("timed out"), timeoutMs);
-        /** @type {PendingCall} */
-        const entry = {
-          id,
-          resolve: (result) => finish(null, result),
-          reject: (error) => finish(error),
-        };
-        this.#pending = entry;
-        signal?.addEventListener("abort", aborted, { once: true });
-        dispatched = method === "act";
-        child.stdin.write(`${line}\n`, (error) => {
-          if (error && this.#pending?.id === id) {
-            this.#pending.failure = error;
-            terminateQuietly();
-          }
-        });
-      });
-      return settled;
+      const child = await this.#startedChild(closing, generation, signal);
+      return this.#awaitSettled({ id, method, line, signal, timeoutMs, child });
     });
     this.#tail = run.catch(() => null);
     return run;
+  }
+
+  /**
+   * Start the actuator child after stop and abort guards.
+   * @param {Promise<void> | undefined} closing
+   * @param {number} generation
+   * @param {AbortSignal | undefined} signal
+   * @returns {Promise<ActuatorProcess>}
+   */
+  async #startedChild(closing, generation, signal) {
+    try {
+      await closing;
+      if (generation !== this.#generation) {
+        throw new Error("Actuator stopped before dispatch.");
+      }
+      signal?.throwIfAborted();
+      const child = await this.#start();
+      signal?.throwIfAborted();
+      if (generation !== this.#generation) {
+        throw new Error("Actuator stopped before dispatch.");
+      }
+      return child;
+    } catch (error) {
+      await this.#terminate();
+      throw Object.assign(new Error(error instanceof Error ? error.message : String(error)), {
+        dispatched: false,
+        mutationAttempted: false,
+        outcome: "not-dispatched",
+      });
+    }
+  }
+
+  /**
+   * Dispatch one wire request and await its settlement.
+   * @param {{ id: number, method: string, line: string, signal: AbortSignal | undefined, timeoutMs: number, child: ActuatorProcess }} call
+   * @returns {Promise<unknown>}
+   */
+  #awaitSettled({ id, method, line, signal, timeoutMs, child }) {
+    /** @type {Promise<unknown>} */
+    const settled = new Promise((resolve, reject) => {
+      let dispatched = false;
+      /**
+       * @param {ActuatorError | null} error
+       * @param {unknown} [result]
+       * @returns {void}
+       */
+      const finish = (error, result) => {
+        clearTimeout(timer);
+        signal?.removeEventListener("abort", aborted);
+        this.#pending = undefined;
+        if (error !== null) {
+          reject(
+            Object.assign(new Error(error.message), {
+              dispatched: error.dispatched ?? dispatched,
+              mutationAttempted: error.mutationAttempted ?? dispatched,
+              outcome: (error.dispatched ?? dispatched) ? "unknown" : "not-dispatched",
+            }),
+          );
+        } else {
+          resolve(result);
+        }
+      };
+      /**
+       * @param {string} reason
+       * @returns {void}
+       */
+      const cancel = (reason) => {
+        const pending = this.#pending;
+        if (pending !== undefined) {
+          pending.failure = new Error(
+            `Native ${method} ${reason}; ${
+              dispatched
+                ? "effect may already have occurred. Do not replay."
+                : "no mutation was dispatched."
+            }`,
+          );
+        }
+        this.#terminate().catch(() => null);
+      };
+      const aborted = () => cancel("aborted");
+      const timer = setTimeout(() => cancel("timed out"), timeoutMs);
+      const terminateQuietly = () => {
+        this.#terminate().catch(() => null);
+      };
+      /** @type {PendingCall} */
+      const entry = {
+        id,
+        resolve: (result) => finish(null, result),
+        reject: (error) => finish(error),
+      };
+      this.#pending = entry;
+      signal?.addEventListener("abort", aborted, { once: true });
+      dispatched = method === "act";
+      child.stdin.write(`${line}\n`, (error) => {
+        if (error && this.#pending?.id === id) {
+          this.#pending.failure = error;
+          terminateQuietly();
+        }
+      });
+    });
+    return settled;
   }
 
   /**
@@ -346,9 +457,13 @@ export class NativeActuator {
   }
 
   async #terminate() {
-    if (this.#stopping !== undefined) return this.#stopping;
+    if (this.#stopping !== undefined) {
+      return this.#stopping;
+    }
     const child = this.#child;
-    if (!child) return;
+    if (!child) {
+      return;
+    }
     /** @type {Promise<void>} */
     const stopped = new Promise((resolve) => {
       const timer = setTimeout(() => child.kill("SIGKILL"), 1000);
@@ -365,7 +480,9 @@ export class NativeActuator {
   }
 
   async stop() {
-    if (this.#closing !== undefined) return this.#closing;
+    if (this.#closing !== undefined) {
+      return this.#closing;
+    }
     const settled = this.#tail;
     this.#generation++;
     this.#closing = (async () => {

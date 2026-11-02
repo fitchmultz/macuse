@@ -14,6 +14,27 @@ function help() {
 }
 
 /**
+ * @param {string} token
+ * @param {() => string} next
+ * @returns {Partial<ConfigOptions>}
+ */
+function readOption(token, next) {
+  if (token === "--out") {
+    return { out: next() };
+  }
+  if (token === "--server") {
+    return { server: next() };
+  }
+  if (token === "--cwd") {
+    return { cwd: resolve(next()) };
+  }
+  if (token === "--pretty") {
+    return { pretty: true };
+  }
+  throw new Error(`unknown option: ${token}`);
+}
+
+/**
  * @param {string[]} argv
  * @returns {ConfigOptions}
  */
@@ -33,21 +54,21 @@ function parse(argv) {
   }
   const shifted = argv.shift();
   const client = shifted !== undefined && shifted !== "" ? shifted : "cursor";
-  if (!["cursor", "claude-desktop"].includes(client)) throw new Error(`unknown client: ${client}`);
+  if (!["cursor", "claude-desktop"].includes(client)) {
+    throw new Error(`unknown client: ${client}`);
+  }
   opts.client = client;
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
     const next = () => {
       i += 1;
       const value = argv[i];
-      if (value === undefined) throw new Error(`${String(token)} requires a value`);
+      if (value === undefined) {
+        throw new Error(`${String(token)} requires a value`);
+      }
       return value;
     };
-    if (token === "--out") opts.out = next();
-    else if (token === "--server") opts.server = next();
-    else if (token === "--cwd") opts.cwd = resolve(next());
-    else if (token === "--pretty") opts.pretty = true;
-    else throw new Error(`unknown option: ${String(token)}`);
+    Object.assign(opts, readOption(String(token), next));
   }
   return opts;
 }

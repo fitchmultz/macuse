@@ -1,9 +1,11 @@
+import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation";
+
 export type ToolSpec = {
   name: string;
   description: string;
   inputSchema: {
     type: "object";
-    properties: Record<string, import("@modelcontextprotocol/sdk/validation").JsonSchemaType>;
+    properties: Record<string, JsonSchemaType>;
     required: string[];
     additionalProperties: false;
   };

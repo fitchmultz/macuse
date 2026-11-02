@@ -42,7 +42,7 @@ function commandCheck(name, command, args, options = {}) {
 
 // Read-only: no permission request, activation, or settings changes.
 export function nativeRequirementChecks() {
-  if (process.platform !== "darwin")
+  if (process.platform !== "darwin") {
     return [
       {
         status: "fail",
@@ -50,6 +50,7 @@ export function nativeRequirementChecks() {
         summary: "Native Accessibility requires macOS.",
       },
     ];
+  }
   const compiler = commandCheck(
     "Native helper Swift compiler",
     "/usr/bin/xcrun",
@@ -64,7 +65,7 @@ export function nativeRequirementChecks() {
         : `Native helper compiler unavailable: ${compiler.check.summary}`,
     },
   ];
-  if (!compiler.result.ok)
+  if (!compiler.result.ok) {
     return [
       ...checks,
       {
@@ -73,6 +74,7 @@ export function nativeRequirementChecks() {
         summary: "Unknown: compiler unavailable; native helper trust was not checked.",
       },
     ];
+  }
   const probe = `import { MacOSNative } from ${JSON.stringify(new URL("./macos-native.mjs", import.meta.url).href)};
 const native = new MacOSNative();
 try { const state = await native.inspectApp(process.pid); console.log(JSON.stringify({ accessibilityTrusted: state.accessibilityTrusted })); }
@@ -83,17 +85,18 @@ finally { await native.stop(); }`;
     ["--input-type=module", "-e", probe],
     { timeoutMs: 60000 },
   );
-  if (!trust.result.ok)
+  if (!trust.result.ok) {
     checks.push({
       ...trust.check,
       summary: `Native helper unavailable; Accessibility trust unknown: ${trust.check.summary}`,
     });
-  else {
+  } else {
     let trusted;
     try {
       const report = parseJsonOutput("native helper trust", trust.result.stdout);
-      if (typeof report === "object" && report !== null && "accessibilityTrusted" in report)
+      if (typeof report === "object" && report !== null && "accessibilityTrusted" in report) {
         trusted = report.accessibilityTrusted;
+      }
     } catch {
       /* Unknown remains unknown. */
     }
@@ -111,14 +114,21 @@ finally { await native.stop(); }`;
  * @returns {string}
  */
 function trustSummary(trusted) {
-  if (trusted === true)
+  if (trusted === true) {
     return "accessibilityTrusted=true under this launcher. Other Pi/CLI/MCP hosts may have different grants.";
-  if (trusted === false)
+  }
+  if (trusted === false) {
     return "accessibilityTrusted=false: AX inspection/insertion unavailable. No permission prompt was requested.";
+  }
   return "Native helper trust is unknown.";
 }
 
-async function main() {
+/** @typedef {{ out?: string | undefined, json?: boolean | undefined, full?: boolean | undefined, app: string, "tool-timeout-ms": string, help?: boolean | undefined }} DoctorValues */
+
+/**
+ * @returns {DoctorValues | { help: true }}
+ */
+function parseDoctorArgs() {
   const { values } = parseArgs({
     options: {
       out: { type: "string" },
@@ -129,13 +139,16 @@ async function main() {
       help: { type: "boolean", short: "h" },
     },
   });
-  if (values.help === true) {
-    console.log(
-      `macuse doctor ${VERSION}\n\n--out <dir> --json --app <name> --tool-timeout-ms <ms>\nDefault checks are read-only. --full also switches/restores Activity Monitor tabs and checks the MCP wrapper.\nNo installs, privacy changes, recording starts, or permission prompts.`,
-    );
-    return;
-  }
-  const checks = nativeRequirementChecks();
+  return values;
+}
+
+/**
+ * Run the validation, auxiliary-status, and optional full checks.
+ * @param {DoctorValues} values
+ * @param {Array<Record<string, unknown>>} checks
+ * @returns {unknown}
+ */
+function runDoctorChecks(values, checks) {
   const validation = commandCheck(
     "Native runtime and app observation",
     process.execPath,
@@ -157,8 +170,9 @@ async function main() {
       : validation.check.summary,
   });
   let runtime;
-  if (validation.result.ok)
+  if (validation.result.ok) {
     runtime = parseJsonOutput("runtime validation", validation.result.stdout);
+  }
   // Optional recording/history services never gate ordinary Computer Use readiness.
   const auxiliary = commandCheck(
     "Recording/history status",
@@ -173,21 +187,39 @@ async function main() {
       ? "Read-only Computer History status returned through its separate authenticated transport."
       : `Auxiliary service unavailable: ${auxiliary.check.summary}`,
   });
-  if (values.full === true)
-    for (const mode of ["focus", "mcp"]) {
-      const check = commandCheck(
-        `${mode} validation`,
-        process.execPath,
-        ["tools/validate-macuse.mjs", mode, "--json"],
-        { timeoutMs: 420000 },
-      );
-      checks.push({
-        ...check.check,
-        summary: check.result.ok
-          ? "Passed; see command output for scoped evidence."
-          : check.check.summary,
-      });
-    }
+  if (values.full === true) {
+    runFullModeChecks(checks);
+  }
+  return runtime;
+}
+
+/**
+ * @param {Array<Record<string, unknown>>} checks
+ */
+function runFullModeChecks(checks) {
+  for (const mode of ["focus", "mcp"]) {
+    const check = commandCheck(
+      `${mode} validation`,
+      process.execPath,
+      ["tools/validate-macuse.mjs", mode, "--json"],
+      { timeoutMs: 420000 },
+    );
+    checks.push({
+      ...check.check,
+      summary: check.result.ok
+        ? "Passed; see command output for scoped evidence."
+        : check.check.summary,
+    });
+  }
+}
+
+/**
+ * Write the report artifacts and print the outcome.
+ * @param {DoctorValues} values
+ * @param {unknown} runtime
+ * @param {Array<{ status: string, name: string, summary: string }>} checks
+ */
+function reportDoctor(values, runtime, checks) {
   const report = {
     ok: checks.every((c) => c.status !== "fail"),
     version: VERSION,
@@ -207,15 +239,31 @@ async function main() {
     writeFileSync(resolve(values.out, "doctor.md"), markdown);
   }
   console.log(values.json === true ? JSON.stringify(report, null, 2) : markdown);
-  if (!report.ok) process.exitCode = 1;
+  if (!report.ok) {
+    process.exitCode = 1;
+  }
+}
+
+async function main() {
+  const values = parseDoctorArgs();
+  if (values.help === true) {
+    console.log(
+      `macuse doctor ${VERSION}\n\n--out <dir> --json --app <name> --tool-timeout-ms <ms>\nDefault checks are read-only. --full also switches/restores Activity Monitor tabs and checks the MCP wrapper.\nNo installs, privacy changes, recording starts, or permission prompts.`,
+    );
+    return;
+  }
+  const checks = nativeRequirementChecks();
+  const runtime = runDoctorChecks(values, checks);
+  reportDoctor(values, runtime, checks);
 }
 if (
   process.argv[1] !== undefined &&
   process.argv[1] !== "" &&
   existsSync(process.argv[1]) &&
   pathToFileURL(realpathSync(process.argv[1])).href === import.meta.url
-)
+) {
   main().catch((/** @type {unknown} */ error) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   });
+}

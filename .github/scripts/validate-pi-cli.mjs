@@ -8,6 +8,17 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tools } from "../../lib/tools.mjs";
 
+/**
+ * @param {unknown} value
+ * @returns {value is Record<string, unknown>}
+ */
+const isRecord = (value) => typeof value === "object" && value !== null;
+
+/** @param {string | null | undefined} stderr @param {string | null | undefined} stdout */
+function processOutput(stderr, stdout) {
+  return stderr !== null && stderr !== undefined && stderr !== "" ? stderr : (stdout ?? "");
+}
+
 if (process.argv.includes("--help") || process.argv.includes("-h")) {
   console.log(
     "Usage: node .github/scripts/validate-pi-cli.mjs [PI_PACKAGE_DIR] [MACUSE_PACKAGE_DIR]\nOffline CLI extension-registration check.\nExample: node .github/scripts/validate-pi-cli.mjs /tmp/pi/node_modules/@earendil-works/pi-coding-agent /tmp/packed/package\nExit: 0 checks passed; 1 validation failure.",
@@ -15,15 +26,31 @@ if (process.argv.includes("--help") || process.argv.includes("-h")) {
   process.exit(0);
 }
 const discovered = findPackageJSON("@earendil-works/pi-coding-agent", import.meta.url);
-if (!discovered)
+if (discovered === undefined) {
   throw new Error(
     "Cannot locate the installed @earendil-works/pi-coding-agent package; pass PI_PACKAGE_DIR explicitly.",
   );
-const root = process.argv[2] ? resolve(process.argv[2]) : dirname(discovered);
-const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-const extension = process.argv[3]
-  ? join(resolve(process.argv[3]), "extensions/macuse.ts")
-  : fileURLToPath(new URL("../../extensions/macuse.ts", import.meta.url));
+}
+const packageArg = process.argv[2];
+const root = packageArg !== undefined ? resolve(packageArg) : dirname(discovered);
+/** @type {unknown} */
+const manifestJson = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+if (!isRecord(manifestJson)) {
+  throw new Error(`The Pi host package manifest at ${root} is malformed.`);
+}
+const bin = manifestJson.bin;
+if (!isRecord(bin) || typeof bin.pi !== "string") {
+  throw new Error(`The Pi host package manifest at ${root} has no usable pi binary.`);
+}
+const manifestVersion = manifestJson.version;
+if (typeof manifestVersion !== "string") {
+  throw new Error(`The Pi host package manifest at ${root} has no version.`);
+}
+const macuseArg = process.argv[3];
+const extension =
+  macuseArg !== undefined
+    ? join(resolve(macuseArg), "extensions/macuse.ts")
+    : fileURLToPath(new URL("../../extensions/macuse.ts", import.meta.url));
 const directory = mkdtempSync(join(tmpdir(), "macuse-cli-"));
 try {
   const observer = join(directory, "observe.ts");
@@ -39,7 +66,7 @@ try {
   const result = spawnSync(
     process.execPath,
     [
-      join(root, manifest.bin.pi),
+      join(root, bin.pi),
       "--offline",
       "--mode",
       "rpc",
@@ -64,14 +91,22 @@ try {
       maxBuffer: 8 * 1024 * 1024,
     },
   );
-  if (result.error) throw result.error;
-  assert.equal(result.status, 0, result.stderr || result.stdout);
-  const events = /** @type {Array<Record<string, unknown>>} */ (
-    result.stdout
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => JSON.parse(line))
-  );
+  if (result.error) {
+    throw result.error;
+  }
+  const output = processOutput(result.stderr, result.stdout);
+  assert.equal(result.status, 0, output);
+  /** @type {Record<string, unknown>[]} */
+  const events = [];
+  for (const line of result.stdout.split("\n")) {
+    if (line === "") {
+      continue;
+    }
+    const parsed = /** @type {unknown} */ (JSON.parse(line));
+    if (isRecord(parsed)) {
+      events.push(parsed);
+    }
+  }
   assert.deepEqual(
     events.filter((event) => event.type === "extension_error"),
     [],
@@ -84,12 +119,38 @@ try {
     "Probe command did not complete",
   );
   assert.ok(!events.some((event) => event.type === "agent_start"), "Probe started a model turn");
-  const observed =
-    /** @type {{ packageDir: string, version: string, tools: string[], activeTools: string[], commands: string[] }} */ (
-      JSON.parse(readFileSync(observation, "utf8"))
-    );
+  const observedJson = /** @type {unknown} */ (JSON.parse(readFileSync(observation, "utf8")));
+  if (!isRecord(observedJson)) {
+    throw new Error("The CI observer produced a malformed observation.");
+  }
+  const packageDir = observedJson.packageDir;
+  if (typeof packageDir !== "string") {
+    throw new Error("The CI observer reported no package directory.");
+  }
+  const observedVersion = observedJson.version;
+  if (typeof observedVersion !== "string") {
+    throw new Error("The CI observer reported no version.");
+  }
+  /**
+   * @param {string} key
+   * @returns {string[]}
+   */
+  const readStringArray = (key) => {
+    const value = observedJson[key];
+    if (!Array.isArray(value) || !value.every((name) => typeof name === "string")) {
+      throw new Error(`The CI observer reported no usable ${key}.`);
+    }
+    return value;
+  };
+  const observed = {
+    packageDir,
+    version: observedVersion,
+    tools: readStringArray("tools"),
+    activeTools: readStringArray("activeTools"),
+    commands: readStringArray("commands"),
+  };
   assert.equal(realpathSync(observed.packageDir), realpathSync(root), "The wrong Pi host loaded");
-  assert.equal(observed.version, manifest.version);
+  assert.equal(observed.version, manifestVersion);
   const expectedTools = [...tools.map((tool) => tool.name), "macuse_tools"];
   assert.deepEqual(
     observed.tools.filter((name) => expectedTools.includes(name)).sort(),

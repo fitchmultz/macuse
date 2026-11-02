@@ -28,11 +28,38 @@ function help() {
 }
 
 /**
+ * @param {string} token
+ * @param {() => string} next
+ * @returns {Partial<DemoRunOptions>}
+ */
+function readDemoOption(token, next) {
+  if (token === "--out") {
+    return { out: resolve(next()) };
+  }
+  if (token === "--skip-doctor") {
+    return { skipDoctor: true };
+  }
+  if (token === "--skip-mcp") {
+    return { skipMcp: true };
+  }
+  if (token === "--tool-timeout-ms") {
+    const n = Number(next());
+    if (!Number.isInteger(n) || n <= 0) {
+      throw new Error("--tool-timeout-ms must be a positive integer");
+    }
+    return { toolTimeoutMs: n };
+  }
+  throw new Error(`unknown option: ${token}`);
+}
+
+/**
  * @param {string[]} argv
  * @returns {{ help: true } | DemoRunOptions}
  */
 function parse(argv) {
-  if (argv.includes("-h") || argv.includes("--help")) return { help: true };
+  if (argv.includes("-h") || argv.includes("--help")) {
+    return { help: true };
+  }
   /** @type {DemoRunOptions} */
   const opts = {
     out: resolve(REPO_ROOT, ".scratch", `macuse-demo-${nowIsoForPath()}`),
@@ -42,22 +69,18 @@ function parse(argv) {
   };
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
-    if (token === undefined) throw new Error("unknown option: undefined");
+    if (token === undefined) {
+      throw new Error("unknown option: undefined");
+    }
     const next = () => {
       i += 1;
       const value = argv[i];
-      if (i >= argv.length || value === undefined) throw new Error(`${token} requires a value`);
+      if (i >= argv.length || value === undefined) {
+        throw new Error(`${token} requires a value`);
+      }
       return value;
     };
-    if (token === "--out") opts.out = resolve(next());
-    else if (token === "--skip-doctor") opts.skipDoctor = true;
-    else if (token === "--skip-mcp") opts.skipMcp = true;
-    else if (token === "--tool-timeout-ms") {
-      const n = Number(next());
-      if (!Number.isInteger(n) || n <= 0)
-        throw new Error("--tool-timeout-ms must be a positive integer");
-      opts.toolTimeoutMs = n;
-    } else throw new Error(`unknown option: ${token}`);
+    Object.assign(opts, readDemoOption(token, next));
   }
   return opts;
 }
@@ -87,7 +110,9 @@ function runJsonCommand(name, args, timeoutMs) {
  * @returns {string}
  */
 const statusIcon = (status) => {
-  if (status === null) return "skipped";
+  if (status === null) {
+    return "skipped";
+  }
   return status ? "✅" : "❌";
 };
 /**
@@ -149,16 +174,12 @@ function renderHtml(report) {
   return `<!doctype html><meta charset="utf-8"><title>macuse live demo</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;margin:40px;background:#0b1020;color:#edf2ff}.card{background:#151b2f;border:1px solid #29324d;border-radius:18px;padding:24px;margin:18px 0}.badge{display:inline-block;padding:8px 12px;border-radius:999px;font-weight:800}.pass{background:#143d2a;color:#75f0ac}.fail{background:#4a1820;color:#ff8fa3}td,th{border-bottom:1px solid #29324d;padding:10px;text-align:left}</style><h1>macuse actual-app demo ${badge}</h1><p>Generated ${safe(report.generatedAt)}</p><div class="card"><h2>Proof</h2><table><tr><th>Check</th><th>Status</th></tr><tr><td>Doctor</td><td>${safe(report.status.doctor)}</td></tr><tr><td>Activity Monitor mutation</td><td>${safe(report.status.mutating)}</td></tr><tr><td>Background focus</td><td>${safe(report.status.focus)}</td></tr><tr><td>MCP wrapper</td><td>${safe(report.status.mcp)}</td></tr></table></div><div class="card"><h2>Artifacts</h2><ul><li><a href="report.md">report.md</a></li><li><a href="transcript.json">transcript.json</a></li><li><a href="cursor-mcp.json">cursor-mcp.json</a></li></ul></div>`;
 }
 
-async function main() {
-  const opts = parse(process.argv.slice(2));
-  if (opts.help === true) {
-    help();
-    return;
-  }
-  ensureDir(opts.out);
-
-  /** @type {Transcript} */
-  const transcript = { generatedAt: new Date().toISOString(), out: opts.out, commands: [] };
+/**
+ * @param {DemoRunOptions} opts
+ * @param {Transcript} transcript
+ * @returns {boolean}
+ */
+function runCursorConfigPass(opts, transcript) {
   const cursorConfigPath = resolve(opts.out, "cursor-mcp.json");
   const config = runCommand(
     "generate Cursor MCP config",
@@ -180,23 +201,40 @@ async function main() {
     stdout: config.stdout,
     stderr: config.stderr,
   });
+  return config.ok;
+}
 
-  const doctor = opts.skipDoctor
-    ? null
-    : runJsonCommand(
-        "macuse doctor",
-        [
-          "tools/macuse-doctor.mjs",
-          "--out",
-          resolve(opts.out, "doctor"),
-          "--json",
-          "--tool-timeout-ms",
-          String(opts.toolTimeoutMs),
-        ],
-        opts.toolTimeoutMs * 4,
-      );
-  if (doctor !== null) transcript.commands.push(doctor);
+/**
+ * @param {DemoRunOptions} opts
+ * @param {Transcript} transcript
+ * @returns {JsonCommand | null}
+ */
+function runDoctorPass(opts, transcript) {
+  if (opts.skipDoctor) {
+    return null;
+  }
+  const doctor = runJsonCommand(
+    "macuse doctor",
+    [
+      "tools/macuse-doctor.mjs",
+      "--out",
+      resolve(opts.out, "doctor"),
+      "--json",
+      "--tool-timeout-ms",
+      String(opts.toolTimeoutMs),
+    ],
+    opts.toolTimeoutMs * 4,
+  );
+  transcript.commands.push(doctor);
+  return doctor;
+}
 
+/**
+ * @param {DemoRunOptions} opts
+ * @param {Transcript} transcript
+ * @returns {JsonCommand}
+ */
+function runFocusPass(opts, transcript) {
   const focus = runJsonCommand(
     "background focus validation",
     [
@@ -209,46 +247,88 @@ async function main() {
     600_000,
   );
   transcript.commands.push(focus);
+  return focus;
+}
 
-  const mcp = opts.skipMcp
-    ? null
-    : runJsonCommand(
-        "MCP wrapper validation",
-        [
-          "tools/validate-macuse.mjs",
-          "mcp",
-          "--json",
-          "--tool-timeout-ms",
-          String(opts.toolTimeoutMs),
-        ],
-        600_000,
-      );
-  if (mcp !== null) transcript.commands.push(mcp);
+/**
+ * @param {DemoRunOptions} opts
+ * @param {Transcript} transcript
+ * @returns {JsonCommand | null}
+ */
+function runMcpPass(opts, transcript) {
+  if (opts.skipMcp) {
+    return null;
+  }
+  const mcp = runJsonCommand(
+    "MCP wrapper validation",
+    ["tools/validate-macuse.mjs", "mcp", "--json", "--tool-timeout-ms", String(opts.toolTimeoutMs)],
+    600_000,
+  );
+  transcript.commands.push(mcp);
+  return mcp;
+}
 
-  // A skipped check is neutral for the verdict, matching the pre-typing
-  // behavior of (doctor ? doctor.json?.ok === true : true).
-  const doctorOk = doctor === null || (isRecord(doctor.json) && doctor.json.ok === true);
-  const focusOk = isRecord(focus.json) && focus.json.ok === true;
-  const mcpOk = mcp === null || (isRecord(mcp.json) && mcp.json.ok === true);
-  /** @type {DemoReport} */
-  const report = {
-    ok: config.ok && doctorOk && focusOk && mcpOk,
-    generatedAt: transcript.generatedAt,
+/** A skipped check is neutral for the verdict, matching the pre-typing behavior of (doctor ? doctor.json?.ok === true : true). */
+/**
+ * @param {JsonCommand | null} command
+ * @returns {boolean}
+ */
+const checkPassed = (command) =>
+  command === null || (isRecord(command.json) && command.json.ok === true);
+
+/**
+ * @typedef {{ generatedAt: string, configOk: boolean, doctor: JsonCommand | null, focus: JsonCommand, mcp: JsonCommand | null }} DemoChecks
+ */
+/**
+ * @param {DemoRunOptions} opts
+ * @param {DemoChecks} checks
+ * @returns {DemoReport}
+ */
+function buildDemoReport(opts, checks) {
+  const doctorOk = checkPassed(checks.doctor);
+  const focusOk = isRecord(checks.focus.json) && checks.focus.json.ok === true;
+  const mcpOk = checkPassed(checks.mcp);
+  return {
+    ok: checks.configOk && doctorOk && focusOk && mcpOk,
+    generatedAt: checks.generatedAt,
     out: opts.out,
     repoRoot: REPO_ROOT,
     status: {
-      doctor: doctor !== null ? doctorOk : null,
+      doctor: checks.doctor !== null ? doctorOk : null,
       mutating: focusOk,
       focus: focusOk,
-      mcp: mcp !== null ? mcpOk : null,
+      mcp: checks.mcp !== null ? mcpOk : null,
     },
     artifacts: {
       report: resolve(opts.out, "report.md"),
       html: resolve(opts.out, "index.html"),
       transcript: resolve(opts.out, "transcript.json"),
-      cursorConfig: cursorConfigPath,
+      cursorConfig: resolve(opts.out, "cursor-mcp.json"),
     },
   };
+}
+
+async function main() {
+  const opts = parse(process.argv.slice(2));
+  if (opts.help === true) {
+    help();
+    return;
+  }
+  ensureDir(opts.out);
+
+  /** @type {Transcript} */
+  const transcript = { generatedAt: new Date().toISOString(), out: opts.out, commands: [] };
+  const configOk = runCursorConfigPass(opts, transcript);
+  const doctor = runDoctorPass(opts, transcript);
+  const focus = runFocusPass(opts, transcript);
+  const mcp = runMcpPass(opts, transcript);
+  const report = buildDemoReport(opts, {
+    generatedAt: transcript.generatedAt,
+    configOk,
+    doctor,
+    focus,
+    mcp,
+  });
 
   transcript.report = report;
   writeJsonFile(resolve(opts.out, "transcript.json"), transcript);
@@ -259,12 +339,16 @@ async function main() {
   process.stdout.write(
     `macuse demo complete\nreport: ${resolve(opts.out, "report.md")}\nhtml:   ${resolve(opts.out, "index.html")}\nok:     ${report.ok}\n`,
   );
-  if (!report.ok) process.exitCode = 1;
+  if (!report.ok) {
+    process.exitCode = 1;
+  }
 }
 
 /** @param {unknown} error @returns {string} */
 const failureText = (error) => {
-  if (error instanceof Error && error.message !== "") return error.message;
+  if (error instanceof Error && error.message !== "") {
+    return error.message;
+  }
   return String(error);
 };
 main().catch((/** @type {unknown} */ error) => {
