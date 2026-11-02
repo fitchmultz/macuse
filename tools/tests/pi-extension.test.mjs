@@ -383,3 +383,65 @@ test("resized originals serialize once while unchanged originals stay solely in 
     undefined,
   );
 });
+
+test("every resized original in one result is verified and retained at its own image index", async () => {
+  const wideBytes = png(2400, 16),
+    tallBytes = png(16, 2600);
+  const [wide, tall] = await Promise.all(
+    [wideBytes, tallBytes].map((data) => resizeImage(Buffer.from(data, "base64"), "image/png")),
+  );
+  const message = {
+    role: "toolResult",
+    toolName: "macuse",
+    toolCallId: "call_two|fc_two",
+    timestamp: 456,
+    content: [
+      text("Observed"),
+      image(wide.data),
+      text(formatDimensionNote(wide)),
+      image(smallBytes),
+      image(tall.data),
+      text(formatDimensionNote(tall)),
+    ],
+    details: {
+      macuse: {
+        originalContent: [text("Observed"), image(wideBytes), image(smallBytes), image(tallBytes)],
+      },
+    },
+  };
+  await retainMacuseOriginals(message);
+  assert.deepEqual(message.details.macuse.originalImages, [
+    { index: 0, ...image(wideBytes) },
+    { index: 2, ...image(tallBytes) },
+  ]);
+  const restored = restoreMacuseImages(
+    {
+      input: [
+        {
+          type: "function_call_output",
+          call_id: "call_two",
+          output: [
+            {
+              type: "input_text",
+              text: `Observed\n${formatDimensionNote(wide)}\n${formatDimensionNote(tall)}`,
+            },
+            ...[wide.data, smallBytes, tall.data].map((data) => ({
+              type: "input_image",
+              detail: "auto",
+              image_url: `data:image/png;base64,${data}`,
+            })),
+          ],
+        },
+      ],
+    },
+    new Map([["call_two", message]]),
+    { id: "gpt-6-astra", api: "openai-responses" },
+  );
+  assert.deepEqual(
+    restored.input[0].output.map((part) => part.text ?? part.image_url),
+    [
+      "Observed",
+      ...[wideBytes, smallBytes, tallBytes].map((data) => `data:image/png;base64,${data}`),
+    ],
+  );
+});
