@@ -5,33 +5,57 @@ import { ensureDir, REPO_ROOT, VERSION } from "./macuse-utils.mjs";
 
 const WRAPPER = resolve(REPO_ROOT, "tools/macuse-mcp.mjs");
 
+/** @typedef {{ help: boolean, client: string, out: string | null, server: string, cwd: string, pretty: boolean }} ConfigOptions */
+
 function help() {
   process.stdout.write(
     `macuse config ${VERSION}\n\nUsage:\n  node tools/macuse-config.mjs cursor [options]\n  node tools/macuse-config.mjs claude-desktop [options]\n\nOptions:\n  --out <path>       Write config to a file instead of stdout.\n  --server <name>    MCP server name. Default: macuse.\n  --cwd <path>       MACUSE_CWD. Default: repo root.\n  --pretty           Pretty-print JSON.\n  -h, --help         Show this help.\n\nExamples:\n  node tools/macuse-config.mjs cursor --pretty\n  node tools/macuse-config.mjs cursor --out configs/cursor-mcp.local.json --pretty\n`,
   );
 }
 
+/**
+ * @param {string[]} argv
+ * @returns {ConfigOptions}
+ */
 function parse(argv) {
-  if (argv.includes("-h") || argv.includes("--help")) return { help: true };
-  const client = argv.shift() || "cursor";
+  /** @type {ConfigOptions} */
+  const opts = {
+    help: false,
+    client: "cursor",
+    out: null,
+    server: "macuse",
+    cwd: REPO_ROOT,
+    pretty: false,
+  };
+  if (argv.includes("-h") || argv.includes("--help")) {
+    opts.help = true;
+    return opts;
+  }
+  const shifted = argv.shift();
+  const client = shifted !== undefined && shifted !== "" ? shifted : "cursor";
   if (!["cursor", "claude-desktop"].includes(client)) throw new Error(`unknown client: ${client}`);
-  const opts = { client, out: null, server: "macuse", cwd: REPO_ROOT, pretty: false };
+  opts.client = client;
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
     const next = () => {
       i += 1;
-      if (i >= argv.length) throw new Error(`${token} requires a value`);
-      return argv[i];
+      const value = argv[i];
+      if (value === undefined) throw new Error(`${String(token)} requires a value`);
+      return value;
     };
     if (token === "--out") opts.out = next();
     else if (token === "--server") opts.server = next();
     else if (token === "--cwd") opts.cwd = resolve(next());
     else if (token === "--pretty") opts.pretty = true;
-    else throw new Error(`unknown option: ${token}`);
+    else throw new Error(`unknown option: ${String(token)}`);
   }
   return opts;
 }
 
+/**
+ * @param {ConfigOptions} opts
+ * @returns {{ mcpServers: Record<string, { command: string, args: string[], env: Record<string, string> }> }}
+ */
 function buildConfig(opts) {
   return {
     mcpServers: {
@@ -54,7 +78,7 @@ function main() {
   }
   const config = buildConfig(opts);
   const json = `${JSON.stringify(config, null, opts.pretty ? 2 : 0)}\n`;
-  if (opts.out) {
+  if (opts.out !== null) {
     const path = resolve(opts.out);
     ensureDir(dirname(path));
     writeFileSync(path, json);

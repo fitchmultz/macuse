@@ -15,6 +15,7 @@ const server = new Server(
   { name: "macuse-independent-proof", version: VERSION },
   { capabilities: { tools: {} } },
 );
+/** @type {Promise<void> | undefined} */
 let closing;
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: independentProofTools }));
 server.setRequestHandler(CallToolRequestSchema, async (request, { signal }) => {
@@ -33,23 +34,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request, { signal }) => {
   );
   return { content, isError, _meta: details };
 });
-const close = () =>
-  (closing ??= Promise.resolve().then(async () => {
-    try {
-      const stopped = await session.stop();
-      if (!stopped.settled || !stopped.workerStopped || !stopped.nativeStopped) {
-        console.error(
-          "Independent proof shutdown is unsettled; do not infer GUI cancellation or replay actions.",
-        );
-        process.exitCode = 1;
+/** @returns {Promise<void>} */
+const close = () => {
+  if (closing === undefined) {
+    closing = (async () => {
+      try {
+        const stopped = await session.stop();
+        if (!stopped.settled || !stopped.workerStopped || !stopped.nativeStopped) {
+          console.error(
+            "Independent proof shutdown is unsettled; do not infer GUI cancellation or replay actions.",
+          );
+          process.exitCode = 1;
+        }
+      } finally {
+        await server.close();
       }
-    } finally {
-      await server.close();
-    }
-  }));
+    })();
+  }
+  return closing;
+};
 const shutdown = () => {
-  void close().catch((error) => {
-    console.error(`Independent proof shutdown failed: ${error.message}`);
+  close().catch((/** @type {unknown} */ error) => {
+    console.error(
+      `Independent proof shutdown failed: ${error instanceof Error ? error.message : String(error)}`,
+    );
     process.exitCode = 1;
   });
 };

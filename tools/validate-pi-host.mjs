@@ -14,17 +14,44 @@ if (process.argv.includes("--help") || process.argv.includes("-h")) {
   );
   process.exit(0);
 }
+/** @typedef {typeof import("@earendil-works/pi-coding-agent")} PiPublic */
+/** @typedef {typeof import("@earendil-works/pi-ai")} PiAiPublic */
+/** @typedef {import("@earendil-works/pi-coding-agent").ToolDefinition} ToolDefinition */
+/** @typedef {Awaited<ReturnType<PiPublic["createAgentSession"]>>["session"]} PiSession */
+/**
+ * @param {unknown} value
+ * @returns {value is Record<string, unknown>}
+ */
+const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+/** @param {unknown} value @returns {value is unknown[]} */
+const isUnknownArray = (value) => Array.isArray(value);
+/**
+ * @param {unknown} value
+ * @returns {value is string | ArrayBuffer | ArrayBufferView}
+ */
+const isRequestBody = (value) =>
+  typeof value === "string" || value instanceof ArrayBuffer || ArrayBuffer.isView(value);
 globalThis.fetch = async () => {
   throw new Error("Unexpected network in offline Pi probe");
 };
-const root = process.argv[2]
-  ? resolve(process.argv[2])
-  : dirname(findPackageJSON("@earendil-works/pi-coding-agent", import.meta.url));
+const root =
+  process.argv[2] !== undefined && process.argv[2] !== ""
+    ? resolve(process.argv[2])
+    : dirname(findPackageJSON("@earendil-works/pi-coding-agent", import.meta.url) ?? "");
 process.env.PI_PACKAGE_DIR = root;
 const ai = dirname(
-  findPackageJSON("@earendil-works/pi-ai", pathToFileURL(join(root, "package.json")).href),
+  findPackageJSON("@earendil-works/pi-ai", pathToFileURL(join(root, "package.json")).href) ?? "",
 );
-const load = (base, file) => import(pathToFileURL(join(base, file)).href);
+/**
+ * @param {string} file
+ * @returns {Promise<PiPublic>}
+ */
+const loadPi = (file) => import(pathToFileURL(join(root, file)).href);
+/**
+ * @param {string} file
+ * @returns {Promise<PiAiPublic>}
+ */
+const loadAi = (file) => import(pathToFileURL(join(ai, file)).href);
 const {
   createAgentSession,
   convertToLlm,
@@ -32,21 +59,41 @@ const {
   ModelRuntime,
   SessionManager,
   SettingsManager,
-} = await load(root, "dist/index.js");
+} = await loadPi("dist/index.js");
 const {
   fauxProvider,
   fauxAssistantMessage,
   InMemoryCredentialStore,
   InMemoryModelsStore,
   normalizeContext,
-} = await load(ai, "dist/index.js");
-const { openaiProvider } = await load(ai, "dist/providers/openai.js");
-const { openaiCodexProvider } = await load(ai, "dist/providers/openai-codex.js");
-const extensionPath = process.argv[3]
-  ? join(resolve(process.argv[3]), "extensions/macuse.ts")
-  : fileURLToPath(new URL("../extensions/macuse.ts", import.meta.url));
+} = await loadAi("dist/index.js");
+/**
+ * @returns {Promise<typeof import("@earendil-works/pi-ai/providers/openai")>}
+ */
+const loadOpenAiProvider = () => import(pathToFileURL(join(ai, "dist/providers/openai.js")).href);
+/**
+ * @returns {Promise<typeof import("@earendil-works/pi-ai/providers/openai-codex")>}
+ */
+const loadOpenAiCodexProvider = () =>
+  import(pathToFileURL(join(ai, "dist/providers/openai-codex.js")).href);
+const { openaiProvider } = await loadOpenAiProvider();
+const { openaiCodexProvider } = await loadOpenAiCodexProvider();
+const extensionPath =
+  process.argv[3] !== undefined && process.argv[3] !== ""
+    ? join(resolve(process.argv[3]), "extensions/macuse.ts")
+    : fileURLToPath(new URL("../extensions/macuse.ts", import.meta.url));
 
+/**
+ * @param {number} width
+ * @param {number} height
+ * @returns {string}
+ */
 function png(width, height) {
+  /**
+   * @param {string} name
+   * @param {Buffer} bytes
+   * @returns {Buffer}
+   */
   const chunk = (name, bytes) => {
     const data = Buffer.concat([Buffer.from(name), bytes]),
       length = Buffer.alloc(4),
@@ -67,6 +114,7 @@ function png(width, height) {
     chunk("IEND", Buffer.alloc(0)),
   ]).toString("base64");
 }
+/** @type {ContentBlock[]} */
 const content = [
   { type: "text", text: "Controlled synthetic image" },
   { type: "image", mimeType: "image/png", data: png(4000, 3000) },
@@ -78,25 +126,33 @@ const details = {
     actions: [{ dispatched: true, outcome: "unknown" }],
   },
 };
+/** @typedef {PiSession["messages"][number]} AgentMessage */
+/** @typedef {Extract<AgentMessage, { role: "toolResult" }>["content"][number]} ContentBlock */
+/** @typedef {import("@earendil-works/pi-ai").FauxContentBlock} FauxContentBlock */
+/** @typedef {Extract<FauxContentBlock, { type: "toolCall" }>} FauxToolCall */
+/** @type {FauxToolCall} */
 const call = {
   type: "toolCall",
   name: "macuse",
   id: "call_image|fc_image",
   arguments: { code: "synthetic fixture only" },
 };
+/** @type {ContentBlock[]} */
 const redacted = [
   { type: "text", text: "Redacted screenshot" },
   { type: "image", mimeType: "image/png", data: png(64, 64) },
 ];
+const originalImage = content[1];
+if (originalImage === undefined || originalImage.type !== "image")
+  assert.fail("Fixture content must include the oversized image");
 // Astra is a user-configured route, not guaranteed to be in the host catalog.
-const model = {
-  ...openaiProvider()
-    .getModels()
-    .find((model) => model.api === "openai-responses" && model.input.includes("image")),
-  id: "gpt-6-astra",
-};
-assert.ok(model.api, "Installed host has no Responses image model");
+const responsesModel = openaiProvider()
+  .getModels()
+  .find((model) => model.input.includes("image"));
+assert.ok(responsesModel !== undefined, "Installed host has no Responses image model");
+const model = { ...responsesModel, id: "gpt-6-astra" };
 const scratch = await mkdtemp(join(tmpdir(), "macuse-host-"));
+/** @type {PiSession | undefined} */
 let session;
 try {
   // Native ESM helpers resolve physical peers, not the host loader's TS aliases.
@@ -105,14 +161,16 @@ try {
   const packageRoot = dirname(dirname(extensionPath));
   for (const path of ["extensions", "lib", "package.json"])
     await cp(join(packageRoot, path), join(scratch, path), { recursive: true });
-  for (const [name, target] of [
+  /** @type {[string, string][]} */
+  const links = [
     ["@earendil-works/pi-coding-agent", root],
     ["@earendil-works/pi-ai", ai],
     [
       "typebox",
-      dirname(findPackageJSON("typebox", pathToFileURL(join(root, "package.json")).href)),
+      dirname(findPackageJSON("typebox", pathToFileURL(join(root, "package.json")).href) ?? ""),
     ],
-  ]) {
+  ];
+  for (const [name, target] of links) {
     const link = join(scratch, "node_modules", name);
     await mkdir(dirname(link), { recursive: true });
     await symlink(target, link, "dir");
@@ -143,6 +201,7 @@ try {
   });
   modelRuntime.registerNativeProvider(faux.provider);
   await modelRuntime.refresh({ providers: [faux.provider.id], allowNetwork: false });
+  /** @type {ToolDefinition[]} */
   const tools = [];
   const resourceLoader = new DefaultResourceLoader({
     cwd: scratch,
@@ -154,12 +213,17 @@ try {
     noContextFiles: true,
     additionalExtensionPaths: [join(scratch, "extensions/macuse.ts")],
     extensionFactories: [
-      (pi) =>
+      (pi) => {
         pi.on("tool_result", (event) => {
           if (event.toolCallId === "call_redacted|fc_redacted") return { content: redacted };
-          if (event.toolCallId === "call_text_redacted|fc_text_redacted")
-            return { content: [{ type: "text", text: "Redacted text" }, content[1]] };
-        }),
+          if (event.toolCallId === "call_text_redacted|fc_text_redacted") {
+            /** @type {ContentBlock[]} */
+            const replaced = [{ type: "text", text: "Redacted text" }, originalImage];
+            return { content: replaced };
+          }
+          return;
+        });
+      },
     ],
   });
   await resourceLoader.reload();
@@ -199,38 +263,72 @@ try {
   const normalized = session.messages.find(
     (message) => message.role === "toolResult" && message.toolName === "macuse",
   );
-  assert.ok(normalized, "Native tool execution must produce a result");
+  assert.ok(normalized !== undefined, "Native tool execution must produce a result");
+  assert.ok(
+    normalized.role === "toolResult",
+    "Native tool execution must produce a toolResult message",
+  );
   assert.equal(normalized.isError, true, "Actual host did not apply macuse partial-failure hook");
+  const resizedImage = normalized.content.find((c) => c.type === "image");
+  // tsgo cannot narrow find() results while tsgolint treats the discriminant
+  // predicate as narrowing the result; both cannot be satisfied at once.
+  // oxlint-disable-next-line no-unnecessary-condition
+  if (resizedImage === undefined || resizedImage.type !== "image")
+    assert.fail("Resized image block expected");
+  const normalizedImageData = resizedImage.data;
   assert.notEqual(
-    normalized.content.find((c) => c.type === "image").data,
-    content[1].data,
+    resizedImage.data,
+    originalImage.data,
     "Fixture must exercise actual host resizing",
   );
-  assert.equal(normalized.details.macuse.originalContent, undefined);
-  assert.equal(normalized.details.macuse.originalImages[0].data, content[1].data);
+  const normalizedDetails = normalized.details;
+  assert.ok(isRecord(normalizedDetails), "Normalized tool result must carry macuse details");
+  const normalizedMacuse = normalizedDetails.macuse;
+  assert.ok(isRecord(normalizedMacuse), "Normalized macuse details missing");
+  assert.equal(normalizedMacuse.originalContent, undefined);
+  const originalImages = normalizedMacuse.originalImages;
+  assert.ok(isUnknownArray(originalImages), "Normalized macuse originalImages missing");
+  const firstOriginal = originalImages[0];
+  assert.ok(isRecord(firstOriginal), "Normalized macuse originalImages[0] missing");
+  assert.equal(firstOriginal.data, originalImage.data);
   assert.equal(
-    JSON.stringify(normalized).split(content[1].data).length - 1,
+    JSON.stringify(normalized).split(originalImage.data).length - 1,
     1,
     "Original bytes must serialize once",
   );
   for (const result of session.messages.filter(
     (message) => message.role === "toolResult" && message.toolCallId.includes("redacted"),
   )) {
-    assert.equal(result.details.macuse.originalContent, undefined);
+    assert.ok(result.role === "toolResult", "Redaction filter must keep toolResult messages");
+    const redactedDetails = result.details;
+    assert.ok(isRecord(redactedDetails), "Redacted result must carry details");
+    const redactedMacuse = redactedDetails.macuse;
+    assert.ok(isRecord(redactedMacuse), "Redacted result must carry macuse details");
+    assert.equal(redactedMacuse.originalContent, undefined);
     assert.equal(
-      result.details.macuse.originalImages,
+      redactedMacuse.originalImages,
       undefined,
       "A later tool_result redaction is not attributable to Pi resizing",
     );
   }
   const runner = session.extensionRunner;
+  /** @type {Record<string, unknown>[]} */
   const requests = [];
+  /** @type {typeof fetch} */
   const fakeFetch = async (_url, init) => {
-    const body =
-      new Headers(init.headers).get("content-encoding") === "zstd"
-        ? zstdDecompressSync(init.body).toString()
-        : String(init.body);
-    requests.push(JSON.parse(body));
+    const raw = init?.body;
+    assert.ok(isRequestBody(raw), "Fixture request body must be a string, ArrayBuffer, or view");
+    let body;
+    if (new Headers(init?.headers).get("content-encoding") === "zstd") {
+      body = zstdDecompressSync(raw).toString();
+    } else if (typeof raw === "string") {
+      body = raw;
+    } else {
+      assert.fail("Fixture request body must be a string when not zstd-compressed");
+    }
+    const parsedBody = /** @type {unknown} */ (JSON.parse(body));
+    assert.ok(isRecord(parsedBody), "Fixture request body must be a JSON object");
+    requests.push(parsedBody);
     const event = {
       type: "response.completed",
       response: {
@@ -246,81 +344,133 @@ try {
     );
   };
   const fakeJwt = `${Buffer.from("{}").toString("base64url")}.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "offline-fixture" } })).toString("base64url")}.fake`;
-  for (const api of ["openai-responses", "openai-codex-responses"]) {
-    const adapter = api === "openai-responses" ? openaiProvider() : openaiCodexProvider();
-    const current = {
-      ...model,
-      api,
-      provider: api === "openai-responses" ? "openai" : "openai-codex",
-    };
-    if (api === "openai-responses")
+  /**
+   * @param {Record<string, unknown> | undefined} request
+   * @param {string} [callId]
+   * @returns {Record<string, unknown>}
+   */
+  const callOutputItem = (request, callId) => {
+    if (request === undefined) assert.fail("Fixture request missing");
+    const input = isUnknownArray(request.input) ? request.input : [];
+    const item = input.find(
+      (candidate) =>
+        isRecord(candidate) &&
+        candidate.type === "function_call_output" &&
+        (callId === undefined || candidate.call_id === callId),
+    );
+    if (item === undefined || !isRecord(item))
+      assert.fail(`function_call_output ${callId ?? "(first)"} missing`);
+    return item;
+  };
+  /**
+   * @param {Record<string, unknown>} item
+   * @returns {Record<string, unknown>[]}
+   */
+  const itemBlocks = (item) => {
+    if (!Array.isArray(item.output)) assert.fail("function_call_output output missing");
+    return item.output.filter(isRecord);
+  };
+  const messages = sm.buildSessionContext().messages;
+  /**
+   * @template {string} TApi
+   * @param {import("@earendil-works/pi-ai").Provider<TApi>} adapter
+   * @param {import("@earendil-works/pi-ai").Model<TApi>} current
+   * @param {string} auth
+   * @param {AgentMessage[]} baseMessages
+   * @returns {Promise<Record<string, unknown> | undefined>}
+   */
+  const send = async (adapter, current, auth, baseMessages) => {
+    const messages = await runner.emitContext(baseMessages);
+    const response = await adapter
+      .streamSimple(
+        current,
+        normalizeContext({
+          systemPrompt: "Offline test",
+          tools: tools.filter((t) =>
+            ["macuse", "macuse_insert_text", "macuse_reset", "macuse_tools"].includes(t.name),
+          ),
+          messages: convertToLlm(messages),
+        }),
+        {
+          apiKey: auth,
+          transport: "sse",
+          maxRetries: 0,
+          fetch: fakeFetch,
+          reasoning: "low",
+          onPayload: (payload) => runner.emitBeforeProviderRequest(payload),
+        },
+      )
+      .result();
+    assert.equal(response.stopReason, "stop", response.errorMessage);
+    return requests.at(-1);
+  };
+  /** @typedef {ReturnType<(typeof import("@earendil-works/pi-ai/providers/openai"))["openaiProvider"]> | ReturnType<(typeof import("@earendil-works/pi-ai/providers/openai-codex"))["openaiCodexProvider"]>} ResponsesAdapter */
+  /** @typedef {Parameters<ResponsesAdapter["streamSimple"]>[0]} ResponsesModel */
+  /** @type {Record<string, unknown> | undefined} */
+  let payload;
+  /** @type {("openai-responses" | "openai-codex-responses")[]} */
+  const apis = ["openai-responses", "openai-codex-responses"];
+  for (const api of apis) {
+    /** @type {ResponsesAdapter} */
+    let adapter;
+    /** @type {ResponsesModel} */
+    let current;
+    /** @type {string} */
+    let auth;
+    if (api === "openai-responses") {
+      adapter = openaiProvider();
+      current = { ...model, api, provider: "openai" };
+      auth = "offline-only";
       await modelRuntime.setRuntimeApiKey(current.provider, "offline-only");
-    else
+    } else {
+      adapter = openaiCodexProvider();
+      current = { ...model, api, provider: "openai-codex" };
+      auth = fakeJwt;
       await credentials.modify(current.provider, async () => ({
         type: "oauth",
         access: fakeJwt,
         refresh: "offline-only",
         expires: Date.now() + 3600000,
       }));
+    }
     await session.setModel(current);
-    const send = async (messages) => {
-      messages = await runner.emitContext(messages);
-      const response = await adapter
-        .streamSimple(
-          current,
-          normalizeContext({
-            systemPrompt: "Offline test",
-            tools: tools.filter((t) =>
-              ["macuse", "macuse_insert_text", "macuse_reset", "macuse_tools"].includes(t.name),
-            ),
-            messages: convertToLlm(messages),
-          }),
-          {
-            apiKey: api === "openai-responses" ? "offline-only" : fakeJwt,
-            transport: "sse",
-            maxRetries: 0,
-            fetch: fakeFetch,
-            reasoning: "low",
-            onPayload: (payload) => runner.emitBeforeProviderRequest(payload),
-          },
-        )
-        .result();
-      assert.equal(response.stopReason, "stop", response.errorMessage);
-      return requests.at(-1);
-    };
-    const messages = sm.buildSessionContext().messages;
-    const payload = await send(messages);
-    assert.ok(payload.tools.every((tool) => tool.strict === true));
+    payload = await send(adapter, current, auth, messages);
+    if (payload === undefined) assert.fail("Fixture request missing");
+    const toolsPayload = payload.tools;
+    assert.ok(
+      Array.isArray(toolsPayload) &&
+        toolsPayload.every((tool) => isRecord(tool) && tool.strict === true),
+      "Responses tool schemas must be strict",
+    );
     assert.equal(
-      JSON.stringify(payload.tools).includes("uniqueItems"),
+      JSON.stringify(toolsPayload).includes("uniqueItems"),
       false,
       "OpenAI rejects uniqueItems in strict tool schemas",
     );
-    const output = payload.input.find((item) => item.type === "function_call_output");
-    assert.equal(
-      output.output.find((p) => p.type === "input_image").image_url,
-      `data:image/png;base64,${content[1].data}`,
-    );
-    assert.equal(output.output.find((p) => p.type === "input_image").detail, "auto");
+    const output = callOutputItem(payload);
+    const outputImage = itemBlocks(output).find((p) => p.type === "input_image");
+    if (outputImage === undefined) assert.fail("input_image part missing");
+    assert.equal(outputImage.image_url, `data:image/png;base64,${originalImage.data}`);
+    assert.equal(outputImage.detail, "auto");
     assert.equal(JSON.stringify(output).includes("displayed at"), false);
-    const redactedOutput = payload.input.find(
-      (item) => item.type === "function_call_output" && item.call_id === "call_redacted",
+    const redactedItem = callOutputItem(payload, "call_redacted");
+    const redactedImage = itemBlocks(redactedItem).find((part) => part.type === "input_image");
+    if (redactedImage === undefined) assert.fail("Redacted input_image part missing");
+    const redactedImageBlock = redacted[1];
+    if (redactedImageBlock === undefined || redactedImageBlock.type !== "image")
+      assert.fail("Redacted fixture image missing");
+    assert.equal(redactedImage.image_url, `data:image/png;base64,${redactedImageBlock.data}`);
+    const redactedText = itemBlocks(redactedItem).find((part) => part.type === "input_text");
+    if (redactedText === undefined) assert.fail("Redacted input_text part missing");
+    assert.equal(redactedText.text, "Redacted screenshot");
+    const textRedactedItem = callOutputItem(payload, "call_text_redacted");
+    const textRedactedText = itemBlocks(textRedactedItem).find(
+      (part) => part.type === "input_text",
     );
+    if (textRedactedText === undefined) assert.fail("Redacted text input_text part missing");
     assert.equal(
-      redactedOutput.output.find((part) => part.type === "input_image").image_url,
-      `data:image/png;base64,${redacted[1].data}`,
-    );
-    assert.equal(
-      redactedOutput.output.find((part) => part.type === "input_text").text,
-      "Redacted screenshot",
-    );
-    assert.equal(
-      payload.input
-        .find(
-          (item) => item.type === "function_call_output" && item.call_id === "call_text_redacted",
-        )
-        .output.find((part) => part.type === "input_text")
-        .text.startsWith("Redacted text"),
+      typeof textRedactedText.text === "string" &&
+        textRedactedText.text.startsWith("Redacted text"),
       true,
     );
     for (const replacement of [
@@ -328,62 +478,65 @@ try {
       { toolCallId: "call_image|fc_other" },
     ]) {
       const changedIdentity = await send(
+        adapter,
+        current,
+        auth,
         messages.map((message) =>
           message.role === "toolResult" && message.toolCallId === normalized.toolCallId
             ? { ...message, ...replacement }
             : message,
         ),
       );
+      const changedItem = callOutputItem(changedIdentity, "call_image");
+      const changedImage = itemBlocks(changedItem).find((part) => part.type === "input_image");
+      if (changedImage === undefined) assert.fail("Changed-identity input_image part missing");
       assert.equal(
-        changedIdentity.input
-          .find((item) => item.type === "function_call_output" && item.call_id === "call_image")
-          .output.find((part) => part.type === "input_image").image_url,
-        `data:image/png;base64,${normalized.content.find((part) => part.type === "image").data}`,
+        changedImage.image_url,
+        `data:image/png;base64,${normalizedImageData}`,
         "Different full result identity must not restore originals",
       );
     }
     const filtered = await send(
+      adapter,
+      current,
+      auth,
       messages.map((message) =>
         message.role === "toolResult"
-          ? { ...message, content: [{ type: "text", text: "Image removed by host policy" }] }
+          ? Object.assign({}, message, {
+              content: [{ type: "text", text: "Image removed by host policy" }],
+            })
           : message,
       ),
     );
     assert.equal(JSON.stringify(filtered).includes("input_image"), false);
     const originalLeaf = sm.getLeafId();
+    if (originalLeaf === null) assert.fail("Session leaf missing before branch");
     const resultEntry = sm
       .getEntries()
       .find((entry) => entry.type === "message" && entry.message.role === "toolResult");
+    if (resultEntry === undefined) assert.fail("toolResult session entry missing");
     sm.appendContextEdit(resultEntry.id, {
       content: [{ type: "text", text: "Image removed by persisted context edit" }],
     });
-    const edited = await send(sm.buildSessionContext().messages);
+    const edited = await send(adapter, current, auth, sm.buildSessionContext().messages);
     assert.equal(
-      JSON.stringify(
-        edited.input.find(
-          (item) => item.type === "function_call_output" && item.call_id === "call_image",
-        ),
-      ).includes("input_image"),
+      JSON.stringify(callOutputItem(edited, "call_image")).includes("input_image"),
       false,
     );
     const editedLeaf = sm.getLeafId();
     sm.branch(originalLeaf);
     await runner.emit({ type: "session_tree", oldLeafId: editedLeaf, newLeafId: originalLeaf });
-    const branched = await send(sm.buildSessionContext().messages);
-    assert.equal(
-      branched.input
-        .find((item) => item.type === "function_call_output")
-        .output.find((p) => p.type === "input_image").image_url,
-      `data:image/png;base64,${content[1].data}`,
+    const branched = await send(adapter, current, auth, sm.buildSessionContext().messages);
+    const branchedImage = itemBlocks(callOutputItem(branched)).find(
+      (p) => p.type === "input_image",
     );
+    if (branchedImage === undefined) assert.fail("Branched input_image part missing");
+    assert.equal(branchedImage.image_url, `data:image/png;base64,${originalImage.data}`);
     await runner.emit({ type: "session_start", reason: "resume" });
-    const resumed = await send(sm.buildSessionContext().messages);
-    assert.equal(
-      resumed.input
-        .find((item) => item.type === "function_call_output")
-        .output.find((p) => p.type === "input_image").image_url,
-      `data:image/png;base64,${content[1].data}`,
-    );
+    const resumed = await send(adapter, current, auth, sm.buildSessionContext().messages);
+    const resumedImage = itemBlocks(callOutputItem(resumed)).find((p) => p.type === "input_image");
+    if (resumedImage === undefined) assert.fail("Resumed input_image part missing");
+    assert.equal(resumedImage.image_url, `data:image/png;base64,${originalImage.data}`);
   }
   sm.appendCompaction("Synthetic retained-none boundary", null, 100);
   await runner.emitContext(sm.buildSessionContext().messages);
@@ -392,10 +545,14 @@ try {
     requests.at(-1),
     "A post-handler retain-none draft cannot restore old images",
   );
+  const hostPackage = /** @type {unknown} */ (
+    JSON.parse(await readFile(join(root, "package.json"), "utf8"))
+  );
+  assert.ok(isRecord(hostPackage), "Host package.json must be an object");
   console.log(
     JSON.stringify({
       host: root,
-      version: JSON.parse(await readFile(join(root, "package.json"), "utf8")).version,
+      version: hostPackage.version,
       ok: true,
       checks: [
         "actual tool execution and tool_result error flag",

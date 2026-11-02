@@ -22,7 +22,7 @@ export type AuxiliaryToolDescriptor = {
   inputSchema: {
     type: "object";
     additionalProperties: false;
-    properties: Record<string, unknown>;
+    properties: Record<string, import("@modelcontextprotocol/sdk/validation").JsonSchemaType>;
     required: string[];
   };
   annotations: {
@@ -33,7 +33,7 @@ export type AuxiliaryToolDescriptor = {
   };
 };
 export type AuxiliaryResult = {
-  content: Array<{ type: string; [key: string]: unknown }>;
+  content: Array<{ type: "text"; text: string }>;
   isError: boolean;
   details: {
     macuse: {

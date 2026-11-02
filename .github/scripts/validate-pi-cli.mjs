@@ -14,9 +14,12 @@ if (process.argv.includes("--help") || process.argv.includes("-h")) {
   );
   process.exit(0);
 }
-const root = process.argv[2]
-  ? resolve(process.argv[2])
-  : dirname(findPackageJSON("@earendil-works/pi-coding-agent", import.meta.url));
+const discovered = findPackageJSON("@earendil-works/pi-coding-agent", import.meta.url);
+if (!discovered)
+  throw new Error(
+    "Cannot locate the installed @earendil-works/pi-coding-agent package; pass PI_PACKAGE_DIR explicitly.",
+  );
+const root = process.argv[2] ? resolve(process.argv[2]) : dirname(discovered);
 const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const extension = process.argv[3]
   ? join(resolve(process.argv[3]), "extensions/macuse.ts")
@@ -63,10 +66,12 @@ try {
   );
   if (result.error) throw result.error;
   assert.equal(result.status, 0, result.stderr || result.stdout);
-  const events = result.stdout
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line));
+  const events = /** @type {Array<Record<string, unknown>>} */ (
+    result.stdout
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+  );
   assert.deepEqual(
     events.filter((event) => event.type === "extension_error"),
     [],
@@ -79,7 +84,10 @@ try {
     "Probe command did not complete",
   );
   assert.ok(!events.some((event) => event.type === "agent_start"), "Probe started a model turn");
-  const observed = JSON.parse(readFileSync(observation, "utf8"));
+  const observed =
+    /** @type {{ packageDir: string, version: string, tools: string[], activeTools: string[], commands: string[] }} */ (
+      JSON.parse(readFileSync(observation, "utf8"))
+    );
   assert.equal(realpathSync(observed.packageDir), realpathSync(root), "The wrong Pi host loaded");
   assert.equal(observed.version, manifest.version);
   const expectedTools = [...tools.map((tool) => tool.name), "macuse_tools"];

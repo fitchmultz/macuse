@@ -3,7 +3,7 @@ import test from "node:test";
 import { MacOSNative } from "../macos-native.mjs";
 
 // Read-only platform checks: no app activation, fixture creation, key/mouse events, or privacy prompts.
-test(
+await test(
   "native observer multiplexes requests and restarts cleanly",
   { skip: process.platform !== "darwin" },
   async () => {
@@ -34,7 +34,7 @@ test(
           }
         assert.ok(Array.isArray(result.transitions));
         for (const event of result.transitions)
-          if (event.window) {
+          if (event.kind === "focused_window" && event.window !== null) {
             assert.equal(event.window.title, null);
             assert.equal(event.window.document, null);
           }
@@ -51,7 +51,7 @@ test(
   },
 );
 
-test(
+await test(
   "invalid app identity never reports zero windows or attempts a text edit",
   { skip: process.platform !== "darwin" },
   async () => {

@@ -10,17 +10,28 @@ import { MAX_CUA_TIMEOUT_MS } from "../lib/cua-timeout.mjs";
 import { tools } from "../lib/tools.mjs";
 import { VERSION } from "./macuse-utils.mjs";
 
+/** @typedef {import("../lib/macuse-session.mjs").SessionResult} SessionResult */
+/** Structural tab view activityMonitorCheck reads from runtime observations. */
+/** @typedef {{ elements: Array<{ index?: string, role: string, name: string, description?: string, value?: string }> }} TabObservation */
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+/**
+ * @template {{ isError?: boolean | undefined, content: Array<{ type: string, text?: string | undefined }> }} T
+ * @param {T} result
+ * @returns {T}
+ */
 const checked = (result) => {
   assert.equal(
     result.isError,
     false,
-    result.content
-      .filter((p) => p.type === "text")
-      .map((p) => p.text)
-      .join("\n"),
+    result.content.map((p) => (p.type === "text" ? p.text : "")).join("\n"),
   );
   return result;
 };
+/**
+ * @param {TabObservation | undefined} observation
+ * @returns {string | undefined}
+ */
 const selectedTab = (observation) => {
   const selected = observation?.elements.filter(
     (e) =>
@@ -28,18 +39,29 @@ const selectedTab = (observation) => {
       e.value === "1" &&
       ["CPU", "Memory", "Energy", "Disk", "Network"].includes(e.description ?? e.name),
   );
-  return selected?.length === 1 ? (selected[0].description ?? selected[0].name) : undefined;
+  const first = selected?.[0];
+  return selected?.length === 1 && first !== undefined
+    ? (first.description ?? first.name)
+    : undefined;
 };
 
+/**
+ * @param {{ runtime: { getObservation: (app: string) => TabObservation | undefined }, callTool: (tool: string, args: Record<string, unknown>) => Promise<SessionResult> }} session
+ * @param {{ strictFocus?: boolean, timeoutMs?: number }} [options]
+ */
 export async function activityMonitorCheck(
   session,
   { strictFocus = false, timeoutMs = 90000 } = {},
 ) {
-  const app = "Activity Monitor",
-    results = [],
-    failures = [];
-  let original,
-    attempted = false;
+  const app = "Activity Monitor";
+  /** @type {SessionResult[]} */
+  const results = [];
+  /** @type {Error[]} */
+  const failures = [];
+  /** @type {string | undefined} */
+  let original;
+  let attempted = false;
+  /** @param {string} code */
   const call = async (code) => {
     const result = await session.callTool("macuse", {
       code,
@@ -53,38 +75,54 @@ export async function activityMonitorCheck(
     return checked(result);
   };
   const read = () => call("await activity.getAXState()");
+  /** @param {string} name */
   const tab = (name) => {
-    const matches = session.runtime
-      .getObservation(app)
-      ?.elements.filter((e) => e.role === "radio button" && (e.description ?? e.name) === name);
-    assert.equal(matches?.length, 1, `Expected one ${name} tab`);
-    return matches[0];
+    const observation = session.runtime.getObservation(app);
+    if (observation === undefined) assert.fail(`Expected one ${name} tab`);
+    const matches = observation.elements.filter(
+      (e) => e.role === "radio button" && (e.description ?? e.name) === name,
+    );
+    assert.equal(matches.length, 1, `Expected one ${name} tab`);
+    const target = matches[0];
+    if (target === undefined) assert.fail(`Expected one ${name} tab`);
+    return target;
   };
+  /** @param {string} name */
   const press = async (name) => {
     const target = tab(name);
     return call(
       `await activity.performSecondaryAction(${Number(target.index)}, "Press"); await activity.getAXState()`,
     );
   };
+  /** @param {SessionResult} result */
   const checkFocus = (result) => {
-    const f = result.details.macuse.focus;
+    const focus = result.details.macuse.focus;
+    if (!isRecord(focus) || focus.observationAvailable !== true)
+      assert.fail("Native activation coverage unavailable; background behavior is unproven");
+    const coverage = focus.coverage;
+    const before = focus.before;
+    const after = focus.after;
+    const transitions = focus.transitions;
+    if (!isRecord(coverage) || !isRecord(before) || !isRecord(after) || !Array.isArray(transitions))
+      assert.fail("Native activation coverage unavailable; background behavior is unproven");
     assert.ok(
-      f?.observationAvailable &&
-        f.coverage.applicationActivation &&
-        !f.coverage.truncated &&
-        f.before?.frontmost &&
-        f.after?.frontmost,
+      coverage.applicationActivation === true && coverage.truncated !== true,
       "Native activation coverage unavailable; background behavior is unproven",
     );
-    const target = (a) => a?.bundleId === "com.apple.ActivityMonitor";
+    const beforeFrontmost = before.frontmost;
+    const afterFrontmost = after.frontmost;
+    if (!isRecord(beforeFrontmost) || !isRecord(afterFrontmost))
+      assert.fail("Native activation coverage unavailable; background behavior is unproven");
+    /** @param {unknown} a @returns {boolean} */
+    const isMonitor = (a) => isRecord(a) && a.bundleId === "com.apple.ActivityMonitor";
     assert.equal(
-      target(f.before.frontmost),
+      isMonitor(beforeFrontmost),
       false,
       "Activity Monitor is already frontmost; background behavior is unproven",
     );
     assert.equal(
-      target(f.after.frontmost) ||
-        f.transitions.some((e) => e.kind === "activation" && target(e.app)),
+      isMonitor(afterFrontmost) ||
+        transitions.some((e) => isRecord(e) && e.kind === "activation" && isMonitor(e.app)),
       false,
       "Activity Monitor activation observed; attribution unknown",
     );
@@ -92,7 +130,10 @@ export async function activityMonitorCheck(
   try {
     const first = await call('var activity = await cua.getApp("Activity Monitor")');
     original = selectedTab(session.runtime.getObservation(app));
-    assert.ok(original, "Original Activity Monitor tab is unknown; no mutation performed");
+    assert.ok(
+      original !== undefined && original !== "",
+      "Original Activity Monitor tab is unknown; no mutation performed",
+    );
     if (strictFocus) checkFocus(first);
     const alternate = original === "Memory" ? "CPU" : "Memory";
     tab(alternate);
@@ -100,9 +141,9 @@ export async function activityMonitorCheck(
     await press(alternate);
     assert.equal(selectedTab(session.runtime.getObservation(app)), alternate);
   } catch (error) {
-    failures.push(error);
+    failures.push(error instanceof Error ? error : new Error(String(error)));
   } finally {
-    if (original && attempted) {
+    if (original !== undefined && attempted) {
       try {
         await read();
         if (selectedTab(session.runtime.getObservation(app)) !== original) await press(original);
@@ -112,7 +153,11 @@ export async function activityMonitorCheck(
           "Original tab was not restored",
         );
       } catch (error) {
-        failures.push(new Error(`Activity Monitor cleanup failed: ${error.message}`));
+        failures.push(
+          new Error(
+            `Activity Monitor cleanup failed: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        );
       }
     }
   }
@@ -121,10 +166,10 @@ export async function activityMonitorCheck(
       try {
         checkFocus(result);
       } catch (error) {
-        failures.push(error);
+        failures.push(error instanceof Error ? error : new Error(String(error)));
       }
     }
-  if (failures.length)
+  if (failures.length > 0)
     throw new AggregateError(failures, failures.map((e) => e.message).join("; "));
   return {
     originalTab: original,
@@ -134,6 +179,9 @@ export async function activityMonitorCheck(
   };
 }
 
+/**
+ * @param {{ live?: boolean, timeoutMs?: number }} [options]
+ */
 async function mcpCheck({ live = false, timeoutMs = 90000 } = {}) {
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -145,26 +193,32 @@ async function mcpCheck({ live = false, timeoutMs = 90000 } = {}) {
     await client.connect(transport);
     const listed = await client.listTools();
     assert.deepEqual(listed.tools.map((t) => t.name).sort(), tools.map((t) => t.name).sort());
-    for (const [name, args] of [
+    /** @type {[string, Record<string, unknown>][]} */
+    const refusalCases = [
       ["macuse_insert_text", { app: "must-not-launch", text: "must-not-insert" }],
       ["event_stream_start", {}],
       ["computer_history_update_settings", {}],
-    ]) {
+    ];
+    for (const [name, args] of refusalCases) {
       const result = await client.callTool({ name, arguments: args });
       assert.equal(result.isError, true);
-      assert.equal(result._meta.macuse.dispatched, false);
+      const meta = result._meta;
+      const macuse = isRecord(meta) ? meta.macuse : undefined;
+      assert.ok(isRecord(macuse), "Refusal must carry macuse metadata");
+      assert.equal(macuse.dispatched, false);
     }
-    if (live)
-      checked(
-        await client.callTool(
-          {
-            name: "macuse",
-            arguments: { code: "await cua.getState()", timeoutMs, trackFocus: false },
-          },
-          undefined,
-          { timeout: timeoutMs + 10000 },
-        ),
+    if (live) {
+      const liveResult = await client.callTool(
+        {
+          name: "macuse",
+          arguments: { code: "await cua.getState()", timeoutMs, trackFocus: false },
+        },
+        undefined,
+        { timeout: timeoutMs + 10000 },
       );
+      assert.ok(!("toolResult" in liveResult), "Unexpected toolResult envelope");
+      checked(liveResult);
+    }
     return { tools: listed.tools.length, live };
   } finally {
     await client.close();
@@ -183,7 +237,7 @@ async function main() {
     },
   });
   const mode = positionals[0] ?? "quick";
-  if (values.help) {
+  if (values.help === true) {
     console.log(
       "macuse validation: extension (offline) | quick | read-only | mutating | focus | mcp\nmutating/focus select an Activity Monitor tab and restore the captured original in finally. No recording/privacy changes.",
     );
@@ -198,11 +252,16 @@ async function main() {
     Number.isInteger(timeoutMs) && timeoutMs >= 1 && timeoutMs <= MAX_CUA_TIMEOUT_MS,
     "Invalid timeout",
   );
+  /** @type {Array<{ name: string, status: string, detail: unknown }>} */
   const checks = [];
+  /**
+   * @param {string} name
+   * @param {() => unknown} run
+   */
   const check = async (name, run) => {
     const detail = await run();
     checks.push({ name, status: "pass", detail });
-    if (!values.json) console.log(`PASS ${name}`);
+    if (values.json !== true) console.log(`PASS ${name}`);
   };
   const session = new MacuseSession();
   try {
@@ -233,7 +292,7 @@ async function main() {
             timeoutMs,
           }),
         );
-        assert.match(result.content.map((p) => p.text ?? "").join("\n"), /42/);
+        assert.match(result.content.map((p) => (p.type === "text" ? p.text : "")).join("\n"), /42/);
         return session.status();
       });
       await check(
@@ -267,7 +326,11 @@ async function main() {
             result.content.some((p) => p.type === "image"),
             "No screenshot returned",
           );
-          assert.ok(session.runtime.getObservation(values.app)?.title, "No parsed window title");
+          const observedTitle = session.runtime.getObservation(values.app)?.title;
+          assert.ok(
+            observedTitle !== undefined && observedTitle !== null && observedTitle !== "",
+            "No parsed window title",
+          );
           return result.details;
         });
       }
@@ -279,7 +342,11 @@ async function main() {
         await check("MCP live native runtime", () => mcpCheck({ live: true, timeoutMs }));
     }
   } catch (error) {
-    checks.push({ name: "Validation failure", status: "fail", detail: error.message });
+    checks.push({
+      name: "Validation failure",
+      status: "fail",
+      detail: error instanceof Error ? error.message : String(error),
+    });
   } finally {
     await session.stop();
   }
@@ -295,12 +362,15 @@ async function main() {
     },
     checks,
   };
-  if (values.json) console.log(JSON.stringify(report, null, 2));
-  else if (!ok) console.error(checks.at(-1).detail);
+  if (values.json === true) console.log(JSON.stringify(report, null, 2));
+  else if (!ok) {
+    const last = checks.at(-1);
+    if (last !== undefined) console.error(last.detail);
+  }
   if (!ok) process.exitCode = 1;
 }
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1])
-  main().catch((error) => {
-    console.error(error);
+if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1])
+  main().catch((/** @type {unknown} */ error) => {
+    console.error(error instanceof Error ? error : String(error));
     process.exitCode = 1;
   });

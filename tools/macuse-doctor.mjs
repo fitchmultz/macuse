@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import {
+  firstText,
   REPO_ROOT,
   VERSION,
   ensureDir,
@@ -13,6 +14,12 @@ import {
   writeJsonFile,
 } from "./macuse-utils.mjs";
 
+/**
+ * @param {string} name
+ * @param {string} command
+ * @param {string[]} [args]
+ * @param {import("./macuse-utils.mjs").RunCommandOptions} [options]
+ */
 function commandCheck(name, command, args, options = {}) {
   const result = runCommand(name, command, args, options);
   return {
@@ -22,7 +29,10 @@ function commandCheck(name, command, args, options = {}) {
       status: result.ok ? "pass" : "fail",
       summary: result.ok
         ? result.stdout.trim().slice(0, 500)
-        : (result.error || result.stderr || result.stdout || `exit ${result.status}`)
+        : (
+            firstText([result.error, result.stderr, result.stdout]) ??
+            `exit ${String(result.status)}`
+          )
             .trim()
             .slice(0, 500),
       durationMs: result.durationMs,
@@ -81,22 +91,31 @@ finally { await native.stop(); }`;
   else {
     let trusted;
     try {
-      trusted = parseJsonOutput("native helper trust", trust.result.stdout).accessibilityTrusted;
+      const report = parseJsonOutput("native helper trust", trust.result.stdout);
+      if (typeof report === "object" && report !== null && "accessibilityTrusted" in report)
+        trusted = report.accessibilityTrusted;
     } catch {
       /* Unknown remains unknown. */
     }
     checks.push({
       ...trust.check,
       status: trusted === true ? "pass" : "fail",
-      summary:
-        trusted === true
-          ? "accessibilityTrusted=true under this launcher. Other Pi/CLI/MCP hosts may have different grants."
-          : trusted === false
-            ? "accessibilityTrusted=false: AX inspection/insertion unavailable. No permission prompt was requested."
-            : "Native helper trust is unknown.",
+      summary: trustSummary(trusted),
     });
   }
   return checks;
+}
+
+/**
+ * @param {unknown} trusted
+ * @returns {string}
+ */
+function trustSummary(trusted) {
+  if (trusted === true)
+    return "accessibilityTrusted=true under this launcher. Other Pi/CLI/MCP hosts may have different grants.";
+  if (trusted === false)
+    return "accessibilityTrusted=false: AX inspection/insertion unavailable. No permission prompt was requested.";
+  return "Native helper trust is unknown.";
 }
 
 async function main() {
@@ -110,7 +129,7 @@ async function main() {
       help: { type: "boolean", short: "h" },
     },
   });
-  if (values.help) {
+  if (values.help === true) {
     console.log(
       `macuse doctor ${VERSION}\n\n--out <dir> --json --app <name> --tool-timeout-ms <ms>\nDefault checks are read-only. --full also switches/restores Activity Monitor tabs and checks the MCP wrapper.\nNo installs, privacy changes, recording starts, or permission prompts.`,
     );
@@ -154,7 +173,7 @@ async function main() {
       ? "Read-only Computer History status returned through its separate authenticated transport."
       : `Auxiliary service unavailable: ${auxiliary.check.summary}`,
   });
-  if (values.full)
+  if (values.full === true)
     for (const mode of ["focus", "mcp"]) {
       const check = commandCheck(
         `${mode} validation`,
@@ -182,20 +201,21 @@ async function main() {
     ["Status", "Check", "Result"],
     checks.map((c) => [c.status, c.name, c.summary]),
   )}\n`;
-  if (values.out) {
+  if (values.out !== undefined && values.out !== "") {
     ensureDir(values.out);
     writeJsonFile(resolve(values.out, "doctor.json"), report);
     writeFileSync(resolve(values.out, "doctor.md"), markdown);
   }
-  console.log(values.json ? JSON.stringify(report, null, 2) : markdown);
+  console.log(values.json === true ? JSON.stringify(report, null, 2) : markdown);
   if (!report.ok) process.exitCode = 1;
 }
 if (
-  process.argv[1] &&
+  process.argv[1] !== undefined &&
+  process.argv[1] !== "" &&
   existsSync(process.argv[1]) &&
   pathToFileURL(realpathSync(process.argv[1])).href === import.meta.url
 )
-  main().catch((error) => {
-    console.error(error.message);
+  main().catch((/** @type {unknown} */ error) => {
+    console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   });

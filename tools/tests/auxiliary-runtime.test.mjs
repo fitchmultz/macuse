@@ -30,20 +30,49 @@ const names = [
   "computer_history_update_settings",
 ];
 const recording = { allowRecording: true, safetyNote: "The user requested this recording." };
+/** @typedef {import("../../lib/auxiliary-runtime.mjs").AuxiliaryResult} AuxiliaryResult */
+/** @typedef {import("../../lib/auxiliary-runtime.mjs").ObservationSettings} ObservationSettings */
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+/** @returns {ObservationSettings} */
 const observation = () => ({
   defaultApplicationBehavior: "do_not_observe",
   defaultURLBehavior: "observe",
   allowlist: [{ scope: "app", bundleID: "test.app" }],
   blocklist: [{ scope: "url", urlDomain: "private.example" }],
 });
+/** @returns {{ allowPrivacyChange: boolean, safetyNote: string, observation: ObservationSettings }} */
 const privacy = () => ({
   allowPrivacyChange: true,
   safetyNote: "The user approved this exact change; other freshly read fields are preserved.",
   observation: observation(),
 });
 const success = { content: [{ type: "text", text: "ok" }], isError: false };
+/** @param {AuxiliaryResult} result */
 const meta = (result) => result.details.macuse;
+/** @param {AuxiliaryResult} result @returns {string} */
+const firstText = (result) => {
+  const block = result.content[0];
+  if (block === undefined) assert.fail("Expected a content block");
+  return block.text;
+};
+/** @param {Record<string, unknown>} row @returns {Record<string, unknown>} */
+const rowParams = (row) => (isRecord(row.params) ? row.params : {});
+/** @param {string} tool @returns {Record<string, unknown>} */
+const validInput = (tool) => {
+  if (tool === "event_stream_start" || tool === "computer_history_resume") return recording;
+  if (tool === "computer_history_update_settings") return privacy();
+  return {};
+};
+/** @param {string} line @returns {Record<string, unknown>} */
+const parseRow = (line) => {
+  /** @type {unknown} */
+  const parsed = JSON.parse(line);
+  assert.ok(isRecord(parsed), "Corrupt rpc log line");
+  return parsed;
+};
 
+/** @param {() => boolean} predicate @param {string} label */
 async function until(predicate, label) {
   const deadline = Date.now() + 3000;
   while (!predicate()) {
@@ -52,6 +81,10 @@ async function until(predicate, label) {
   }
 }
 
+/**
+ * @param {import("node:test").TestContext} t
+ * @param {Record<string, unknown>} [options]
+ */
 function fixture(t, options = {}) {
   const dir = mkdtempSync(join(tmpdir(), "macuse-auxiliary-test-"));
   const log = join(dir, "rpc.jsonl");
@@ -131,12 +164,12 @@ if (options.ignoreStop) setInterval(() => {}, 60000);
     await runtime.stop();
     rmSync(dir, { recursive: true, force: true });
   });
-  const events = () => readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(JSON.parse);
+  const events = () => readFileSync(log, "utf8").trim().split("\n").filter(Boolean).map(parseRow);
   const calls = () => events().filter((row) => row.event === "tool");
   return { runtime, events, calls, release: () => writeFileSync(release, "") };
 }
 
-test("exports exactly eight guarded auxiliary tools; invalid calls never start a process", async () => {
+await test("exports exactly eight guarded auxiliary tools; invalid calls never start a process", async () => {
   const runtime = new AuxiliaryRuntime({ codexBin: "/must/not/start" });
   assert.deepEqual(
     auxiliaryTools.map((tool) => tool.name),
@@ -147,7 +180,7 @@ test("exports exactly eight guarded auxiliary tools; invalid calls never start a
     ["event_stream_status", "computer_history_status", "computer_history_get_settings"],
   );
   assert.equal(runtime.status().running, false);
-  for (const [tool, input] of [
+  for (const [tool, input] of /** @type {[string, unknown][]} */ ([
     ["list_apps", {}],
     ["get_app_state", {}],
     ["event_stream_start", {}],
@@ -157,15 +190,22 @@ test("exports exactly eight guarded auxiliary tools; invalid calls never start a
     ["computer_history_update_settings", { observation: observation() }],
     ["computer_history_status", null],
     ["computer_history_status", []],
-  ]) {
+  ])) {
     const result = await runtime.callTool(tool, input);
     assert.equal(result.isError, true);
     assert.equal(meta(result).dispatched, false);
     assert.equal(meta(result).outcome, "not_dispatched");
     assert.equal(meta(result).attempts, 0);
   }
-  for (const timeoutMs of [0, -1, Infinity, NaN, "100", 2_147_483_648])
-    assert.equal((await runtime.callTool("event_stream_status", {}, { timeoutMs })).isError, true);
+  for (const timeoutMs of [0, -1, Infinity, NaN, "100", 2_147_483_648]) {
+    // Deliberately invalid timeout values must reach the options bag uncoerced.
+    // oxlint-disable-next-line no-unsafe-type-assertion
+    const invalidTimeout = /** @type {number} */ (timeoutMs);
+    assert.equal(
+      (await runtime.callTool("event_stream_status", {}, { timeoutMs: invalidTimeout })).isError,
+      true,
+    );
+  }
   const controller = new AbortController();
   controller.abort();
   assert.equal(
@@ -176,18 +216,29 @@ test("exports exactly eight guarded auxiliary tools; invalid calls never start a
   await runtime.stop();
 });
 
-test("settings validation requires complete scoped entries and snapshots only observation", () => {
+await test("settings validation requires complete scoped entries and snapshots only observation", () => {
   const input = privacy();
   const copied = validateAuxiliaryArguments("computer_history_update_settings", input);
   assert.deepEqual(copied, { observation: input.observation });
-  input.observation.allowlist[0].bundleID = "changed";
-  assert.equal(copied.observation.allowlist[0].bundleID, "test.app");
+  const originalEntry = input.observation.allowlist[0];
+  if (originalEntry === undefined) assert.fail("Expected a source allowlist entry");
+  originalEntry.bundleID = "changed";
+  const copiedObservation = copied.observation;
+  // tsc requires the undefined guard; tsgolint resolves the field as always present.
+  // oxlint-disable-next-line no-unnecessary-condition
+  if (copiedObservation === undefined) assert.fail("Expected a copied observation");
+  const copiedEntry = copiedObservation.allowlist[0];
+  if (copiedEntry === undefined) assert.fail("Expected a copied allowlist entry");
+  assert.equal(copiedEntry.bundleID, "test.app");
   for (const field of Object.keys(observation())) {
-    const partial = privacy();
-    delete partial.observation[field];
+    const base = observation();
+    /** @type {Record<string, unknown>} */
+    const partialObservation = { ...base };
+    delete partialObservation[field];
+    const partial = { ...privacy(), observation: partialObservation };
     assert.throws(() => validateAuxiliaryArguments("computer_history_update_settings", partial));
   }
-  for (const entry of [
+  for (const entry of /** @type {unknown[]} */ ([
     null,
     [],
     Object.create({ scope: "app", bundleID: "test.app" }),
@@ -207,7 +258,7 @@ test("settings validation requires complete scoped entries and snapshots only ob
     ].map((urlDomain) => ({ scope: "url", urlDomain })),
     { scope: "app", bundleID: "test", extra: true },
     { scope: "url", urlDomain: "example.com", bundleID: 4 },
-  ])
+  ]))
     assert.throws(() =>
       validateAuxiliaryArguments("computer_history_update_settings", {
         ...privacy(),
@@ -229,14 +280,17 @@ test("settings validation requires complete scoped entries and snapshots only ob
   assert.throws(() =>
     validateAuxiliaryArguments("computer_history_update_settings", {
       ...privacy(),
-      observation: { ...observation(), blocklist: new Array(1) },
+      observation: { ...observation(), blocklist: Array.from({ length: 1 }) },
     }),
   );
   assert.throws(() => validateAuxiliaryArguments("event_stream_start", Object.create(recording)));
+  // A prototype-only observation carries no own enumerable fields.
+  /** @type {unknown} */
+  const prototypal = Object.create(observation());
   assert.throws(() =>
     validateAuxiliaryArguments("computer_history_update_settings", {
       ...privacy(),
-      observation: Object.create(observation()),
+      observation: prototypal,
     }),
   );
   assert.deepEqual(validateAuxiliaryArguments("event_stream_start", recording), {});
@@ -245,17 +299,12 @@ test("settings validation requires complete scoped entries and snapshots only ob
   assert.deepEqual(validateAuxiliaryArguments("computer_history_pause"), {});
 });
 
-test("lazy authenticated JSONL startup isolates only auxiliary launchers and retains CODEX_HOME", async (t) => {
+await test("lazy authenticated JSONL startup isolates only auxiliary launchers and retains CODEX_HOME", async (t) => {
   const { runtime, events, calls } = fixture(t);
   assert.deepEqual(events(), []);
   assert.equal(runtime.status().running, false);
   for (const tool of names) {
-    const input = ["event_stream_start", "computer_history_resume"].includes(tool)
-      ? recording
-      : tool === "computer_history_update_settings"
-        ? privacy()
-        : {};
-    const result = await runtime.callTool(tool, input);
+    const result = await runtime.callTool(tool, validInput(tool));
     assert.equal(result.isError, false);
     assert.equal(meta(result).tool, tool);
     assert.equal(meta(result).dispatched, true);
@@ -263,7 +312,9 @@ test("lazy authenticated JSONL startup isolates only auxiliary launchers and ret
   }
   const rows = events();
   assert.equal(rows.filter((row) => row.event === "spawn").length, 1);
-  assert.deepEqual(rows[0].argv, [
+  const spawnRow = rows[0];
+  if (spawnRow === undefined) assert.fail("Expected a spawn row");
+  assert.deepEqual(spawnRow.argv, [
     "app-server",
     "--disable",
     "apps",
@@ -274,30 +325,39 @@ test("lazy authenticated JSONL startup isolates only auxiliary launchers and ret
     "--enable",
     "tool_call_mcp_elicitation",
   ]);
-  assert.equal(rows[0].home, process.env.CODEX_HOME ?? null);
+  assert.equal(spawnRow.home, process.env.CODEX_HOME ?? null);
   assert.deepEqual(
     rows
-      .filter((row) => row.method)
+      .filter((row) => typeof row.method === "string")
       .slice(0, 4)
       .map((row) => row.method),
     ["initialize", "initialized", "config/read", "thread/start"],
   );
-  const start = rows.find((row) => row.method === "thread/start").params;
+  const startedRow = rows.find((row) => row.method === "thread/start");
+  if (startedRow === undefined) assert.fail("Expected a thread/start row");
+  const start = rowParams(startedRow);
+  const startConfig = isRecord(start.config) ? start.config : {};
+  const servers = isRecord(startConfig.mcp_servers) ? startConfig.mcp_servers : {};
   assert.equal(start.ephemeral, true);
   assert.equal(start.approvalPolicy, "on-request");
-  assert.equal(start.config.features.apps, false);
-  assert.deepEqual(start.config.plugins, { unrelated: { enabled: false } });
-  assert.deepEqual(start.config.mcp_servers.unrelated, { enabled: false });
-  assert.deepEqual(start.config.mcp_servers["computer-use"], { enabled: false });
+  const features = isRecord(startConfig.features) ? startConfig.features : {};
+  assert.equal(features.apps, false);
+  assert.deepEqual(startConfig.plugins, { unrelated: { enabled: false } });
+  assert.deepEqual(servers.unrelated, { enabled: false });
+  assert.deepEqual(servers["computer-use"], { enabled: false });
   assert.deepEqual(
-    Object.keys(start.config.mcp_servers).filter((name) => start.config.mcp_servers[name].enabled),
+    Object.keys(servers).filter((name) => {
+      const server = servers[name];
+      return isRecord(server) && server.enabled === true;
+    }),
     ["event-stream", "computer-history"],
   );
-  for (const [name, plugin] of [
+  for (const [name, plugin] of /** @type {[string, string][]} */ ([
     ["event-stream", "record-and-replay"],
     ["computer-history", "computer-history"],
-  ]) {
-    const config = start.config.mcp_servers[name];
+  ])) {
+    const config = servers[name];
+    if (!isRecord(config)) assert.fail(`Expected config for ${name}`);
     assert.equal(
       config.command,
       `${process.env.MACUSE_CHATGPT_RESOURCES ?? "/Applications/ChatGPT.app/Contents/Resources"}/plugins/openai-bundled/plugins/${plugin}/bin/computer-use-client-launcher`,
@@ -306,19 +366,19 @@ test("lazy authenticated JSONL startup isolates only auxiliary launchers and ret
     assert.deepEqual(config.env_vars, ["CODEX_HOME"]);
   }
   assert.deepEqual(
-    rows.filter((row) => row.method === "mcpServerStatus/list").map((row) => row.params.cursor),
+    rows.filter((row) => row.method === "mcpServerStatus/list").map((row) => rowParams(row).cursor),
     names.flatMap((name) =>
       name.startsWith("event_stream_") ? [undefined] : [undefined, "history-page"],
     ),
   );
   assert.deepEqual(
-    calls().map((row) => row.params.arguments),
+    calls().map((row) => rowParams(row).arguments),
     names.map((name) =>
       name === "computer_history_update_settings" ? { observation: observation() } : {},
     ),
   );
   assert.deepEqual(
-    calls().map((row) => row.params.server),
+    calls().map((row) => rowParams(row).server),
     names.map((name) => (name.startsWith("event_stream_") ? "event-stream" : "computer-history")),
   );
   await runtime.stop();
@@ -330,12 +390,14 @@ test("lazy authenticated JSONL startup isolates only auxiliary launchers and ret
 });
 
 for (const packaged of [false, true])
-  test(`${packaged ? "packaged Codex" : "explicit binary"} and resource override retain CODEX_HOME and isolated launchers`, (t) => {
+  await test(`${packaged ? "packaged Codex" : "explicit binary"} and resource override retain CODEX_HOME and isolated launchers`, (t) => {
     const { runtime, events } = fixture(t);
     const resources = packaged ? runtime.cwd : "/custom/ChatGPT.app/Contents/Resources";
     if (packaged) {
       mkdirSync(join(resources, "codex-cli/bin"), { recursive: true });
-      symlinkSync(runtime.codexBin, join(resources, "codex-cli/bin/codex"));
+      const codexBin = runtime.codexBin;
+      if (codexBin === null) assert.fail("Expected a fixture codexBin");
+      symlinkSync(codexBin, join(resources, "codex-cli/bin/codex"));
       writeFileSync(
         join(resources, "codex-cli/codex-package.json"),
         JSON.stringify({ layoutVersion: 1, version: "0.164.0", entrypoint: "bin/codex" }),
@@ -354,18 +416,32 @@ for (const packaged of [false, true])
       },
       timeout: 5000,
     });
-    assert.equal(events()[0].home, "/preserved/codex-home");
-    const config = events().find((row) => row.method === "thread/start").params.config;
+    const loggedSpawn = events()[0];
+    if (loggedSpawn === undefined) assert.fail("Expected a spawn row");
+    assert.equal(loggedSpawn.home, "/preserved/codex-home");
+    const loggedStart = events().find((row) => row.method === "thread/start");
+    if (loggedStart === undefined) assert.fail("Expected a thread/start row");
+    const loggedConfig = rowParams(loggedStart).config;
+    const config = isRecord(loggedConfig) ? loggedConfig : {};
+    const configServers = isRecord(config.mcp_servers) ? config.mcp_servers : {};
     for (const name of ["event-stream", "computer-history"]) {
-      assert.ok(config.mcp_servers[name].command.startsWith(`${resources}/`));
-      assert.deepEqual(config.mcp_servers[name].env_vars, ["CODEX_HOME"]);
+      const server = configServers[name];
+      if (!isRecord(server)) assert.fail(`Expected config for ${name}`);
+      const command = server.command;
+      if (typeof command !== "string") assert.fail(`Expected a command for ${name}`);
+      assert.ok(command.startsWith(`${resources}/`));
+      assert.deepEqual(server.env_vars, ["CODEX_HOME"]);
     }
   });
 
-test("validated active calls retain the proven elicitation response path", async (t) => {
+await test("validated active calls retain the proven elicitation response path", async (t) => {
   const { runtime, events } = fixture(t, { responses: ["elicit"] });
   assert.equal((await runtime.callTool("event_stream_start", recording)).isError, false);
-  assert.deepEqual(events().find((row) => row.id === "approval" && row.result).result, {
+  const approvalRow = events().find(
+    (row) => row.id === "approval" && row.result !== undefined && row.result !== null,
+  );
+  if (approvalRow === undefined) assert.fail("Expected an approval row");
+  assert.deepEqual(approvalRow.result, {
     action: "accept",
     content: {},
     _meta: null,
@@ -373,7 +449,7 @@ test("validated active calls retain the proven elicitation response path", async
 });
 
 for (const reason of ["aborted", "timeout"])
-  test(`${reason} stops and awaits owned transport before queue release, ignores late success, and never replays`, async (t) => {
+  await test(`${reason} stops and awaits owned transport before queue release, ignores late success, and never replays`, async (t) => {
     const { runtime, events, calls } = fixture(t, {
       responses: [success, "hold", success],
       exitDelay: 150,
@@ -408,21 +484,26 @@ for (const reason of ["aborted", "timeout"])
     assert.ok(
       rows.findIndex((row) => row.event === "exit") <
         rows.findIndex(
-          (row) => row.event === "tool" && row.params.tool === "computer_history_status",
+          (row) => row.event === "tool" && rowParams(row).tool === "computer_history_status",
         ),
     );
-    assert.equal(calls().filter((row) => row.params.tool === "event_stream_start").length, 1);
+    assert.equal(calls().filter((row) => rowParams(row).tool === "event_stream_start").length, 1);
     assert.equal(
-      rows.some((row) => row.id === "late-approval" && row.result?.action === "accept"),
+      rows.some(
+        (row) =>
+          row.id === "late-approval" && isRecord(row.result) && row.result.action === "accept",
+      ),
       false,
     );
     assert.equal(
-      rows.some((row) => /cancel|interrupt/i.test(row.method ?? "")),
+      rows.some((row) =>
+        /cancel|interrupt/i.test(typeof row.method === "string" ? row.method : ""),
+      ),
       false,
     );
   });
 
-test("queued cancellation does not stop active work; settings are copied before waiting", async (t) => {
+await test("queued cancellation does not stop active work; settings are copied before waiting", async (t) => {
   const { runtime, calls, release, events } = fixture(t, { responses: ["hold", success] });
   const first = runtime.callTool("event_stream_status");
   await until(() => calls().length === 1, "first dispatch");
@@ -440,13 +521,18 @@ test("queued cancellation does not stop active work; settings are copied before 
   );
   const input = privacy();
   const update = runtime.callTool("computer_history_update_settings", input);
-  input.observation.defaultURLBehavior = "invalid";
-  input.observation.allowlist[0].bundleID = "changed";
+  // Deliberately invalid value proving the dispatch snapshot is unaffected.
+  // oxlint-disable-next-line no-unsafe-type-assertion
+  input.observation.defaultURLBehavior = /** @type {"do_not_observe" | "observe"} */ ("invalid");
+  const mutatedEntry = input.observation.allowlist[0];
+  if (mutatedEntry !== undefined) mutatedEntry.bundleID = "changed";
   release();
   assert.equal((await first).isError, false);
   assert.equal((await update).isError, false);
   assert.equal(calls().length, 2);
-  assert.deepEqual(calls()[1].params.arguments, { observation: observation() });
+  const secondCall = calls()[1];
+  if (secondCall === undefined) assert.fail("Expected a second tool call");
+  assert.deepEqual(rowParams(secondCall).arguments, { observation: observation() });
 });
 
 for (const response of [
@@ -462,7 +548,7 @@ for (const response of [
   { rpcError: "connection closed" },
   "exit",
 ])
-  test(`read-only retries one demonstrated stopped/closed session: ${JSON.stringify(response)}`, async (t) => {
+  await test(`read-only retries one demonstrated stopped/closed session: ${JSON.stringify(response)}`, async (t) => {
     const { runtime, calls, events } = fixture(t, { responses: [response, success] });
     const result = await runtime.callTool("computer_history_get_settings");
     assert.equal(result.isError, false);
@@ -471,7 +557,7 @@ for (const response of [
     assert.equal(events().filter((row) => row.event === "spawn").length, 2);
   });
 
-test("terminal stopped-session sentinel becomes a descriptive error without keyword-classifying other results", async (t) => {
+await test("terminal stopped-session sentinel becomes a descriptive error without keyword-classifying other results", async (t) => {
   const stopped = {
     content: [
       {
@@ -484,8 +570,8 @@ test("terminal stopped-session sentinel becomes a descriptive error without keyw
   const result = await one.runtime.callTool("event_stream_status");
   assert.equal(result.isError, true);
   assert.equal(meta(result).attempts, 2);
-  assert.match(result.content[0].text, /auxiliary application session is stopped/);
-  assert.doesNotMatch(result.content[0].text, /explicitly stopped by the user for this turn/);
+  assert.match(firstText(result), /auxiliary application session is stopped/);
+  assert.doesNotMatch(firstText(result), /explicitly stopped by the user for this turn/);
   const two = fixture(t, {
     responses: [
       {
@@ -504,7 +590,7 @@ test("terminal stopped-session sentinel becomes a descriptive error without keyw
   assert.equal(meta(status).attempts, 1);
 });
 
-test("read-only recovery stops after one retry, without retrying unrelated errors or timeout", async (t) => {
+await test("read-only recovery stops after one retry, without retrying unrelated errors or timeout", async (t) => {
   const closed = { content: [{ type: "text", text: "Transport closed" }], isError: true };
   const twice = fixture(t, { responses: [closed, closed] });
   const result = await twice.runtime.callTool("event_stream_status");
@@ -529,16 +615,9 @@ for (const tool of [
   "event_stream_stop",
   "computer_history_pause",
 ])
-  test(`${tool} never automatically retries a closed transport`, async (t) => {
+  await test(`${tool} never automatically retries a closed transport`, async (t) => {
     const { runtime, calls } = fixture(t, { responses: ["exit"] });
-    const result = await runtime.callTool(
-      tool,
-      ["event_stream_start", "computer_history_resume"].includes(tool)
-        ? recording
-        : tool === "computer_history_update_settings"
-          ? privacy()
-          : {},
-    );
+    const result = await runtime.callTool(tool, validInput(tool));
     assert.equal(result.isError, true);
     assert.equal(meta(result).dispatched, true);
     assert.equal(meta(result).outcome, "unknown");
@@ -547,7 +626,7 @@ for (const tool of [
   });
 
 for (const holdStage of ["initialize", "config/read", "thread/start", "mcpServerStatus/list"])
-  test(`startup cancellation at ${holdStage} reports no action dispatched`, async (t) => {
+  await test(`startup cancellation at ${holdStage} reports no action dispatched`, async (t) => {
     const { runtime, events, calls } = fixture(t, { holdStage });
     const controller = new AbortController();
     const call = runtime.callTool("event_stream_start", recording, { signal: controller.signal });
@@ -560,19 +639,19 @@ for (const holdStage of ["initialize", "config/read", "thread/start", "mcpServer
     assert.deepEqual(calls(), []);
   });
 
-test("stop and pause remain available when unrelated tools are missing", async (t) => {
+await test("stop and pause remain available when unrelated tools are missing", async (t) => {
   for (const tool of ["event_stream_stop", "computer_history_pause"]) {
     const { runtime, calls } = fixture(t, { missingTools: names.filter((name) => name !== tool) });
     const result = await runtime.callTool(tool, {}, { timeoutMs: 1000 });
     assert.equal(result.isError, false);
     assert.deepEqual(
-      calls().map((call) => call.params.tool),
+      calls().map((call) => rowParams(call).tool),
       [tool],
     );
   }
 });
 
-test("a reused thread still waits for the requested tool before dispatch", async (t) => {
+await test("a reused thread still waits for the requested tool before dispatch", async (t) => {
   const { runtime, calls } = fixture(t, { missingTools: ["computer_history_pause"] });
   assert.equal(
     (await runtime.callTool("event_stream_stop", {}, { timeoutMs: 1000 })).isError,
@@ -583,20 +662,17 @@ test("a reused thread still waits for the requested tool before dispatch", async
   assert.equal(meta(result).dispatched, false);
   assert.deepEqual(meta(result).missingTools, ["computer-history/computer_history_pause"]);
   assert.deepEqual(
-    calls().map((call) => call.params.tool),
+    calls().map((call) => rowParams(call).tool),
     ["event_stream_stop"],
   );
 });
 
-test("missing inventory or malformed effective config prevents dispatch", async (t) => {
+await test("missing inventory or malformed effective config prevents dispatch", async (t) => {
   for (const options of [{ missingInventory: true }, { badConfig: true }]) {
     const { runtime, calls } = fixture(t, options);
     const result = await runtime.callTool("event_stream_start", recording, { timeoutMs: 500 });
-    if (options.missingInventory) {
-      assert.match(
-        result.content[0].text,
-        /Missing auxiliary tools: event-stream\/event_stream_start/,
-      );
+    if (options.missingInventory === true) {
+      assert.match(firstText(result), /Missing auxiliary tools: event-stream\/event_stream_start/);
       assert.deepEqual(meta(result).missingTools, ["event-stream/event_stream_start"]);
     }
     assert.equal(result.isError, true);
@@ -606,17 +682,17 @@ test("missing inventory or malformed effective config prevents dispatch", async 
   }
 });
 
-test("spawn errors are not retried as transport closures", async () => {
+await test("spawn errors are not retried as transport closures", async () => {
   const runtime = new AuxiliaryRuntime({ codexBin: "/not/an/executable" });
   const result = await runtime.callTool("event_stream_status");
   assert.equal(result.isError, true);
-  assert.match(result.content[0].text, /ENOENT/);
+  assert.match(firstText(result), /ENOENT/);
   assert.equal(meta(result).dispatched, false);
   assert.equal(meta(result).attempts, 1);
   assert.equal(runtime.status().running, false);
 });
 
-test("explicit stop settles active work without retry and leaves other owned runtimes untouched", async (t) => {
+await test("explicit stop settles active work without retry and leaves other owned runtimes untouched", async (t) => {
   const one = fixture(t, { responses: ["hold"], exitDelay: 40 });
   const two = fixture(t);
   await two.runtime.callTool("event_stream_status");
@@ -632,7 +708,7 @@ test("explicit stop settles active work without retry and leaves other owned run
   assert.equal(two.events().filter((row) => row.event === "spawn").length, 1);
 });
 
-test(
+await test(
   "a subprocess ignoring EOF and SIGTERM is killed and awaited before settlement",
   { timeout: 7000 },
   async (t) => {

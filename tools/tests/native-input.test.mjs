@@ -10,34 +10,109 @@ import { insertText as insertTextWithRefresh } from "../../lib/native-input.mjs"
 import { parseAppState } from "../../lib/app-state.mjs";
 import { MacOSNative } from "../macos-native.mjs";
 
+/** @typedef {import("../macos-native.mjs").NativeApplication} NativeApplication */
+/** @typedef {import("../macos-native.mjs").NativeAppState} NativeAppState */
+/** @typedef {import("../macos-native.mjs").NativeObservation} NativeObservation */
+/** @typedef {import("../macos-native.mjs").NativeTextResult} NativeTextResult */
+/** @typedef {import("../macos-native.mjs").NativeTextRequest} NativeTextRequest */
+/** @typedef {import("../../lib/app-state.mjs").AppObservation} AppObservation */
+/** @typedef {import("../../lib/app-state.mjs").AppElement} AppElement */
+/** @typedef {import("../../lib/native-input.mjs").InsertTextResult} InsertTextResult */
+/** @typedef {import("../../lib/native-input.mjs").NativeTextBackend} NativeTextBackend */
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+/** @type {NativeApplication} */
 const app = {
   pid: 4242,
   name: "TextEdit",
   bundleId: "com.apple.TextEdit",
   path: "/System/Applications/TextEdit.app",
 };
+const bundleId = app.bundleId;
+if (bundleId === null) assert.fail("Fixture app requires a bundle id");
+const appPath = app.path;
+if (appPath === null) assert.fail("Fixture app requires a path");
+/** @typedef {import("../../lib/native-input.mjs").InsertTextInput} InsertTextInput */
+/** @type {InsertTextInput} */
 const input = {
-  app: app.bundleId,
+  app: bundleId,
   text: "café 漢字 🙂 e\u0301",
   allowMutating: true,
   safetyNote: "Replace the selection in the disposable TextEdit fixture only; do not save or send.",
 };
+// The display name intentionally equals the AX identifier: CUA names fall
+// back to the ID, which keeps native-input's cross-source join inactive.
+/** @type {AppElement} */
+const focusedField = {
+  index: "2",
+  id: "First Text View",
+  role: "text entry area",
+  name: "First Text View",
+  value: "prefix ORIGINAL suffix\n",
+  disabled: false,
+  settable: true,
+  secondaryActions: [],
+  line: "",
+  context: "",
+  cellValueContext: "",
+  descendants: "",
+};
+/** @type {AppObservation} */
 const observation = {
-  app: app.bundleId,
+  app: bundleId,
   title: "Fixture.txt",
   url: "file:///tmp/Fixture.txt",
+  documentIdentity: null,
   nativeWindowIdentity: true,
   text: "full CUA observation",
   observedAt: Date.now(),
-  elements: [],
-  focused: {
-    index: "2",
-    id: "First Text View",
-    role: "text entry area",
-    value: "prefix ORIGINAL suffix\n",
-  },
+  elements: [focusedField],
+  focused: focusedField,
 };
-observation.elements = [observation.focused];
+/** @typedef {import("../macos-native.mjs").NativeWindow} NativeWindow */
+/** @type {NativeWindow} */
+const fixtureWindow = {
+  token: "window",
+  title: "Fixture.txt",
+  document: "file:///tmp/Fixture.txt",
+};
+const fixtureId = focusedField.id;
+if (fixtureId === undefined) assert.fail("Fixture field requires an id");
+/**
+ * Full focused-field literal with a synthesized display name; avoids
+ * optional-prop spreads that exactOptionalPropertyTypes rejects.
+ * @param {string} name
+ * @param {string} [index]
+ * @returns {AppElement}
+ */
+const namedField = (name, index = "2") => ({
+  index,
+  id: fixtureId,
+  role: "text entry area",
+  name,
+  value: "prefix ORIGINAL suffix\n",
+  disabled: false,
+  settable: true,
+  secondaryActions: [],
+  line: "",
+  context: "",
+  cellValueContext: "",
+  descendants: "",
+});
+/** @typedef {NonNullable<NativeAppState["focusedElement"]>} NativeFocusedElement */
+/** @type {NativeFocusedElement} */
+const fixtureField = {
+  token: "field",
+  role: "AXTextArea",
+  roleDescription: "text entry area",
+  identifier: "First Text View",
+  title: null,
+  description: null,
+  value: "prefix ORIGINAL suffix\n",
+  selectedTextSettable: true,
+  selectedTextError: 0,
+};
+/** @type {NativeAppState} */
 const state = {
   pid: app.pid,
   app,
@@ -45,19 +120,10 @@ const state = {
   windowsCount: 1,
   windowsError: 0,
   windows: [],
-  focusedWindow: { token: "window", title: observation.title, document: observation.url },
-  focusedElement: {
-    token: "field",
-    role: "AXTextArea",
-    roleDescription: "text entry area",
-    identifier: "First Text View",
-    title: null,
-    description: null,
-    value: observation.focused.value,
-    selectedTextSettable: true,
-    selectedTextError: 0,
-  },
+  focusedWindow: fixtureWindow,
+  focusedElement: fixtureField,
 };
+/** @type {NativeObservation} */
 const focus = {
   before: { frontmost: null, focusedWindow: null },
   after: { frontmost: null, focusedWindow: null },
@@ -70,6 +136,7 @@ const focus = {
     truncated: false,
   },
 };
+/** @type {NativeTextResult} */
 const applied = {
   status: "applied",
   mutationAttempted: true,
@@ -77,50 +144,89 @@ const applied = {
   insertedUTF16Length: input.text.length,
   replacedUTF16Length: 8,
 };
+/** @typedef {{ name: string, args: unknown[] }} RecordedCall */
+/** @typedef {{ calls: RecordedCall[], native: NativeTextBackend }} Fixture */
+/**
+ * @param {Partial<NativeTextBackend>} [overrides]
+ * @returns {Fixture}
+ */
 function fixture(overrides = {}) {
+  /** @type {RecordedCall[]} */
   const calls = [];
-  const methods = {
-    resolveApp: async () => app,
-    inspectApp: async () => structuredClone(state),
-    beginObservation: async () => ({ id: "watch" }),
-    endObservation: async () => focus,
-    replaceSelectedText: async () => applied,
-    stop: async () => {},
-    ...overrides,
+  /** @type {NativeTextBackend} */
+  const native = {
+    resolveApp: async (identifier, options) => {
+      calls.push({ name: "resolveApp", args: [identifier, options] });
+      if (overrides.resolveApp !== undefined) return overrides.resolveApp(identifier, options);
+      return app;
+    },
+    inspectApp: async (pid, options) => {
+      calls.push({ name: "inspectApp", args: [pid, options] });
+      if (overrides.inspectApp !== undefined) return overrides.inspectApp(pid, options);
+      return structuredClone(state);
+    },
+    beginObservation: async (pids, options) => {
+      calls.push({ name: "beginObservation", args: [pids, options] });
+      if (overrides.beginObservation !== undefined)
+        return overrides.beginObservation(pids, options);
+      return { id: "watch" };
+    },
+    endObservation: async (id, options) => {
+      calls.push({ name: "endObservation", args: [id, options] });
+      if (overrides.endObservation !== undefined) return overrides.endObservation(id, options);
+      return focus;
+    },
+    replaceSelectedText: async (request, options) => {
+      calls.push({ name: "replaceSelectedText", args: [request, options] });
+      if (overrides.replaceSelectedText !== undefined)
+        return overrides.replaceSelectedText(request, options);
+      return applied;
+    },
+    stop: async () => {
+      calls.push({ name: "stop", args: [] });
+      if (overrides.stop !== undefined) return overrides.stop();
+    },
   };
-  return {
-    calls,
-    native: Object.fromEntries(
-      Object.entries(methods).map(([name, fn]) => [
-        name,
-        async (...args) => {
-          calls.push({ name, args });
-          return fn(...args);
-        },
-      ]),
-    ),
-  };
+  return { calls, native };
 }
-const insertText = (native, input, observation, options = {}) =>
-  insertTextWithRefresh(native, input, observation, {
-    refreshObservation: async () => structuredClone(observation),
-    ...options,
+/**
+ * @param {NativeTextBackend} native
+ * @param {import("../../lib/native-input.mjs").InsertTextInput} textInput
+ * @param {AppObservation | undefined} observed
+ * @param {{ signal?: AbortSignal, refreshObservation?: () => Promise<AppObservation | undefined> }} [options]
+ * @returns {Promise<InsertTextResult>}
+ */
+const insertText = (native, textInput, observed, options = {}) =>
+  insertTextWithRefresh(native, textInput, observed, {
+    refreshObservation: options.refreshObservation ?? (async () => structuredClone(observed)),
+    ...(options.signal !== undefined ? { signal: options.signal } : {}),
   });
+/**
+ * @param {InsertTextResult} result
+ * @param {Fixture} f
+ * @param {RegExp} pattern
+ */
 function noEdit(result, f, pattern) {
   assert.equal(result.isError, true);
   assert.equal(result.details.macuse.dispatched, false);
   assert.equal(result.details.macuse.outcome, "not_dispatched");
-  assert.match(result.content[0].text, pattern);
+  const firstBlock = result.content[0];
+  if (firstBlock === undefined) assert.fail("result text missing");
+  assert.match(firstBlock.text, pattern);
   assert.equal(
     f.calls.some((call) => call.name === "replaceSelectedText"),
     false,
   );
 }
 
-test("a reused editor cannot insert into a changed record despite unchanged native identity and value", async () => {
+await test("a reused editor cannot insert into a changed record despite unchanged native identity and value", async () => {
+  /**
+   * @param {string} record
+   * @returns {AppObservation}
+   */
   const snapshot = (record) =>
     parseAppState(
-      app.bundleId,
+      bundleId,
       `Window: "Fixture.txt", App: TextEdit.
 0 standard window Fixture.txt, URL: file:///tmp/Fixture.txt
 	1 cell Value: ${record}
@@ -130,9 +236,15 @@ The focused UI element is 2 text entry area`,
     );
   const before = snapshot("draft.txt");
   const fresh = snapshot("important.txt");
-  assert.equal(before.focused.value, state.focusedElement.value);
-  assert.equal(before.focused.context, fresh.focused.context);
-  assert.notEqual(before.focused.cellValueContext, fresh.focused.cellValueContext);
+  const beforeFocused = before.focused;
+  if (beforeFocused === undefined) assert.fail("snapshot focused field missing");
+  const freshFocused = fresh.focused;
+  if (freshFocused === undefined) assert.fail("fresh snapshot focused field missing");
+  const stateField = state.focusedElement;
+  if (stateField === null) assert.fail("fixture native field missing");
+  assert.equal(beforeFocused.value, stateField.value);
+  assert.equal(beforeFocused.context, freshFocused.context);
+  assert.notEqual(beforeFocused.cellValueContext, freshFocused.cellValueContext);
   const f = fixture();
   noEdit(
     await insertText(f.native, input, before, { refreshObservation: async () => fresh }),
@@ -140,7 +252,7 @@ The focused UI element is 2 text entry area`,
     /Focused field changed/,
   );
   const reindexed = parseAppState(
-    app.bundleId,
+    bundleId,
     before.text.replaceAll("2 text entry area", "9 text entry area"),
   );
   assert.equal(
@@ -153,7 +265,7 @@ The focused UI element is 2 text entry area`,
   );
 });
 
-test("selected-range insertion preserves exact Unicode, document tokens, field value and honest focus coverage", async () => {
+await test("selected-range insertion preserves exact Unicode, document tokens, field value and honest focus coverage", async () => {
   const f = fixture();
   const result = await insertText(f.native, input, observation);
   assert.equal(result.isError, false);
@@ -161,8 +273,15 @@ test("selected-range insertion preserves exact Unicode, document tokens, field v
   assert.equal(result.details.macuse.dispatched, true);
   assert.equal(result.details.macuse.replacedUTF16Length, 8);
   assert.equal(result.details.macuse.insertedUTF16Length, input.text.length);
-  assert.equal(result.details.macuse.focus.coverage.inputAttribution, false);
-  assert.deepEqual(f.calls.find((call) => call.name === "replaceSelectedText").args[0], {
+  const focusRecord = result.details.macuse.focus;
+  // tsgo requires this discriminant guard while tsgolint resolves the
+  // narrowed member as already true; both cannot be satisfied.
+  // oxlint-disable-next-line no-unnecessary-boolean-literal-compare
+  if (focusRecord === undefined || focusRecord.observationAvailable !== true)
+    assert.fail("focus observation missing");
+  const editCall = f.calls.find((call) => call.name === "replaceSelectedText");
+  if (editCall === undefined) assert.fail("replaceSelectedText call missing");
+  assert.deepEqual(editCall.args[0], {
     pid: app.pid,
     text: input.text,
     expected: {
@@ -170,7 +289,7 @@ test("selected-range insertion preserves exact Unicode, document tokens, field v
       windowTitle: observation.title,
       document: observation.url,
       elementToken: "field",
-      value: observation.focused.value,
+      value: focusedField.value,
     },
   });
   assert.deepEqual(
@@ -179,22 +298,31 @@ test("selected-range insertion preserves exact Unicode, document tokens, field v
   );
 });
 
-test("missing observation, permission flags and malformed Unicode fail before native access", async () => {
-  for (const [candidate, observed, pattern] of [
+await test("missing observation, permission flags and malformed Unicode fail before native access", async () => {
+  /** @type {[InsertTextInput, AppObservation | undefined, RegExp][]} */
+  const cases = [
     [input, undefined, /Observe the intended app/],
     [{ ...input, allowMutating: false }, observation, /allowMutating:true/],
     [{ ...input, safetyNote: " \n " }, observation, /nonempty safetyNote/],
     [{ ...input, text: "bad\ud800" }, observation, /well-formed Unicode/],
     [{ ...input, text: "bad\udfff" }, observation, /well-formed Unicode/],
-    [{ ...input, expectedTitle: 123 }, observation, /exact string/],
-  ]) {
+    [
+      // Deliberately invalid runtime input: the guard must reject a non-string
+      // expectedTitle; the type system cannot express this invalid entry.
+      // oxlint-disable-next-line no-unsafe-type-assertion
+      /** @type {InsertTextInput} */ (/** @type {unknown} */ ({ ...input, expectedTitle: 123 })),
+      observation,
+      /exact string/,
+    ],
+  ];
+  for (const [candidate, observed, pattern] of cases) {
     const f = fixture();
     noEdit(await insertText(f.native, candidate, observed), f, pattern);
     assert.equal(f.calls.length, 0);
   }
 });
 
-test("selected-text insertion accepts a short nonempty mutation note", async () => {
+await test("selected-text insertion accepts a short nonempty mutation note", async () => {
   const result = await insertText(
     fixture().native,
     { ...input, safetyNote: "Fixture only." },
@@ -204,19 +332,20 @@ test("selected-text insertion accepts a short nonempty mutation note", async () 
   assert.equal(result.details.macuse.outcome, "verified");
 });
 
-test("no prior focused field refuses before native access rather than editing the current field", async () => {
+await test("no prior focused field refuses before native access rather than editing the current field", async () => {
   const f = fixture();
+  const { focused: _omitted, ...withoutFocused } = observation;
   noEdit(
-    await insertText(f.native, input, { ...observation, focused: undefined }),
+    await insertText(f.native, input, withoutFocused),
     f,
     /did not identify a focused field.*getAXState/,
   );
   assert.equal(f.calls.length, 0);
 });
 
-test("CUA display names synthesized from ID/role do not masquerade as native field labels", async () => {
-  for (const name of [observation.focused.id, observation.focused.role]) {
-    const focused = { ...observation.focused, name };
+await test("CUA display names synthesized from ID/role do not masquerade as native field labels", async () => {
+  for (const name of [fixtureId, focusedField.role]) {
+    const focused = namedField(name);
     const result = await insertText(fixture().native, input, {
       ...observation,
       focused,
@@ -228,30 +357,48 @@ test("CUA display names synthesized from ID/role do not masquerade as native fie
     inspectApp: async () => ({
       ...state,
       focusedElement: {
-        ...state.focusedElement,
+        ...fixtureField,
         role: "AXTextField",
         roleDescription: "search text field",
       },
     }),
   });
-  const focused = { ...observation.focused, role: "search" };
+  const focused = { ...focusedField, role: "search" };
   assert.equal(
     (await insertText(f.native, input, { ...observation, focused, elements: [focused] })).isError,
     false,
   );
 });
 
-test("indistinguishable fields and duplicate stable IDs cannot authorize an insertion", async () => {
-  const focused = { index: "1", role: "text field", name: "text field", value: "same" };
+await test("indistinguishable fields and duplicate stable IDs cannot authorize an insertion", async () => {
+  /**
+   * @param {string} index
+   * @returns {AppElement}
+   */
+  const indistinguishable = (index) => ({
+    index,
+    id: fixtureId,
+    role: "text field",
+    name: "text field",
+    value: "same",
+    disabled: false,
+    settable: true,
+    secondaryActions: [],
+    line: "",
+    context: "",
+    cellValueContext: "",
+    descendants: "",
+  });
+  const focused = indistinguishable("1");
   for (const observed of [
-    { ...observation, focused, elements: [focused, { ...focused, index: "2" }] },
-    { ...observation, elements: [observation.focused, { ...observation.focused, index: "2" }] },
+    { ...observation, focused, elements: [focused, indistinguishable("2")] },
+    { ...observation, elements: [focusedField, namedField(focusedField.name)] },
   ]) {
     const f = fixture({
       inspectApp: async () => ({
         ...state,
         focusedElement: {
-          ...state.focusedElement,
+          ...fixtureField,
           identifier: null,
           roleDescription: "text field",
           value: "same",
@@ -262,7 +409,7 @@ test("indistinguishable fields and duplicate stable IDs cannot authorize an inse
   }
 });
 
-test("missing/ambiguous running-app resolution and another app's observation never dispatch", async () => {
+await test("missing/ambiguous running-app resolution and another app's observation never dispatch", async () => {
   for (const reason of [
     "No running app exactly matches TextEdit",
     "Ambiguous running app TextEdit",
@@ -286,8 +433,8 @@ test("missing/ambiguous running-app resolution and another app's observation nev
   );
 });
 
-test("exact resolved name/path observations are accepted, never fuzzy aliases", async () => {
-  for (const identity of [app.name, app.path]) {
+await test("exact resolved name/path observations are accepted, never fuzzy aliases", async () => {
+  for (const identity of [app.name, appPath]) {
     const f = fixture();
     assert.equal(
       (await insertText(f.native, input, { ...observation, app: identity })).isError,
@@ -296,10 +443,20 @@ test("exact resolved name/path observations are accepted, never fuzzy aliases", 
   }
 });
 
-test("changed document, explicit guards, app identity and focused field refuse before dispatch", async () => {
-  for (const [changed, candidate, pattern] of [
+await test("changed document, explicit guards, app identity and focused field refuse before dispatch", async () => {
+  /**
+   * @param {Partial<NativeFocusedElement>} field
+   * @returns {[NativeAppState, InsertTextInput, RegExp]}
+   */
+  const changedFieldCase = (field) => [
+    { ...state, focusedElement: { ...fixtureField, ...field } },
+    input,
+    /focused field or its value changed/,
+  ];
+  /** @type {[NativeAppState, InsertTextInput, RegExp][]} */
+  const cases = [
     [
-      { ...state, focusedWindow: { ...state.focusedWindow, document: "file:///tmp/Other.txt" } },
+      { ...state, focusedWindow: { ...fixtureWindow, document: "file:///tmp/Other.txt" } },
       input,
       /window\/document changed/,
     ],
@@ -310,12 +467,9 @@ test("changed document, explicit guards, app identity and focused field refuse b
       { identifier: "Other field" },
       { roleDescription: "text field" },
       { value: "human edited the field" },
-    ].map((field) => [
-      { ...state, focusedElement: { ...state.focusedElement, ...field } },
-      input,
-      /focused field or its value changed/,
-    ]),
-  ]) {
+    ].map(changedFieldCase),
+  ];
+  for (const [changed, candidate, pattern] of cases) {
     const f = fixture({ inspectApp: async () => changed });
     noEdit(await insertText(f.native, candidate, observation), f, pattern);
   }
@@ -323,14 +477,14 @@ test("changed document, explicit guards, app identity and focused field refuse b
   noEdit(
     await insertText(f.native, input, {
       ...observation,
-      focused: { ...observation.focused, name: "Other field" },
+      focused: namedField("Other field"),
     }),
     f,
     /focused field/i,
   );
 });
 
-test("document URL wins over abbreviated titles, but explicit title guards remain exact", async () => {
+await test("document URL wins over abbreviated titles, but explicit title guards remain exact", async () => {
   const abbreviated = { ...observation, title: "Fi…" };
   assert.equal((await insertText(fixture().native, input, abbreviated)).isError, false);
   const f = fixture();
@@ -342,7 +496,7 @@ test("document URL wins over abbreviated titles, but explicit title guards remai
   const missingUrl = fixture({
     inspectApp: async () => ({
       ...state,
-      focusedWindow: { ...state.focusedWindow, document: null },
+      focusedWindow: { ...fixtureWindow, document: null },
     }),
   });
   noEdit(
@@ -354,16 +508,20 @@ test("document URL wins over abbreviated titles, but explicit title guards remai
   const other = fixture({
     inspectApp: async () => ({
       ...state,
-      focusedWindow: { ...state.focusedWindow, title: "Other.txt", document: null },
+      focusedWindow: { ...fixtureWindow, title: "Other.txt", document: null },
     }),
   });
   noEdit(await insertText(other.native, input, untitled), other, /window\/document changed/);
 });
 
-test("selected-text insertion survives a native window title update", async () => {
+await test("selected-text insertion survives a native window title update", async () => {
+  /**
+   * @param {string} title
+   * @returns {AppObservation}
+   */
   const snapshot = (title) =>
     parseAppState(
-      app.bundleId,
+      bundleId,
       `Window: "${title}", App: TextEdit.
 0 standard window ${title}
 	1 HTML content Description: Text fixture, URL: 127.0.0.1:52513/top
@@ -378,7 +536,7 @@ The focused UI element is 2 text field (settable) Message, Value: before after`,
     ...state,
     focusedWindow: { token: "window", title: fresh.title, document: null },
     focusedElement: {
-      ...state.focusedElement,
+      ...fixtureField,
       identifier: null,
       role: "AXTextField",
       roleDescription: "text field",
@@ -405,9 +563,11 @@ The focused UI element is 2 text field (settable) Message, Value: before after`,
     changed,
     /window\/document changed/,
   );
+  const beforeTitle = before.title;
+  if (beforeTitle === null) assert.fail("Snapshot title missing");
   const exactTitle = fixture({ inspectApp: async () => current });
   noEdit(
-    await insertText(exactTitle.native, { ...input, expectedTitle: before.title }, before, {
+    await insertText(exactTitle.native, { ...input, expectedTitle: beforeTitle }, before, {
       refreshObservation,
     }),
     exactTitle,
@@ -415,7 +575,7 @@ The focused UI element is 2 text field (settable) Message, Value: before after`,
   );
 });
 
-test("page labels and nonstandard roots cannot authorize insertion through a coincident native window title", async () => {
+await test("page labels and nonstandard roots cannot authorize insertion through a coincident native window title", async () => {
   for (const root of [
     "window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html",
     "standard window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html",
@@ -424,13 +584,13 @@ test("page labels and nonstandard roots cannot authorize insertion through a coi
     "window Fixture.txt",
   ]) {
     const observed = parseAppState(
-      app.bundleId,
+      bundleId,
       `Window: "", App: TextEdit.\n0 ${root}\n\t2 text entry area ID: First Text View, Value: prefix ORIGINAL suffix\n\nThe focused UI element is 2 text entry area`,
     );
     const f = fixture({
       inspectApp: async () => ({
         ...state,
-        focusedWindow: { ...state.focusedWindow, title: observed.title, document: observed.url },
+        focusedWindow: { ...fixtureWindow, title: observed.title, document: observed.url },
       }),
     });
     noEdit(
@@ -441,14 +601,16 @@ test("page labels and nonstandard roots cannot authorize insertion through a coi
   }
 });
 
-test("unsupported fields and unavailable Accessibility/compiler keep actionable reasons", async () => {
-  for (const [inspectApp, pattern] of [
+await test("unsupported fields and unavailable Accessibility/compiler keep actionable reasons", async () => {
+  /** @typedef {import("../../lib/native-input.mjs").NativeTextBackend["inspectApp"]} InspectApp */
+  /** @type {[InspectApp, RegExp][]} */
+  const cases = [
     [async () => ({ ...state, accessibilityTrusted: false }), /System Settings.*Accessibility/],
     [
       async () => ({
         ...state,
         focusedElement: {
-          ...state.focusedElement,
+          ...fixtureField,
           selectedTextSettable: false,
           selectedTextError: -25205,
         },
@@ -461,14 +623,17 @@ test("unsupported fields and unavailable Accessibility/compiler keep actionable 
       },
       /compilation failed.*swiftc unavailable/,
     ],
-  ]) {
+  ];
+  for (const [inspectApp, pattern] of cases) {
     const f = fixture({ inspectApp });
     noEdit(await insertText(f.native, input, observation), f, pattern);
   }
 });
 
-test("Swift preflight refusal is not dispatched; attempted but unverified write is unknown with no replay", async () => {
-  for (const edit of [
+await test("Swift preflight refusal is not dispatched; attempted but unverified write is unknown with no replay", async () => {
+  /** @typedef {Extract<NativeTextResult, { status: "unsupported" | "guard_failed" | "unverified" }>} RefusedEdit */
+  /** @type {RefusedEdit[]} */
+  const edits = [
     { status: "unsupported", mutationAttempted: false, reason: "AXSelectedText is not settable" },
     { status: "guard_failed", mutationAttempted: false, reason: "Selection changed" },
     {
@@ -476,7 +641,8 @@ test("Swift preflight refusal is not dispatched; attempted but unverified write 
       mutationAttempted: true,
       reason: "Exact text readback did not match; do not replay",
     },
-  ]) {
+  ];
+  for (const edit of edits) {
     const f = fixture({ replaceSelectedText: async () => edit });
     const result = await insertText(f.native, input, observation);
     assert.equal(result.isError, true);
@@ -485,7 +651,9 @@ test("Swift preflight refusal is not dispatched; attempted but unverified write 
       result.details.macuse.outcome,
       edit.mutationAttempted ? "unknown" : "not_dispatched",
     );
-    assert.match(result.content[0].text, new RegExp(edit.reason));
+    const firstBlock = result.content[0];
+    if (firstBlock === undefined) assert.fail("result text missing");
+    assert.match(firstBlock.text, new RegExp(edit.reason));
     assert.equal(f.calls.filter((call) => call.name === "replaceSelectedText").length, 1);
     assert.equal(
       f.calls.some((call) => call.name === "stop"),
@@ -494,8 +662,10 @@ test("Swift preflight refusal is not dispatched; attempted but unverified write 
   }
 });
 
-test("a rejected edit waits for native stop and never replays or promises GUI cancellation", async () => {
+await test("a rejected edit waits for native stop and never replays or promises GUI cancellation", async () => {
+  /** @type {(() => void) | undefined} */
   let release;
+  /** @type {Promise<void>} */
   const stopped = new Promise((resolve) => {
     release = resolve;
   });
@@ -512,13 +682,17 @@ test("a rejected edit waits for native stop and never replays or promises GUI ca
   });
   await nextTurn();
   assert.equal(settled, false);
-  assert.equal(f.calls.at(-1).name, "stop");
-  release();
+  const stopCall = f.calls.at(-1);
+  if (stopCall === undefined) assert.fail("stop call missing");
+  assert.equal(stopCall.name, "stop");
+  release?.();
   const result = await pending;
   assert.equal(result.details.macuse.outcome, "unknown");
   assert.equal(result.details.macuse.dispatched, true);
-  assert.match(result.content[0].text, /Do not replay/);
-  assert.doesNotMatch(result.content[0].text, /cancelled|canceled/);
+  const resultText = result.content[0];
+  if (resultText === undefined) assert.fail("result text missing");
+  assert.match(resultText.text, /Do not replay/);
+  assert.doesNotMatch(resultText.text, /cancelled|canceled/);
   assert.equal(f.calls.filter((call) => call.name === "replaceSelectedText").length, 1);
   assert.equal(
     f.calls.some((call) => call.name === "endObservation"),
@@ -526,7 +700,7 @@ test("a rejected edit waits for native stop and never replays or promises GUI ca
   );
 });
 
-test("pre-dispatch abort and native dispatch:false errors do not claim an attempted edit", async () => {
+await test("pre-dispatch abort and native dispatch:false errors do not claim an attempted edit", async () => {
   for (const reason of [undefined, null, "User stopped the operation"]) {
     const f = fixture();
     noEdit(
@@ -546,7 +720,7 @@ test("pre-dispatch abort and native dispatch:false errors do not claim an attemp
   assert.equal(result.details.macuse.outcome, "not_dispatched");
 });
 
-test("unavailable focus coverage does not erase verified text readback", async () => {
+await test("unavailable focus coverage does not erase verified text readback", async () => {
   for (const method of ["beginObservation", "endObservation"]) {
     const f = fixture({
       [method]: async () => {
@@ -555,22 +729,46 @@ test("unavailable focus coverage does not erase verified text readback", async (
     });
     const result = await insertText(f.native, input, observation);
     assert.equal(result.details.macuse.outcome, "verified");
-    assert.equal(result.details.macuse.focus.observationAvailable, false);
-    assert.equal(result.details.macuse.focus.inputAttribution, false);
-    assert.match(result.details.macuse.focus.observationError, /Observer unavailable/);
+    const unavailable = result.details.macuse.focus;
+    // tsgo requires this discriminant guard while tsgolint resolves the
+    // narrowed member as already false; both cannot be satisfied.
+    // oxlint-disable-next-line no-unnecessary-boolean-literal-compare
+    if (unavailable === undefined || unavailable.observationAvailable !== false)
+      assert.fail("unavailable focus record missing");
+    assert.equal(unavailable.observationAvailable, false);
+    assert.equal(unavailable.inputAttribution, false);
+    assert.match(unavailable.observationError, /Observer unavailable/);
   }
 });
 
 // Exercise the real client lifecycle against a fake subprocess: never launch the native helper or touch the desktop.
+/**
+ * @typedef {EventEmitter & {
+ *   pid: number,
+ *   stdout: PassThrough,
+ *   stderr: PassThrough,
+ *   stdin: Writable,
+ *   requests: Array<Record<string, unknown>>,
+ *   kills: string[],
+ *   kill: (signal?: string) => boolean,
+ *   respond: (result: unknown) => void,
+ * }} FakeChild
+ */
+/**
+ * @param {import("node:test").TestContext} t
+ * @returns {FakeChild[]}
+ */
 function subprocess(t) {
+  /** @type {FakeChild[]} */
   const children = [];
   const descriptor = Object.getOwnPropertyDescriptor(process, "platform");
+  if (descriptor === undefined) assert.fail("process.platform descriptor missing");
   Object.defineProperty(process, "platform", { ...descriptor, value: "darwin" });
-  t.mock.method(fs, "access", async () => {});
-  t.mock.method(fs, "mkdir", async () => {});
+  t.mock.method(fs, "access", async () => null);
+  t.mock.method(fs, "mkdir", async () => null);
   t.mock.method(childProcess, "spawn", () => {
-    const child = new EventEmitter();
-    Object.assign(child, {
+    /** @type {FakeChild} */
+    const child = Object.assign(new EventEmitter(), {
       pid: 9876,
       stdout: new PassThrough(),
       stderr: new PassThrough(),
@@ -580,16 +778,20 @@ function subprocess(t) {
         child.kills.push(signal);
         return true;
       },
-      respond(result) {
-        child.stdout.write(`${JSON.stringify({ id: child.requests.at(-1).id, result })}\n`);
+      respond(/** @type {unknown} */ result) {
+        const lastRequest = child.requests.at(-1);
+        if (lastRequest === undefined) assert.fail("fixture request missing for response");
+        child.stdout.write(`${JSON.stringify({ id: lastRequest.id, result })}\n`);
       },
-    });
-    child.stdin = new Writable({
-      write(chunk, _encoding, callback) {
-        child.requests.push(JSON.parse(String(chunk)));
-        child.emit("request");
-        callback();
-      },
+      stdin: new Writable({
+        write(chunk, _encoding, callback) {
+          const parsed = /** @type {unknown} */ (JSON.parse(String(chunk)));
+          assert.ok(isRecord(parsed), "fixture request must be a JSON object");
+          child.requests.push(parsed);
+          child.emit("request");
+          callback();
+        },
+      }),
     });
     children.push(child);
     return child;
@@ -602,17 +804,25 @@ function subprocess(t) {
   });
   return children;
 }
+/**
+ * @param {FakeChild[]} children
+ * @returns {Promise<FakeChild>}
+ */
 async function requested(children) {
-  while (!children.at(-1)?.requests.length) await nextTurn();
-  return children.at(-1);
+  while ((children.at(-1)?.requests.length ?? 0) === 0) await nextTurn();
+  const child = children.at(-1);
+  if (child === undefined) assert.fail("fake child missing");
+  return child;
 }
 
-test("native resolution forwards exact identifiers, returns identity, and preserves rejection", async (t) => {
+await test("native resolution forwards exact identifiers, returns identity, and preserves rejection", async (t) => {
   const children = subprocess(t);
   const native = new MacOSNative();
-  const pending = native.resolveApp(app.path);
+  const pending = native.resolveApp(appPath);
   const child = await requested(children);
-  assert.equal(child.requests[0].identifier, app.path);
+  const firstRequest = child.requests[0];
+  if (firstRequest === undefined) assert.fail("first request missing");
+  assert.equal(firstRequest.identifier, appPath);
   child.respond(app);
   assert.deepEqual(await pending, app);
   const missing = native.resolveApp("No such app");
@@ -625,7 +835,7 @@ test("native resolution forwards exact identifiers, returns identity, and preser
 });
 
 for (const boundary of ["abort", "timeout"])
-  test(`native ${boundary} waits for helper exit before settling an edit or restarting`, async (t) => {
+  await test(`native ${boundary} waits for helper exit before settling an edit or restarting`, async (t) => {
     const children = subprocess(t);
     t.mock.timers.enable({ apis: ["setTimeout"] });
     const native = new MacOSNative();
@@ -636,7 +846,7 @@ for (const boundary of ["abort", "timeout"])
         { pid: app.pid, text: input.text, expected: {} },
         { signal: controller.signal },
       )
-      .catch((error) => {
+      .catch((/** @type {unknown} */ error) => {
         settled = true;
         return error;
       });
@@ -646,20 +856,23 @@ for (const boundary of ["abort", "timeout"])
     await nextTurn();
     assert.deepEqual(child.kills, ["SIGTERM"]);
     assert.equal(settled, false);
-    const after = native.resolveApp(app.bundleId);
+    const after = native.resolveApp(bundleId);
     await nextTurn();
     assert.equal(children.length, 1);
     t.mock.timers.tick(1000);
     assert.deepEqual(child.kills, ["SIGTERM", "SIGKILL"]);
     child.emit("close", null, "SIGKILL");
-    const error = await pending;
-    assert.equal(error.dispatched, true);
-    assert.match(error.message, boundary === "abort" ? /aborted/ : /timed out/);
-    assert.match(error.message, /outcome is unknown.*Do not replay/);
+    const failure = await pending;
+    assert.ok(isRecord(failure), "edit must settle with a dispatch record");
+    assert.equal(failure.dispatched, true);
+    assert.match(String(failure.message), boundary === "abort" ? /aborted/ : /timed out/);
+    assert.match(String(failure.message), /outcome is unknown.*Do not replay/);
     await nextTurn();
     assert.equal(children.length, 2);
     const restarted = await requested(children);
-    assert.equal(restarted.requests[0].method, "resolveApp");
+    const restartRequest = restarted.requests[0];
+    if (restartRequest === undefined) assert.fail("restart request missing");
+    assert.equal(restartRequest.method, "resolveApp");
     restarted.respond(app);
     await after;
     const stopping = native.stop();
@@ -671,30 +884,38 @@ for (const boundary of ["abort", "timeout"])
     );
   });
 
-test("helper loss preserves each outstanding request's own dispatch status", async (t) => {
+await test("helper loss preserves each outstanding request's own dispatch status", async (t) => {
   const children = subprocess(t);
   const native = new MacOSNative();
-  const read = native.inspectApp(app.pid).catch((error) => error);
+  const read = native.inspectApp(app.pid).catch((/** @type {unknown} */ error) => error);
   const child = await requested(children);
   const edit = native
     .replaceSelectedText({ pid: app.pid, text: input.text, expected: {} })
-    .catch((error) => error);
+    .catch((/** @type {unknown} */ error) => error);
   await nextTurn();
   child.emit("close", 1, null);
-  assert.equal((await read).dispatched, false);
-  assert.equal((await edit).dispatched, true);
+  const readOutcome = await read;
+  assert.ok(isRecord(readOutcome), "read must settle with a record");
+  assert.equal(readOutcome.dispatched, false);
+  const editOutcome = await edit;
+  assert.ok(isRecord(editOutcome), "edit must settle with a record");
+  assert.equal(editOutcome.dispatched, true);
 });
 
-test("native malformed Unicode and already-aborted requests never start a subprocess", async (t) => {
+await test("native malformed Unicode and already-aborted requests never start a subprocess", async (t) => {
   const children = subprocess(t);
   const native = new MacOSNative();
-  await assert.rejects(
-    native.replaceSelectedText({ text: "\ud800" }),
-    (error) => error.dispatched === false && /well-formed/.test(error.message),
-  );
+  // Deliberately malformed runtime input: the client must reject surrogate
+  // text before starting a subprocess; the type cannot express this shape.
+  // oxlint-disable-next-line no-unsafe-type-assertion
+  const malformed = /** @type {NativeTextRequest} */ (/** @type {unknown} */ ({ text: "\ud800" }));
+  await assert.rejects(native.replaceSelectedText(malformed), (/** @type {unknown} */ error) => {
+    if (!isRecord(error)) return false;
+    return error.dispatched === false && /well-formed/.test(String(error.message));
+  });
   await assert.rejects(
     native.inspectApp(app.pid, { signal: AbortSignal.abort() }),
-    (error) => error.dispatched === false,
+    (/** @type {unknown} */ error) => isRecord(error) && error.dispatched === false,
   );
   assert.equal(children.length, 0);
 });

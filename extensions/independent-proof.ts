@@ -51,11 +51,10 @@ export default function independentProof(pi: ExtensionAPI) {
     });
   // Both hosts preserve partial failure evidence while marking the tool result as failed.
   pi.on("tool_result", (event) => {
-    if (
-      independentProofTools.some((tool) => tool.name === event.toolName) &&
-      (event.details as { independent?: { isError?: boolean } } | undefined)?.independent?.isError
-    )
-      return { isError: true };
+    const isError = independentProofTools.some((tool) => tool.name === event.toolName)
+      ? (event.details as { independent?: { isError?: boolean } } | undefined)?.independent?.isError
+      : undefined;
+    return isError === true ? { isError: true } : undefined;
   });
   pi.on("session_start", stop);
   pi.on("session_tree", stop);

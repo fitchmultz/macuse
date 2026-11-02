@@ -3,9 +3,35 @@ import { test } from "node:test";
 import { IndependentProofSession } from "../../lib/independent-proof-session.mjs";
 
 const mac = { skip: process.platform !== "darwin", timeout: 30_000 };
-const value = (result) => result.details.independent.execution.value;
+/** @typedef {import("../../lib/independent-proof-session.mjs").ProofTarget} ProofTarget */
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+/** @param {unknown} result @returns {Record<string, unknown>} */
+const independentOf = (result) => {
+  const record = isRecord(result) ? result : {};
+  const details = isRecord(record.details) ? record.details : {};
+  return isRecord(details.independent) ? details.independent : {};
+};
+/** @param {Record<string, unknown>} independent @returns {Record<string, unknown>} */
+const executionOf = (independent) => {
+  const execution = independent.execution;
+  return isRecord(execution) ? execution : {};
+};
+/** @param {unknown} result @returns {unknown} */
+const value = (result) => executionOf(independentOf(result)).value;
+/** @param {Record<string, unknown>} independent @returns {Array<Record<string, unknown>>} */
+const nativeActionsOf = (independent) => {
+  const actions = independent.nativeActions;
+  if (!Array.isArray(actions)) return [];
+  return actions.filter((action) => isRecord(action));
+};
+/** @param {Record<string, unknown>} independent @returns {Record<string, unknown>} */
+const settlementOf = (independent) => {
+  const settlement = independent.settlement;
+  return isRecord(settlement) ? settlement : {};
+};
 
-test(
+await test(
   "proof adapter preserves isolated expressions and returns authoritative mirrored refusal without native target",
   mac,
   async () => {
@@ -20,21 +46,33 @@ test(
         apps: ["unrelated.app"],
       });
       assert.equal(denied.isError, true);
-      assert.equal(denied.details.independent.isError, true);
-      assert.equal(denied.details.independent.nativeActions[0].mutationAttempted, false);
-      assert.match(denied.details.independent.nativeActions[0].error, /operator-configured/);
-      assert.equal(denied.details.independent.priorUnknown, false);
+      assert.equal(independentOf(denied).isError, true);
+      const deniedActions = nativeActionsOf(independentOf(denied));
+      const refusal = deniedActions[0];
+      if (refusal === undefined) assert.fail("Expected a refused native action");
+      assert.equal(refusal.mutationAttempted, false);
+      assert.match(String(refusal.error), /operator-configured/);
+      assert.equal(independentOf(denied).priorUnknown, false);
       assert.equal(value(denied), 42, "guest completion cannot certify a refused native request");
-      const visible = JSON.parse(denied.content.find((block) => block.type === "text").text);
+      const textBlock = denied.content.find((block) => block.type === "text");
+      if (textBlock === undefined) assert.fail("Expected text content");
+      /** @type {unknown} */
+      const parsedVisible = JSON.parse(textBlock.text);
+      const visible = isRecord(parsedVisible) ? parsedVisible : {};
+      const evidenceList = visible.nativeEvidence;
       assert.ok(
-        Array.isArray(visible.nativeEvidence),
+        Array.isArray(evidenceList),
         "model-facing content must retain trusted native evidence even when guest ignores it",
       );
-      assert.match(visible.nativeEvidence[0].error, /operator-configured/);
-      assert.equal(visible.nativeEvidence[0].mutationAttempted, false);
+      /** @type {unknown} */
+      const firstEvidence = evidenceList[0];
+      if (firstEvidence === undefined) assert.fail("Expected a native evidence entry");
+      if (!isRecord(firstEvidence)) assert.fail("Expected a native evidence record");
+      assert.match(String(firstEvidence.error), /operator-configured/);
+      assert.equal(firstEvidence.mutationAttempted, false);
       const reset = await session.reset();
       assert.equal(reset.isError, false);
-      assert.equal(reset.details.independent.settlement.settled, true);
+      assert.equal(settlementOf(independentOf(reset)).settled, true);
       assert.equal(value(await session.execute({ code: "typeof retained" })), "undefined");
     } finally {
       const stopped = await session.stop();
@@ -46,7 +84,7 @@ test(
   },
 );
 
-test(
+await test(
   "trusted proof target scopes reads and rejects guest authorization/identity fields before native access",
   mac,
   async () => {
@@ -58,7 +96,11 @@ test(
     const session = new IndependentProofSession({ target });
     target.bundleId = "mutated.after.construction";
     try {
-      for (const [params, apps, pattern] of [
+      for (const [
+        params,
+        apps,
+        pattern,
+      ] of /** @type {[Record<string, unknown>, string[], RegExp][]} */ ([
         [{ app: "unrelated.app" }, ["unrelated.app"], /exact trusted target/],
         [
           { app: "com.macuse.actuator-fixture.00000000-0000-0000-0000-000000000000" },
@@ -81,16 +123,17 @@ test(
           ["com.macuse.actuator-fixture.00000000-0000-0000-0000-000000000000"],
           /Unsupported guest fields/,
         ],
-      ]) {
+      ])) {
         const result = await session.execute({
           code: `macuse.call('observe', ${JSON.stringify(params)})`,
           apps,
         });
         assert.equal(result.isError, true);
-        assert.equal(result.details.independent.isError, true);
-        const refusal = result.details.independent.nativeActions[0];
+        assert.equal(independentOf(result).isError, true);
+        const refusal = nativeActionsOf(independentOf(result))[0];
+        if (refusal === undefined) assert.fail("Expected a refused native action");
         assert.equal(refusal.mutationAttempted, false);
-        assert.match(refusal.error, pattern);
+        assert.match(String(refusal.error), pattern);
       }
     } finally {
       await session.stop();
@@ -98,7 +141,7 @@ test(
   },
 );
 
-test(
+await test(
   "proof reset refuses concurrent admission, invalidates queued execution and drains actual owned worker",
   mac,
   async () => {
@@ -112,7 +155,7 @@ test(
       const [first, second, cleared] = await Promise.all([loop, queued, reset]);
       assert.equal(first.isError, true);
       assert.equal(second.isError, true);
-      assert.equal(cleared.details.independent.settlement.settled, true);
+      assert.equal(settlementOf(independentOf(cleared)).settled, true);
       assert.equal(value(await session.execute({ code: "typeof retained" })), "undefined");
     } finally {
       await session.stop();
@@ -120,13 +163,13 @@ test(
   },
 );
 
-test("proof operator target configuration rejects malformed identities without starting native services", () => {
+await test("proof operator target configuration rejects malformed identities without starting native services", () => {
   const valid = {
     bundleId: "com.macuse.actuator-fixture.00000000-0000-0000-0000-000000000000",
     pid: 12345,
     path: "/not/a/real/ActuatorFixture.app",
   };
-  for (const target of [
+  for (const target of /** @type {unknown[]} */ ([
     {},
     { ...valid, bundleId: "com.apple.TextEdit" },
     { ...valid, pid: -1 },
@@ -134,7 +177,10 @@ test("proof operator target configuration rejects malformed identities without s
     { ...valid, path: "/not/a/real/Other.app" },
     { ...valid, windowTitle: "unrelated window" },
     { ...valid, allowMutating: true },
-  ]) {
-    assert.throws(() => new IndependentProofSession({ target }), /trusted proof target/);
+  ])) {
+    // Deliberately malformed identities must reach the constructor's own validation.
+    // oxlint-disable-next-line no-unsafe-type-assertion
+    const malformed = /** @type {ProofTarget} */ (target);
+    assert.throws(() => new IndependentProofSession({ target: malformed }), /trusted proof target/);
   }
 });
