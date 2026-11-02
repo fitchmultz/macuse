@@ -19,7 +19,9 @@
     "noEmit": true,
     "types": ["node"],
     "paths": {
-      "@modelcontextprotocol/sdk/*": ["./node_modules/@modelcontextprotocol/sdk/*"]
+      "@modelcontextprotocol/sdk/client/index.js": [
+        "./node_modules/@modelcontextprotocol/sdk/dist/esm/client/index.d.ts"
+      ]
     }
   },
   "include": [
