@@ -225,9 +225,11 @@ async function main() {
       );
   if (mcp !== null) transcript.commands.push(mcp);
 
-  const doctorOk = doctor !== null && isRecord(doctor.json) && doctor.json.ok === true;
+  // A skipped check is neutral for the verdict, matching the pre-typing
+  // behavior of (doctor ? doctor.json?.ok === true : true).
+  const doctorOk = doctor === null || (isRecord(doctor.json) && doctor.json.ok === true);
   const focusOk = isRecord(focus.json) && focus.json.ok === true;
-  const mcpOk = mcp !== null && isRecord(mcp.json) && mcp.json.ok === true;
+  const mcpOk = mcp === null || (isRecord(mcp.json) && mcp.json.ok === true);
   /** @type {DemoReport} */
   const report = {
     ok: config.ok && doctorOk && focusOk && mcpOk,

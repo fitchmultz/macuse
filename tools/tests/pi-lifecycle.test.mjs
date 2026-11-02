@@ -51,6 +51,13 @@ const textOf = (part) =>
  * @returns {value is (trigger: { messageType: "user", prompt: string }, options: unknown) => Promise<EmitResult>}
  */
 const isTwoArgEmitter = (value) => typeof value === "function" && value.length === 2;
+/**
+ * Pi 1.0 hosts take (prompt, images, options); 1.3 hosts reject that literal
+ * call shape, so the three-argument dispatch narrows through this predicate.
+ * @param {unknown} value
+ * @returns {value is (prompt: string, extra: undefined, options: unknown) => Promise<EmitResult>}
+ */
+const isThreeArgEmitter = (value) => typeof value === "function" && value.length === 3;
 /** @typedef {NonNullable<Extract<Parameters<SessionManagerInstance["appendMessage"]>[0], { role: "toolResult" }>["details"]>} ToolResultDetails */
 /**
  * @param {unknown} value
@@ -245,7 +252,7 @@ function beforeAgentStart(f, prompt) {
   const options = { cwd: f.dir, selectedTools: f.session.getActiveToolNames() };
   // Locked Pi 1.0 uses three arguments; the selected 1.3 hosts use a trigger object.
   const emit = runner.emitBeforeAgentStart.bind(runner);
-  if (emit.length === 3) return emit(prompt, undefined, options);
+  if (isThreeArgEmitter(emit)) return emit(prompt, undefined, options);
   if (isTwoArgEmitter(emit)) return emit({ messageType: "user", prompt }, options);
   assert.fail("unsupported emitBeforeAgentStart host signature");
 }
