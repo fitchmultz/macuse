@@ -5,7 +5,22 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+/**
+ * @typedef {import("node:child_process").ChildProcessByStdio<import("node:stream").Writable, import("node:stream").Readable, import("node:stream").Readable>} ActuatorProcess
+ * A failed actuator call carrying dispatch evidence on the Error.
+ * @typedef {Error & { dispatched?: boolean | undefined, mutationAttempted?: boolean | undefined, outcome?: string | undefined }} ActuatorError
+ * The single in-flight wire call.
+ * @typedef {{ id: number, resolve: (result: unknown) => void, reject: (error: ActuatorError) => void, failure?: Error | undefined }} PendingCall
+ */
+
+/**
+ * @param {unknown} value
+ * @returns {value is Record<string, unknown>}
+ */
+const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+
 const source = fileURLToPath(new URL("./native-actuator.swift", import.meta.url));
+/** @type {Promise<string> | undefined} */
 let compiling;
 async function executable() {
   if (process.platform !== "darwin")
@@ -27,7 +42,8 @@ async function executable() {
     }
     const temporary = `${binary}.${process.pid}.tmp`;
     try {
-      await new Promise((resolve, reject) => {
+      /** @type {Promise<void>} */
+      const compiled = new Promise((resolve, reject) => {
         const compiler = spawn("/usr/bin/xcrun", ["swiftc", source, "-o", temporary], {
           stdio: ["ignore", "ignore", "pipe"],
         });
@@ -36,8 +52,8 @@ async function executable() {
           stderr += "\nCompiler exceeded sixty seconds.";
           compiler.kill("SIGKILL");
         }, 60_000);
-        compiler.stderr.on("data", (chunk) => {
-          stderr = (stderr + chunk).slice(-8000);
+        compiler.stderr.on("data", (/** @type {Buffer} */ chunk) => {
+          stderr = (stderr + chunk.toString()).slice(-8000);
         });
         compiler.once("error", (error) => {
           clearTimeout(timer);
@@ -45,11 +61,11 @@ async function executable() {
         });
         compiler.once("close", (code) => {
           clearTimeout(timer);
-          code === 0
-            ? resolve()
-            : reject(new Error(`Native actuator compilation failed: ${stderr}`));
+          if (code === 0) resolve();
+          else reject(new Error(`Native actuator compilation failed: ${stderr}`));
         });
       });
+      await compiled;
       await rename(temporary, binary);
       return binary;
     } finally {
@@ -66,11 +82,16 @@ async function executable() {
 
 /** Opt-in feasibility adapter, not selected by production MacuseSession/backend defaults. */
 export class NativeActuator {
+  /** @type {ActuatorProcess | undefined} */
   #child;
+  /** @type {PendingCall | undefined} */
   #pending;
   #nextId = 0;
+  /** @type {Promise<unknown>} */
   #tail = Promise.resolve();
+  /** @type {Promise<void> | undefined} */
   #stopping;
+  /** @type {Promise<void> | undefined} */
   #closing;
   #generation = 0;
 
@@ -80,22 +101,31 @@ export class NativeActuator {
     const child = spawn(await executable(), [], { stdio: ["pipe", "pipe", "pipe"] });
     this.#child = child;
     let stderr = "";
-    child.stderr.on("data", (chunk) => {
-      stderr = (stderr + chunk).slice(-4000);
+    const terminateQuietly = () => {
+      this.#terminate().catch(() => null);
+    };
+    child.stderr.on("data", (/** @type {Buffer} */ chunk) => {
+      stderr = (stderr + chunk.toString()).slice(-4000);
     });
     child.once("error", (error) => {
       if (this.#pending) this.#pending.failure = error;
     });
     child.stdin.on("error", (error) => {
       if (this.#pending) this.#pending.failure = error;
-      void this.#terminate();
+      terminateQuietly();
     });
     child.once("close", (code, signal) => {
       if (this.#child === child) this.#child = undefined;
-      this.#pending?.reject(
-        this.#pending.failure ??
-          new Error(`Native actuator exited (${signal ?? code})${stderr ? `: ${stderr}` : ""}.`),
-      );
+      const pending = this.#pending;
+      if (pending !== undefined)
+        pending.reject(
+          pending.failure ??
+            new Error(
+              `Native actuator exited (${String(signal ?? code)})${
+                stderr !== "" ? `: ${stderr}` : ""
+              }.`,
+            ),
+        );
     });
     let output = Buffer.alloc(0);
     let oversized = false;
@@ -109,24 +139,27 @@ export class NativeActuator {
           this.#pending.failure = new Error(
             "Native actuator output exceeds twenty megabytes; effect outcome may be unknown. Do not replay.",
           );
-        void this.#terminate();
+        terminateQuietly();
         return;
       }
       const end = output.indexOf(10);
       if (end < 0) return;
       const line = output.subarray(0, end).toString("utf8");
       output = output.subarray(end + 1);
-      let message;
+      let parsed;
       try {
-        message = JSON.parse(line);
+        parsed = /** @type {unknown} */ (JSON.parse(line));
       } catch {
         return;
       }
+      if (!isRecord(parsed)) return;
+      const message = parsed;
       const pending = this.#pending;
       if (!pending || pending.id !== message.id || pending.failure) return;
-      if (message.result?.error)
+      const result = isRecord(message.result) ? message.result : undefined;
+      if (result !== undefined && typeof result.error === "string" && result.error !== "")
         pending.reject(
-          Object.assign(new Error(message.result.error), {
+          Object.assign(new Error(result.error), {
             dispatched: false,
             mutationAttempted: false,
           }),
@@ -136,15 +169,27 @@ export class NativeActuator {
     return child;
   }
 
+  /**
+   * @param {string} method
+   * @param {unknown} args
+   * @param {{ signal?: AbortSignal, timeoutMs?: number }} [options]
+   * @returns {Promise<unknown>}
+   */
   #request(method, args, { signal, timeoutMs = 15_000 } = {}) {
-    if (!args || typeof args !== "object" || Array.isArray(args))
+    if (!isRecord(args))
       return Promise.reject(new TypeError("Actuator arguments must be an object."));
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 100 || timeoutMs > 60_000)
       return Promise.reject(new RangeError("timeoutMs must be 100–60000."));
+    /** @type {unknown} */
     let saved;
     try {
       saved = structuredClone(args);
+      /** @type {Set<object>} */
       const ancestors = new Set();
+      /**
+       * @param {unknown} value
+       * @returns {void}
+       */
       const validate = (value) => {
         if (value === null) return;
         if (typeof value === "string" && !value.isWellFormed())
@@ -173,7 +218,7 @@ export class NativeActuator {
       saved = JSON.parse(json);
     } catch (error) {
       return Promise.reject(
-        Object.assign(error, {
+        Object.assign(error instanceof Error ? error : new Error(String(error)), {
           dispatched: false,
           mutationAttempted: false,
           outcome: "not-dispatched",
@@ -184,7 +229,8 @@ export class NativeActuator {
     const closing = this.#closing;
     const run = this.#tail.then(async () => {
       const id = ++this.#nextId;
-      const line = JSON.stringify({ ...saved, id, method });
+      const payload = isRecord(saved) ? saved : {};
+      const line = JSON.stringify({ ...payload, id, method });
       if (Buffer.byteLength(line) > 1_000_000) {
         throw Object.assign(new RangeError("Actuator wire request exceeds one megabyte."), {
           dispatched: false,
@@ -192,6 +238,7 @@ export class NativeActuator {
           outcome: "not-dispatched",
         });
       }
+      /** @type {ActuatorProcess | undefined} */
       let child;
       try {
         await closing;
@@ -202,19 +249,28 @@ export class NativeActuator {
         if (generation !== this.#generation) throw new Error("Actuator stopped before dispatch.");
       } catch (error) {
         await this.#terminate();
-        throw Object.assign(new Error(error.message), {
+        throw Object.assign(new Error(error instanceof Error ? error.message : String(error)), {
           dispatched: false,
           mutationAttempted: false,
           outcome: "not-dispatched",
         });
       }
-      return new Promise((resolve, reject) => {
+      const terminateQuietly = () => {
+        this.#terminate().catch(() => null);
+      };
+      /** @type {Promise<unknown>} */
+      const settled = new Promise((resolve, reject) => {
         let dispatched = false;
+        /**
+         * @param {ActuatorError | null} error
+         * @param {unknown} [result]
+         * @returns {void}
+         */
         const finish = (error, result) => {
           clearTimeout(timer);
           signal?.removeEventListener("abort", aborted);
           this.#pending = undefined;
-          if (error)
+          if (error !== null)
             reject(
               Object.assign(new Error(error.message), {
                 dispatched: error.dispatched ?? dispatched,
@@ -224,62 +280,92 @@ export class NativeActuator {
             );
           else resolve(result);
         };
+        /**
+         * @param {string} reason
+         * @returns {void}
+         */
         const cancel = (reason) => {
-          this.#pending.failure = new Error(
-            `Native ${method} ${reason}; ${dispatched ? "effect may already have occurred. Do not replay." : "no mutation was dispatched."}`,
-          );
-          void this.#terminate();
+          const pending = this.#pending;
+          if (pending !== undefined)
+            pending.failure = new Error(
+              `Native ${method} ${reason}; ${
+                dispatched
+                  ? "effect may already have occurred. Do not replay."
+                  : "no mutation was dispatched."
+              }`,
+            );
+          this.#terminate().catch(() => null);
         };
         const aborted = () => cancel("aborted");
         const timer = setTimeout(() => cancel("timed out"), timeoutMs);
-        this.#pending = {
+        /** @type {PendingCall} */
+        const entry = {
           id,
           resolve: (result) => finish(null, result),
           reject: (error) => finish(error),
         };
+        this.#pending = entry;
         signal?.addEventListener("abort", aborted, { once: true });
         dispatched = method === "act";
         child.stdin.write(`${line}\n`, (error) => {
           if (error && this.#pending?.id === id) {
             this.#pending.failure = error;
-            void this.#terminate();
+            terminateQuietly();
           }
         });
       });
+      return settled;
     });
-    this.#tail = run.catch(() => {});
+    this.#tail = run.catch(() => null);
     return run;
   }
 
+  /**
+   * @param {unknown} args
+   * @param {{ signal?: AbortSignal, timeoutMs?: number }} [options]
+   * @returns {Promise<unknown>}
+   */
   observe(args, options) {
     return this.#request("observe", args, options);
   }
+  /**
+   * @param {unknown} args
+   * @param {{ signal?: AbortSignal, timeoutMs?: number }} [options]
+   * @returns {Promise<unknown>}
+   */
   screenshot(args, options) {
     return this.#request("screenshot", args, options);
   }
+  /**
+   * @param {unknown} args
+   * @param {{ signal?: AbortSignal, timeoutMs?: number }} [options]
+   * @returns {Promise<unknown>}
+   */
   act(args, options) {
     return this.#request("act", args, options);
   }
 
   async #terminate() {
-    if (this.#stopping) return this.#stopping;
+    if (this.#stopping !== undefined) return this.#stopping;
     const child = this.#child;
     if (!child) return;
-    this.#stopping = new Promise((resolve) => {
+    /** @type {Promise<void>} */
+    const stopped = new Promise((resolve) => {
       const timer = setTimeout(() => child.kill("SIGKILL"), 1000);
       child.once("close", () => {
         clearTimeout(timer);
         resolve();
       });
       child.kill("SIGTERM");
-    }).finally(() => {
+    });
+    this.#stopping = stopped.finally(() => {
       this.#stopping = undefined;
     });
     return this.#stopping;
   }
 
   async stop() {
-    if (this.#closing) return this.#closing;
+    if (this.#closing !== undefined) return this.#closing;
     const settled = this.#tail;
     this.#generation++;
     this.#closing = (async () => {

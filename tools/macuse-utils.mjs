@@ -19,8 +19,13 @@ export const REPO_ROOT = resolve(TOOLS_DIR, "..");
 /** Canonical package version. Single source of truth; read from package.json once. */
 export const VERSION = (() => {
   try {
-    const pkg = JSON.parse(readFileSync(resolve(REPO_ROOT, "package.json"), "utf8"));
-    if (pkg && typeof pkg.version === "string") return pkg.version;
+    const pkg = /** @type {unknown} */ (
+      JSON.parse(readFileSync(resolve(REPO_ROOT, "package.json"), "utf8"))
+    );
+    if (typeof pkg === "object" && pkg !== null && "version" in pkg) {
+      const version = pkg.version;
+      if (typeof version === "string") return version;
+    }
   } catch {
     // Fall through; readFileSync failure is unrecoverable for a tool run from the repo.
   }
@@ -43,7 +48,9 @@ const DEFAULT_BUNDLED_COMPUTER_HISTORY_PLUGIN_DIR = resolve(
   DEFAULT_BUNDLED_PLUGIN_ROOT,
   "computer-history",
 );
-export const DEFAULT_CODEX_HOME = process.env.CODEX_HOME || resolve(homedir(), ".codex");
+const envCodexHome = process.env.CODEX_HOME;
+export const DEFAULT_CODEX_HOME =
+  envCodexHome !== undefined && envCodexHome !== "" ? envCodexHome : resolve(homedir(), ".codex");
 // Plugin no longer embeds the app; use the installed client under $CODEX_HOME/computer-use.
 export const DEFAULT_COMPUTER_USE_PLUGIN_ROOT = resolve(
   DEFAULT_CODEX_HOME,
@@ -95,6 +102,11 @@ export const MCP_SERVERS = Object.freeze({
 });
 export const COMPUTER_USE_TOOL_NAMES = MCP_SERVERS["computer-use"].tools;
 
+/**
+ * @param {string} a
+ * @param {string} b
+ * @returns {number}
+ */
 function compareVersionLike(a, b) {
   const aa = a
     .split(/[^0-9]+/)
@@ -105,16 +117,22 @@ function compareVersionLike(a, b) {
     .filter(Boolean)
     .map(Number);
   for (let i = 0; i < Math.max(aa.length, bb.length); i += 1) {
-    const delta = (aa[i] || 0) - (bb[i] || 0);
+    const delta = (aa[i] ?? 0) - (bb[i] ?? 0);
     if (delta !== 0) return delta;
   }
   return a.localeCompare(b);
 }
 
+/** @type {("computer-use" | "event-stream" | "computer-history")[]} */
+const serverNames = ["computer-use", "event-stream", "computer-history"];
+
+/**
+ * @param {string} tool
+ * @returns {"computer-use" | "event-stream" | "computer-history"}
+ */
 export function mcpServerForTool(tool) {
-  const match = Object.entries(MCP_SERVERS).find(([, server]) => server.tools.includes(tool));
-  if (!match) throw new Error(`Unsupported upstream Computer Use tool: ${tool}`);
-  return match[0];
+  for (const name of serverNames) if (MCP_SERVERS[name].tools.includes(tool)) return name;
+  throw new Error(`Unsupported upstream Computer Use tool: ${tool}`);
 }
 
 export function mcpServerConfigs() {
@@ -132,6 +150,11 @@ export function mcpServerConfigs() {
   );
 }
 
+/**
+ * @param {string} [root]
+ * @param {{ fallback?: boolean }} [opts]
+ * @returns {string | null}
+ */
 export function discoverComputerUsePluginDir(root = DEFAULT_COMPUTER_USE_PLUGIN_ROOT, opts = {}) {
   try {
     const entries = readdirSync(root, { withFileTypes: true })
@@ -140,30 +163,51 @@ export function discoverComputerUsePluginDir(root = DEFAULT_COMPUTER_USE_PLUGIN_
       .sort(compareVersionLike)
       .reverse();
     const found = entries.find((entry) => existsSync(resolve(root, entry, ".mcp.json")));
-    if (found) return resolve(root, found);
+    if (found !== undefined) return resolve(root, found);
   } catch {
     // Fall back to latest path observed when this helper was updated.
   }
   return opts.fallback === false ? null : DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR;
 }
 
+/**
+ * @param {Date} [date]
+ * @returns {string}
+ */
 export function nowIsoForPath(date = new Date()) {
   return date.toISOString().replace(/[:.]/g, "-");
 }
 
+/**
+ * @param {string} path
+ * @returns {void}
+ */
 export function ensureDir(path) {
   mkdirSync(path, { recursive: true });
 }
 
+/**
+ * @param {string} path
+ * @param {unknown} value
+ * @returns {void}
+ */
 export function writeJsonFile(path, value) {
   ensureDir(dirname(path));
   writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
 }
 
+/** Parsed JSON is untrusted until the caller validates it.
+ * @param {string} path
+ * @returns {unknown}
+ */
 export function readJsonFile(path) {
   return JSON.parse(readFileSync(path, "utf8"));
 }
 
+/**
+ * @param {string} path
+ * @returns {boolean}
+ */
 export function isExecutable(path) {
   try {
     accessSync(path, constants.X_OK);
@@ -173,55 +217,103 @@ export function isExecutable(path) {
   }
 }
 
+/**
+ * @param {string} path
+ * @returns {boolean}
+ */
 export function fileExists(path) {
   return existsSync(path);
 }
 
+/**
+ * First nonempty text value, or null. Preserves the explicit `||` fallback order
+ * for null and empty-string values.
+ * @param {(string | null | undefined)[]} values
+ * @returns {string | null}
+ */
+export const firstText = (values) =>
+  values.find((value) => typeof value === "string" && value.length > 0) ?? null;
+
+/**
+ * Normalize spawn output. Node types declare stdout/stderr as strings, but a
+ * failed spawn returns undefined at runtime.
+ * @param {string | undefined} value
+ * @returns {string}
+ */
+const spawnText = (value) => value ?? "";
+
+/**
+ * @param {string} name
+ * @param {string} command
+ * @param {string[]} [args]
+ * @param {import("./macuse-utils.mjs").RunCommandOptions} [opts]
+ * @returns {import("./macuse-utils.mjs").RunCommandResult}
+ */
 export function runCommand(name, command, args = [], opts = {}) {
   const started = Date.now();
+  const cwd = opts.cwd ?? REPO_ROOT;
   const result = spawnSync(command, args, {
-    cwd: opts.cwd || REPO_ROOT,
-    env: { ...process.env, ...(opts.env || {}) },
+    cwd,
+    env: { ...process.env, ...opts.env },
     encoding: "utf8",
     input: opts.input,
-    timeout: opts.timeoutMs || 120_000,
-    maxBuffer: opts.maxBuffer || 20 * 1024 * 1024,
+    timeout: opts.timeoutMs ?? 120_000,
+    maxBuffer: opts.maxBuffer ?? 20 * 1024 * 1024,
   });
   return {
     name,
     command,
     args,
-    cwd: opts.cwd || REPO_ROOT,
+    cwd,
     durationMs: Date.now() - started,
     status: result.status,
     signal: result.signal,
     error: result.error ? result.error.message : null,
-    stdout: result.stdout || "",
-    stderr: result.stderr || "",
+    stdout: spawnText(result.stdout),
+    stderr: spawnText(result.stderr),
     ok: !result.error && result.status === 0,
   };
 }
 
+/**
+ * @param {string} name
+ * @param {string} command
+ * @param {string[]} [args]
+ * @param {import("./macuse-utils.mjs").RunCommandOptions} [opts]
+ * @returns {import("./macuse-utils.mjs").RunCommandResult}
+ */
 export function mustRun(name, command, args = [], opts = {}) {
   const result = runCommand(name, command, args, opts);
   if (!result.ok) {
-    const detail = result.error || result.stderr || result.stdout || `exit ${result.status}`;
+    const detail =
+      firstText([result.error, result.stderr, result.stdout]) ?? `exit ${String(result.status)}`;
     throw new Error(`${name} failed: ${detail.trim().slice(0, 2000)}`);
   }
   return result;
 }
 
+/**
+ * @param {string} label
+ * @param {string} text
+ * @returns {unknown}
+ */
 export function parseJsonOutput(label, text) {
   try {
     return JSON.parse(text);
   } catch (error) {
-    throw new Error(`${label} returned invalid JSON: ${error.message}\n${text.slice(0, 1000)}`);
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`${label} returned invalid JSON: ${reason}\n${text.slice(0, 1000)}`, {
+      cause: error,
+    });
   }
 }
 
+/**
+ * @returns {{ asn: string, bundleId: string | null, name: string | null } | null}
+ */
 export function frontmostApp() {
   const front = runCommand("frontmost asn", "/usr/bin/lsappinfo", ["front"], { timeoutMs: 5000 });
-  if (!front.ok || !front.stdout.trim()) return null;
+  if (!front.ok || front.stdout.trim().length === 0) return null;
   const asn = front.stdout.trim();
   const bundle = runCommand(
     "frontmost bundle id",
@@ -234,11 +326,14 @@ export function frontmostApp() {
   });
   return {
     asn,
-    bundleId: (bundle.stdout.match(/="([^"]+)"/) || [])[1] || null,
-    name: (name.stdout.match(/="([^"]+)"/) || [])[1] || null,
+    bundleId: (bundle.stdout.match(/="([^"]+)"/) ?? [])[1] ?? null,
+    name: (name.stdout.match(/="([^"]+)"/) ?? [])[1] ?? null,
   };
 }
 
+/**
+ * @returns {{ x: number, y: number } | null}
+ */
 export function mousePosition() {
   const script =
     "import CoreGraphics; if let e = CGEvent(source: nil) { let p = e.location; print(Int(p.x), Int(p.y)) }";
@@ -248,16 +343,25 @@ export function mousePosition() {
     .trim()
     .split(/\s+/)
     .map((value) => Number(value));
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  if (typeof x !== "number" || !Number.isFinite(x) || typeof y !== "number" || !Number.isFinite(y))
+    return null;
   return { x, y };
 }
 
+/**
+ * @param {string} path
+ * @returns {string}
+ */
 export function sha256File(path) {
   const hash = createHash("sha256");
   hash.update(readFileSync(path));
   return hash.digest("hex");
 }
 
+/**
+ * @param {string} path
+ * @returns {{ path: string, bytes: number, sha256: string, width: number | null, height: number | null } | null}
+ */
 export function imageInfo(path) {
   if (!existsSync(path)) return null;
   const result = runCommand("image info", "sips", ["-g", "pixelWidth", "-g", "pixelHeight", path], {
@@ -274,23 +378,58 @@ export function imageInfo(path) {
   };
 }
 
+/** @typedef {{ content?: Array<{ type?: unknown, text?: unknown }> } | null | undefined} ToolTextSource */
+/**
+ * @param {ToolTextSource} result
+ * @returns {string}
+ */
 export function toolText(result) {
   return (result?.content || [])
-    .filter((block) => block?.type === "text" && typeof block.text === "string")
+    .filter((block) => block.type === "text" && typeof block.text === "string")
     .map((block) => block.text)
     .join("\n");
 }
 
+/**
+ * @param {{ result?: ToolTextSource } | null | undefined} step
+ * @returns {string}
+ */
 export function stepText(step) {
   return toolText(step?.result);
 }
 
-export function markdownEscape(value) {
-  return String(value ?? "")
-    .replace(/\|/g, "\\|")
-    .replace(/\n/g, "<br>");
+/**
+ * Render any report cell value as text. Primitives keep their String()
+ * representation; composite values render as JSON instead of `[object Object]`.
+ * @param {unknown} value
+ * @returns {string}
+ */
+function cellText(value) {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint")
+    return String(value);
+  try {
+    const json = /** @type {unknown} */ (JSON.stringify(value));
+    return typeof json === "string" ? json : "[object]";
+  } catch {
+    return "[object]";
+  }
 }
 
+/**
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function markdownEscape(value) {
+  return cellText(value).replace(/\|/g, "\\|").replace(/\n/g, "<br>");
+}
+
+/**
+ * @param {unknown[]} headers
+ * @param {unknown[][]} rows
+ * @returns {string}
+ */
 export function markdownTable(headers, rows) {
   const header = `| ${headers.map(markdownEscape).join(" | ")} |`;
   const sep = `| ${headers.map(() => "---").join(" | ")} |`;
@@ -298,6 +437,11 @@ export function markdownTable(headers, rows) {
   return [header, sep, ...body].join("\n");
 }
 
+/**
+ * @param {string} command
+ * @param {string[]} [args]
+ * @returns {string}
+ */
 export function commandLine(command, args = []) {
   return [command, ...args]
     .map((part) => (/^[A-Za-z0-9_./:=@-]+$/.test(part) ? part : JSON.stringify(part)))

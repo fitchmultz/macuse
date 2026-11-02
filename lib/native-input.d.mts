@@ -1,5 +1,31 @@
-import type { MacOSNative, NativeApplication, NativeObservation } from "../tools/macos-native.mjs";
+import type {
+  NativeApplication,
+  NativeAppState,
+  NativeObservation,
+  NativeRequestOptions,
+  NativeTextRequest,
+  NativeTextResult,
+} from "../tools/macos-native.mjs";
 import type { AppObservation } from "./app-state.mjs";
+
+/**
+ * Structural native seam `insertText` drives; production passes MacOSNative.
+ * The session's injected native backend must satisfy the same surface.
+ */
+export interface NativeTextBackend {
+  resolveApp(identifier: string, options?: NativeRequestOptions): Promise<NativeApplication>;
+  beginObservation(
+    pids?: number[],
+    options?: NativeRequestOptions,
+  ): Promise<{ id: string; before?: NativeObservation["before"] }>;
+  endObservation(id: string, options?: NativeRequestOptions): Promise<NativeObservation>;
+  inspectApp(pid: number, options?: NativeRequestOptions): Promise<NativeAppState>;
+  replaceSelectedText(
+    request: NativeTextRequest,
+    options?: NativeRequestOptions,
+  ): Promise<NativeTextResult>;
+  stop(): Promise<void>;
+}
 
 export type InsertTextInput = {
   app: string;
@@ -28,7 +54,7 @@ export type InsertTextResult = {
   };
 };
 export function insertText(
-  native: MacOSNative,
+  native: NativeTextBackend,
   input: InsertTextInput,
   observation: AppObservation | undefined,
   options: { signal?: AbortSignal; refreshObservation: () => Promise<AppObservation | undefined> },

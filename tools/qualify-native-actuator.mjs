@@ -3,56 +3,140 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { parseArgs } from "node:util";
+import { firstText } from "./macuse-utils.mjs";
 import { fileURLToPath } from "node:url";
+
+/**
+ * @param {unknown} value
+ * @returns {value is Record<string, unknown>}
+ */
+const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+/**
+ * @param {unknown} value
+ * @returns {value is string[]}
+ */
+const isStringArray = (value) =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
+/** @typedef {{ bundleId?: string, pid: number, path?: string }} ObservedApp */
+/** @typedef {{ x: number, y: number, width: number, height: number }} FrameRect */
+/** @typedef {{ token: string, title?: string, document?: unknown, frame?: FrameRect }} ObservedWindow */
+/** @typedef {{ token: string, role?: string, value?: unknown, description?: string, title?: string, identifier?: string, windowToken?: string, actions?: string[], valueSettable?: boolean }} ObservedElement */
+/** @typedef {{ observationId: string, fullSnapshot?: boolean, app: ObservedApp, windows: ObservedWindow[], elements: ObservedElement[] }} ProofObservation */
+/** @typedef {{ coordinateSpace: string, windowToken: string, image: { mimeType: string, data: string, width: number, height: number }, windowFrame: FrameRect, captureRect: FrameRect & Record<string, number>, pointPixelScale: number }} ScreenshotResult */
+/** @typedef {{ name: string | undefined, pid?: number, window: ObservedWindow, element?: ObservedElement, field?: ObservedElement, contextField?: ObservedElement }} ObservedTabState */
+/** @typedef {{ observe: (input: Record<string, unknown>) => Promise<unknown>, act: (input: Record<string, unknown>) => Promise<unknown>, screenshot: (input: Record<string, unknown>) => Promise<unknown>, stop: () => Promise<void> }} ActuatorLike */
+/** @typedef {{ app: string, pid: number, path: string, title: string, stop: () => Promise<void> }} FixtureHandle */
+/** @typedef {{ name: string, status: string, [key: string]: unknown }} CheckRecord */
+/** @typedef {{ ok: boolean, scope: string, fullNativeQualification: boolean, chatgptIndependenceQualified: boolean, checks: CheckRecord[], unattempted: string[] }} QualifyReport */
+/** @typedef {{ app: string, safetyNote: string, scope: string, expectedPid?: number, expectedPath?: string, expectedTitle?: string }} QualifyTabsOptions */
+/**
+ * @param {unknown} value
+ * @returns {value is ProofObservation}
+ */
+const isProofObservation = (value) =>
+  isRecord(value) &&
+  typeof value.observationId === "string" &&
+  isRecord(value.app) &&
+  typeof value.app.pid === "number" &&
+  Array.isArray(value.windows) &&
+  value.windows.every((window) => isRecord(window) && typeof window.token === "string") &&
+  Array.isArray(value.elements) &&
+  value.elements.every((element) => isRecord(element) && typeof element.token === "string");
+/**
+ * @param {unknown} value
+ * @returns {value is ScreenshotResult}
+ */
+const isScreenshotResult = (value) =>
+  isRecord(value) &&
+  typeof value.coordinateSpace === "string" &&
+  typeof value.windowToken === "string" &&
+  isRecord(value.image) &&
+  typeof value.image.data === "string" &&
+  isRecord(value.windowFrame) &&
+  isRecord(value.captureRect) &&
+  typeof value.pointPixelScale === "number";
+/**
+ * @param {unknown} value
+ * @returns {value is FixtureHandle}
+ */
+const isFixtureHandle = (value) =>
+  isRecord(value) &&
+  typeof value.app === "string" &&
+  typeof value.pid === "number" &&
+  typeof value.path === "string" &&
+  typeof value.title === "string" &&
+  typeof value.stop === "function";
+/**
+ * Narrow an actuator rejection to its dispatch-evidence shape.
+ *
+ * @param {unknown} value
+ * @returns {value is Error & { dispatched?: unknown, mutationAttempted?: unknown, outcome?: string }}
+ */
+const isActuatorRejection = (value) => value instanceof Error;
 
 const activityMonitorApp = "com.apple.ActivityMonitor";
 const tabs = new Set(["CPU", "Memory", "Energy", "Disk", "Network"]);
 const activityMonitorSafetyNote =
   "Activity Monitor only: select a named tab and restore its observed original selection. Never stop processes, open Inspector, or use process actions.";
 
+/**
+ * @param {ProofObservation} observation
+ * @param {ObservedTabState | undefined} original
+ * @param {string} app
+ * @returns {{ name: string | undefined, element: ObservedElement, window: ObservedWindow }}
+ */
 function observedTab(observation, original, app) {
   assert.equal(observation.fullSnapshot, true, "A complete native snapshot is required");
-  assert.equal(
-    observation.app?.bundleId,
-    app,
-    "The observed app must match the exact proof target",
-  );
-  assert.ok(observation.observationId, "Missing native observation identity");
+  assert.equal(observation.app.bundleId, app, "The observed app must match the exact proof target");
   const selected = observation.elements.filter(
     (element) =>
       element.role === "AXRadioButton" &&
-      tabs.has(element.description || element.title) &&
-      [1, "1", true].includes(element.value),
+      tabs.has(firstText([element.description, element.title]) ?? "") &&
+      (element.value === 1 || element.value === "1" || element.value === true),
   );
   assert.equal(selected.length, 1, "The actual original/selected tab is unknown");
   const element = selected[0];
+  if (element === undefined) assert.fail("The actual original/selected tab is unknown");
   const window = observation.windows.find((window) => window.token === element.windowToken);
-  assert.ok(window, "Selected tab is not bound to an observed window");
-  if (original) {
+  assert.ok(window !== undefined, "Selected tab is not bound to an observed window");
+  if (original !== undefined) {
     assert.equal(observation.app.pid, original.pid, "Observed app process changed");
     assert.equal(window.token, original.window.token, "Observed window changed");
     assert.equal(window.title, original.window.title, "Observed window title changed");
     assert.equal(window.document, original.window.document, "Observed document changed");
   }
-  return { name: element.description || element.title, element, window };
+  return { name: firstText([element.description, element.title]) ?? "", element, window };
 }
 
+/**
+ * @param {ProofObservation} observation
+ * @param {string} name
+ * @param {string} windowToken
+ * @returns {ObservedElement}
+ */
 function tabTarget(observation, name, windowToken) {
   const matches = observation.elements.filter(
     (element) =>
       element.role === "AXRadioButton" &&
-      (element.description || element.title) === name &&
+      firstText([element.description, element.title]) === name &&
       element.windowToken === windowToken,
   );
   assert.equal(matches.length, 1, `Expected exactly one ${name} tab in the original window`);
-  assert.ok(matches[0].actions.includes("AXPress"), `The ${name} tab does not expose AXPress`);
-  return matches[0];
+  const target = matches[0];
+  if (target === undefined) assert.fail(`Expected exactly one ${name} tab in the original window`);
+  if (!isStringArray(target.actions)) assert.fail(`The ${name} tab does not expose AXPress`);
+  assert.ok(target.actions.includes("AXPress"), `The ${name} tab does not expose AXPress`);
+  return target;
 }
 
+/**
+ * @param {ScreenshotResult} result
+ * @param {ObservedWindow} window
+ */
 function screenshotEvidence(result, window) {
   assert.equal(result.coordinateSpace, "screenshot-pixels");
   assert.equal(result.windowToken, window.token);
-  assert.equal(result.image?.mimeType, "image/png");
+  assert.equal(result.image.mimeType, "image/png");
   const bytes = Buffer.from(result.image.data, "base64");
   assert.ok(bytes.length >= 24, "Screenshot is too short for a PNG header");
   assert.deepEqual(
@@ -75,11 +159,11 @@ function screenshotEvidence(result, window) {
     Number.isFinite(result.pointPixelScale) && result.pointPixelScale > 0,
     "Missing pixel-to-point scale",
   );
+  const rect = result.captureRect;
   assert.ok(
-    result.captureRect &&
-      ["x", "y", "width", "height"].every((key) => Number.isFinite(result.captureRect[key])) &&
-      result.captureRect.width > 0 &&
-      result.captureRect.height > 0,
+    ["x", "y", "width", "height"].every((key) => Number.isFinite(rect[key])) &&
+      rect.width > 0 &&
+      rect.height > 0,
     "Missing screenshot capture rectangle",
   );
   assert.ok(
@@ -101,17 +185,34 @@ function screenshotEvidence(result, window) {
 }
 
 /** A bounded live proof, not full native or execution qualification. The caller owns stop(). */
+/**
+ * @param {ActuatorLike} actuator
+ * @param {QualifyTabsOptions} options
+ * @returns {Promise<QualifyReport>}
+ */
 async function qualifyTabs(
   actuator,
   { app, safetyNote, scope, expectedPid, expectedPath, expectedTitle },
 ) {
-  const checks = [],
-    failures = [];
-  let original,
-    mutationRequested = false;
-  const observe = () =>
-    actuator.observe({ app, ...(expectedPath ? { expectedPid, expectedPath } : {}) });
-  const request = (observation, element, allowMutating = true) => ({
+  /** @type {CheckRecord[]} */
+  const checks = [];
+  /** @type {Error[]} */
+  const failures = [];
+  /** @type {ObservedTabState | undefined} */
+  let original;
+  let mutationRequested = false;
+  const observe = async () => {
+    const result = await actuator.observe({
+      app,
+      ...(expectedPath !== undefined && expectedPath !== "" ? { expectedPid, expectedPath } : {}),
+    });
+    return isProofObservation(result) ? result : assert.fail("Invalid observation payload");
+  };
+  const request = (
+    /** @type {ProofObservation} */ observation,
+    /** @type {ObservedElement} */ element,
+    allowMutating = true,
+  ) => ({
     app,
     observationId: observation.observationId,
     elementToken: element.token,
@@ -119,10 +220,16 @@ async function qualifyTabs(
     allowMutating,
     safetyNote,
   });
-  const press = async (observation, name) => {
-    const target = tabTarget(observation, name, original.window.token);
+  const press = async (
+    /** @type {ProofObservation} */ observation,
+    /** @type {string | undefined} */ name,
+  ) => {
+    if (original === undefined) assert.fail("Original tab state is missing");
+    const target = tabTarget(observation, name ?? "", original.window.token);
     mutationRequested = true;
-    const result = await actuator.act(request(observation, target));
+    const acted = await actuator.act(request(observation, target));
+    if (!isRecord(acted)) assert.fail("Invalid actuator action result");
+    const result = acted;
     assert.equal(
       result.status,
       "applied",
@@ -142,30 +249,33 @@ async function qualifyTabs(
     if (expectedTitle !== undefined)
       assert.equal(selected.window.title, expectedTitle, "Fixture window identity changed");
     original = { name: selected.name, pid: observation.app.pid, window: selected.window };
+    const originalTab = original;
     checks.push({
       name: "complete observation and known original tab",
       status: "pass",
-      originalTab: original.name,
+      originalTab: originalTab.name,
     });
-    const screenshot = await actuator.screenshot({
+    const shot = await actuator.screenshot({
       app,
       observationId: observation.observationId,
-      windowToken: original.window.token,
+      windowToken: originalTab.window.token,
     });
+    if (!isScreenshotResult(shot)) assert.fail("Invalid screenshot payload");
     checks.push({
       name: "window-bound PNG metadata",
       status: "pass",
-      detail: screenshotEvidence(screenshot, original.window),
+      detail: screenshotEvidence(shot, originalTab.window),
     });
     observation = await observe();
     observedTab(observation, original, app);
-    const alternate = original.name === "Memory" ? "CPU" : "Memory";
-    const target = tabTarget(observation, alternate, original.window.token);
+    const alternate = originalTab.name === "Memory" ? "CPU" : "Memory";
+    const target = tabTarget(observation, alternate, originalTab.window.token);
     mutationRequested = true;
     let refused = false;
     try {
       await actuator.act(request(observation, target, false));
     } catch (error) {
+      if (!isActuatorRejection(error)) assert.fail("Unauthorized request did not reject");
       assert.equal(error.dispatched, false, "Unauthorized request may have dispatched");
       assert.equal(error.mutationAttempted, false, "Unauthorized request may have mutated");
       refused = true;
@@ -187,15 +297,16 @@ async function qualifyTabs(
     );
     checks.push({ name: "AXPress independently observed", status: "pass", selectedTab: alternate });
   } catch (error) {
-    failures.push(error);
+    failures.push(error instanceof Error ? error : new Error(String(error)));
   } finally {
-    if (original) {
+    if (original !== undefined) {
+      const originalTab = original;
       try {
         let observation = await observe();
         const current = observedTab(observation, original, app);
         // Fresh, known state makes restoration a new bounded action, not a retry of an uncertain press.
-        if (mutationRequested && current.name !== original.name) {
-          await press(observation, original.name);
+        if (mutationRequested && current.name !== originalTab.name) {
+          await press(observation, originalTab.name);
           observation = await observe();
         }
         assert.equal(
@@ -206,10 +317,12 @@ async function qualifyTabs(
         checks.push({
           name: "original tab independently verified",
           status: "pass",
-          restoredTab: original.name,
+          restoredTab: originalTab.name,
         });
       } catch (error) {
-        failures.push(new Error(`Cleanup failed: ${error.message}`));
+        failures.push(
+          new Error(`Cleanup failed: ${error instanceof Error ? error.message : String(error)}`),
+        );
       }
     }
   }
@@ -234,6 +347,10 @@ async function qualifyTabs(
   };
 }
 
+/**
+ * @param {ActuatorLike} actuator
+ * @returns {Promise<QualifyReport>}
+ */
 export function qualifyActivityMonitor(actuator) {
   return qualifyTabs(actuator, {
     app: activityMonitorApp,
@@ -242,26 +359,55 @@ export function qualifyActivityMonitor(actuator) {
   });
 }
 
+/**
+ * @param {ActuatorLike} actuator
+ * @param {ActuatorLike} challenger
+ * @param {FixtureHandle} fixture
+ * @returns {Promise<CheckRecord[]>}
+ */
 async function qualifyFixtureText(actuator, challenger, fixture) {
+  /** @type {CheckRecord[]} */
   const checks = [];
   const replacement = "prefix 独立 👩🏽‍💻 e\u0301 suffix";
   const contextReplacement = "postwrite MUTATED 🧪";
+  /** @type {ObservedTabState | undefined} */
   let original;
-  const observe = () =>
-    actuator.observe({ app: fixture.app, expectedPid: fixture.pid, expectedPath: fixture.path });
+  const observe = async () => {
+    const result = await actuator.observe({
+      app: fixture.app,
+      expectedPid: fixture.pid,
+      expectedPath: fixture.path,
+    });
+    return isProofObservation(result) ? result : assert.fail("Invalid observation payload");
+  };
+  /**
+   * @param {ProofObservation} observation
+   * @param {string} [identifier]
+   * @returns {ObservedElement}
+   */
   const field = (observation, identifier = "macuse-fixture-field") => {
+    if (original === undefined) assert.fail("Original fixture state is missing");
+    const state = original;
     const matches = observation.elements.filter(
-      (element) =>
-        element.identifier === identifier && element.windowToken === original.window.token,
+      (element) => element.identifier === identifier && element.windowToken === state.window.token,
     );
     assert.equal(matches.length, 1, "Expected one owned fixture text field");
-    assert.equal(matches[0].role, "AXTextField");
-    assert.equal(matches[0].valueSettable, true);
-    assert.equal(typeof matches[0].value, "string");
+    const target = matches[0];
+    if (target === undefined) assert.fail("Expected one owned fixture text field");
+    assert.equal(target.role, "AXTextField");
+    assert.equal(target.valueSettable, true);
+    assert.equal(typeof target.value, "string");
     const saved = identifier === "macuse-fixture-field" ? original.field : original.contextField;
-    if (saved) assert.equal(matches[0].token, saved.token, "Fixture text field identity changed");
-    return matches[0];
+    if (saved !== undefined)
+      assert.equal(target.token, saved.token, "Fixture text field identity changed");
+    return target;
   };
+  /**
+   * @param {ProofObservation} observation
+   * @param {ObservedElement} target
+   * @param {string} value
+   * @returns {Promise<unknown>}
+   */
   const setValue = (observation, target, value) =>
     actuator.act({
       app: fixture.app,
@@ -281,11 +427,14 @@ async function qualifyFixtureText(actuator, challenger, fixture) {
     original = { name: selected.name, pid: fixture.pid, window: selected.window };
     original.field = field(observation);
     original.contextField = field(observation, "macuse-fixture-context-field");
-    const challenge = await challenger.observe({
+    const challengeResult = await challenger.observe({
       app: fixture.app,
       expectedPid: fixture.pid,
       expectedPath: fixture.path,
     });
+    const challenge = isProofObservation(challengeResult)
+      ? challengeResult
+      : assert.fail("Invalid challenge observation");
     const challengeTab = observedTab(challenge, undefined, fixture.app);
     assert.equal(challenge.app.pid, fixture.pid);
     assert.equal(challengeTab.window.title, fixture.title);
@@ -299,13 +448,23 @@ async function qualifyFixtureText(actuator, challenger, fixture) {
       safetyNote:
         "Owned disposable fixture only: change a radio control to invalidate the other helper observation, then restore its captured original selection.",
     });
+    if (!isRecord(pressed)) assert.fail("Invalid challenger action result");
     assert.equal(pressed.nativeAccepted, true);
+    // tsgo requires this guard (optional field) while tsgolint resolves the
+    // same property as non-optional; both cannot be satisfied at once.
+    const originalField = original.field;
+    // oxlint-disable-next-line no-unnecessary-condition
+    if (originalField === undefined) assert.fail("missing original fixture field");
     await assert.rejects(
-      setValue(observation, original.field, replacement),
-      (error) =>
-        error.dispatched === false &&
-        error.mutationAttempted === false &&
-        /app context.*changed/i.test(error.message),
+      setValue(observation, originalField, replacement),
+      (/** @type {unknown} */ error) => {
+        if (!isActuatorRejection(error)) return false;
+        return (
+          error.dispatched === false &&
+          error.mutationAttempted === false &&
+          /app context.*changed/i.test(error.message)
+        );
+      },
       "Changed fixture context must reject the stale field edit before dispatch",
     );
     checks.push({ name: "changed fixture context refused before field dispatch", status: "pass" });
@@ -320,10 +479,11 @@ async function qualifyFixtureText(actuator, challenger, fixture) {
       original.field.value,
       "Refused stale edit changed the field",
     );
-    const result = await setValue(observation, field(observation), replacement);
-    assert.equal(result.status, "applied");
-    assert.equal(result.nativeAccepted, true);
-    assert.equal(result.verified, true);
+    const applied = await setValue(observation, field(observation), replacement);
+    if (!isRecord(applied)) assert.fail("Invalid setValue result");
+    assert.equal(applied.status, "applied");
+    assert.equal(applied.nativeAccepted, true);
+    assert.equal(applied.verified, true);
     observation = await observe();
     observedTab(observation, original, fixture.app);
     assert.equal(field(observation).value, replacement, "Unicode whole-field readback differs");
@@ -337,6 +497,7 @@ async function qualifyFixtureText(actuator, challenger, fixture) {
       field(observation, "macuse-fixture-context-field"),
       contextReplacement,
     );
+    if (!isRecord(changed)) assert.fail("Invalid changed-field result");
     assert.equal(changed.mutationAttempted, true);
     assert.equal(changed.nativeAccepted, true);
     assert.equal(
@@ -361,49 +522,56 @@ async function qualifyFixtureText(actuator, challenger, fixture) {
     checks.push({
       name: "fixture text qualification failure",
       status: "fail",
-      detail: error.message,
+      detail: error instanceof Error ? error.message : String(error),
     });
   } finally {
-    if (original?.field) {
+    if (original !== undefined && original.field !== undefined) {
+      const originalTab = original;
       try {
         let observation = await observe();
         observedTab(observation, original, fixture.app);
-        for (const [saved, planned] of [
+        /** @type {[ObservedElement | undefined, string][]} */
+        const restores = [
           [original.field, replacement],
           [original.contextField, contextReplacement],
-        ]) {
-          if (!saved) continue;
-          const current = field(observation, saved.identifier);
+        ];
+        for (const [saved, planned] of restores) {
+          if (saved === undefined) continue;
+          const current = field(observation, saved.identifier ?? "");
           assert.ok(
             [saved.value, planned].includes(current.value),
             "Fixture field changed to an unexpected value; refusing cleanup overwrite",
           );
+          const savedValue = typeof saved.value === "string" ? saved.value : "";
           if (current.value !== saved.value) {
-            const restored = await setValue(observation, current, saved.value);
-            assert.equal(restored.verified, true);
+            const restoreResult = await setValue(observation, current, savedValue);
+            if (!isRecord(restoreResult)) assert.fail("Invalid restore setValue result");
+            assert.equal(restoreResult.verified, true);
             observation = await observe();
             observedTab(observation, original, fixture.app);
           }
           assert.equal(
-            field(observation, saved.identifier).value,
-            saved.value,
+            field(observation, saved.identifier ?? "").value,
+            savedValue,
             "Original fixture field value was not restored",
           );
         }
-        if (observedTab(observation, original, fixture.app).name !== original.name) {
+        if (observedTab(observation, original, fixture.app).name !== originalTab.name) {
           const restored = await actuator.act({
             app: fixture.app,
             observationId: observation.observationId,
-            elementToken: tabTarget(observation, original.name, original.window.token).token,
+            elementToken: tabTarget(observation, originalTab.name ?? "", originalTab.window.token)
+              .token,
             action: "press",
             allowMutating: true,
             safetyNote:
               "Owned disposable fixture only: restore its captured original radio selection after the stale-context test.",
           });
+          if (!isRecord(restored)) assert.fail("Invalid restore result");
           assert.equal(restored.nativeAccepted, true);
           observation = await observe();
         }
-        assert.equal(observedTab(observation, original, fixture.app).name, original.name);
+        assert.equal(observedTab(observation, original, fixture.app).name, originalTab.name);
         assert.equal(field(observation).value, original.field.value);
         if (original.contextField)
           assert.equal(
@@ -418,7 +586,7 @@ async function qualifyFixtureText(actuator, challenger, fixture) {
         checks.push({
           name: "fixture text cleanup failure",
           status: "fail",
-          detail: error.message,
+          detail: error instanceof Error ? error.message : String(error),
         });
       }
     }
@@ -426,12 +594,21 @@ async function qualifyFixtureText(actuator, challenger, fixture) {
   return checks;
 }
 
+/**
+ * @param {ActuatorLike} actuator
+ * @param {unknown} fixture
+ * @param {{ challenger?: ActuatorLike | undefined }} [options]
+ * @returns {Promise<QualifyReport>}
+ */
 export async function qualifyActuatorFixture(actuator, fixture, { challenger } = {}) {
+  // A borrowed app is refused before any other handle detail is trusted.
+  if (!isRecord(fixture) || typeof fixture.app !== "string") assert.fail("Invalid fixture handle");
   assert.match(
     fixture.app,
     /^com\.macuse\.actuator-fixture\.[0-9a-f-]{36}$/,
     "An exact task-owned fixture identity is required",
   );
+  if (!isFixtureHandle(fixture)) assert.fail("Invalid fixture handle");
   assert.ok(Number.isSafeInteger(fixture.pid) && fixture.pid > 0, "Fixture PID is required");
   assert.ok(
     typeof fixture.path === "string" && isAbsolute(fixture.path),
@@ -444,10 +621,14 @@ export async function qualifyActuatorFixture(actuator, fixture, { challenger } =
   ]) {
     await assert.rejects(
       actuator.observe({ app: fixture.app, ...expected }),
-      (error) =>
-        error.dispatched === false &&
-        error.mutationAttempted === false &&
-        /Trusted app PID\/path identity mismatch/.test(error.message),
+      (/** @type {unknown} */ error) => {
+        if (!isActuatorRejection(error)) return false;
+        return (
+          error.dispatched === false &&
+          error.mutationAttempted === false &&
+          /Trusted app PID\/path identity mismatch/.test(error.message)
+        );
+      },
       "Wrong trusted fixture PID/path must refuse before reading AX content",
     );
   }
@@ -479,21 +660,28 @@ async function main() {
       help: { type: "boolean", short: "h" },
     },
   });
-  if (values.help || !values.live) {
+  if (values.help === true || values.live !== true) {
     console.log(
       "Experimental native proof: node tools/qualify-native-actuator.mjs --live [--fixture]\nDefault: authorized Activity Monitor tab selection/restoration. --fixture: launch, exercise, and dispose an owned real AppKit test app instead; not real-world app parity. Native permissions required. No recording, vendor runtime, or default-backend changes. Without --live, no desktop access occurs.",
     );
-    if (!values.help) process.exitCode = 1;
+    if (values.help !== true) process.exitCode = 1;
     return;
   }
   const { NativeActuator } = await import("./native-actuator.mjs");
   const actuator = new NativeActuator();
-  const challenger = values.fixture ? new NativeActuator() : undefined;
-  let report, fixture;
+  const withFixture = values.fixture === true;
+  /** @type {import("./native-actuator.mjs").NativeActuator | undefined} */
+  const challenger = withFixture ? new NativeActuator() : undefined;
+  /** @type {FixtureHandle | undefined} */
+  let fixture;
+  /** @type {QualifyReport | undefined} */
+  let report;
   try {
-    if (values.fixture) {
+    if (withFixture) {
       const { startActuatorFixture } = await import("./actuator-fixture.mjs");
-      fixture = await startActuatorFixture();
+      const started = await startActuatorFixture();
+      if (!isFixtureHandle(started)) assert.fail("Invalid fixture handle");
+      fixture = started;
     }
     report = fixture
       ? await qualifyActuatorFixture(actuator, fixture, { challenger })
@@ -505,11 +693,15 @@ async function main() {
       await fixture?.stop();
     }
   }
+  // tsgo requires this guard (assigned only inside try) while tsgolint
+  // infers the post-try value as always assigned; both cannot be satisfied.
+  // oxlint-disable-next-line no-unnecessary-condition
+  if (report === undefined) assert.fail("qualification produced no report");
   console.log(JSON.stringify(report, null, 2));
   if (!report.ok) process.exitCode = 1;
 }
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1])
-  main().catch((error) => {
-    console.error(error.message);
+if (process.argv[1] !== undefined && fileURLToPath(import.meta.url) === process.argv[1])
+  main().catch((/** @type {unknown} */ error) => {
+    console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;
   });

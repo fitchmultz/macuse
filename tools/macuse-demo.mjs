@@ -13,14 +13,27 @@ import {
   writeJsonFile,
 } from "./macuse-utils.mjs";
 
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+/** @typedef {{ help?: false, out: string, skipDoctor: boolean, skipMcp: boolean, toolTimeoutMs: number }} DemoRunOptions */
+/** @typedef {{ name: string, command: string, durationMs: number, ok: boolean, status: number | null, stdout: string, stderr: string, json: unknown }} JsonCommand */
+/** @typedef {{ name: string, command: string, ok: boolean, durationMs: number, stdout: string, stderr: string, status?: number | null, json?: unknown }} CommandRecord */
+/** @typedef {{ ok: boolean, generatedAt: string, out: string, repoRoot: string, status: { doctor: boolean | null, mutating: boolean, focus: boolean, mcp: boolean | null }, artifacts: { report: string, html: string, transcript: string, cursorConfig: string } }} DemoReport */
+/** @typedef {{ generatedAt: string, out: string, commands: CommandRecord[], report?: DemoReport }} Transcript */
+
 function help() {
   process.stdout.write(
     `macuse live demo ${VERSION}\n\nUsage:\n  node tools/macuse-demo.mjs [options]\n\nOptions:\n  --out <dir>              Artifact directory. Default: .scratch/macuse-demo-<timestamp>.\n  --skip-doctor            Skip the embedded standard doctor pass.\n  --skip-mcp               Skip the standard-MCP wrapper validation pass.\n  --tool-timeout-ms <ms>   Tool timeout for live checks. Default: 90000.\n  -h, --help               Show this help.\n\nWhat it proves:\n  - native persistent JavaScript Computer Use works outside Codex\n  - the shared session supports a real Activity Monitor app flow\n  - tab actions restore the actual original selection\n  - native activation observations report any observed interruption\n  - standard MCP inventory/read/guard checks pass, unless --skip-mcp is passed\n\nExamples:\n  node tools/macuse-demo.mjs\n  node tools/macuse-demo.mjs --out .scratch/demo\n`,
   );
 }
 
+/**
+ * @param {string[]} argv
+ * @returns {{ help: true } | DemoRunOptions}
+ */
 function parse(argv) {
   if (argv.includes("-h") || argv.includes("--help")) return { help: true };
+  /** @type {DemoRunOptions} */
   const opts = {
     out: resolve(REPO_ROOT, ".scratch", `macuse-demo-${nowIsoForPath()}`),
     skipDoctor: false,
@@ -29,10 +42,12 @@ function parse(argv) {
   };
   for (let i = 0; i < argv.length; i += 1) {
     const token = argv[i];
+    if (token === undefined) throw new Error("unknown option: undefined");
     const next = () => {
       i += 1;
-      if (i >= argv.length) throw new Error(`${token} requires a value`);
-      return argv[i];
+      const value = argv[i];
+      if (i >= argv.length || value === undefined) throw new Error(`${token} requires a value`);
+      return value;
     };
     if (token === "--out") opts.out = resolve(next());
     else if (token === "--skip-doctor") opts.skipDoctor = true;
@@ -47,6 +62,12 @@ function parse(argv) {
   return opts;
 }
 
+/**
+ * @param {string} name
+ * @param {string[]} args
+ * @param {number} timeoutMs
+ * @returns {JsonCommand}
+ */
 function runJsonCommand(name, args, timeoutMs) {
   const result = runCommand(name, process.execPath, args, { timeoutMs });
   return {
@@ -61,13 +82,25 @@ function runJsonCommand(name, args, timeoutMs) {
   };
 }
 
+/**
+ * @param {boolean | null} status
+ * @returns {string}
+ */
+const statusIcon = (status) => {
+  if (status === null) return "skipped";
+  return status ? "✅" : "❌";
+};
+/**
+ * @param {DemoReport} report
+ * @returns {string}
+ */
 function renderReport(report) {
   return `# macuse live demo\n\nGenerated: ${report.generatedAt}\nArtifact directory: ${report.out}\n\n## Verdict\n\n${report.ok ? "✅ macuse actual-app demo passed." : "❌ Demo found a problem. Inspect transcript.json."}\n\n${markdownTable(
     ["Proof point", "Status", "Evidence"],
     [
       [
         "Doctor",
-        report.status.doctor === null ? "skipped" : report.status.doctor ? "✅" : "❌",
+        statusIcon(report.status.doctor),
         report.status.doctor === null ? "not run" : "standard checks passed",
       ],
       [
@@ -82,7 +115,7 @@ function renderReport(report) {
       ],
       [
         "MCP wrapper",
-        report.status.mcp === null ? "skipped" : report.status.mcp ? "✅" : "❌",
+        statusIcon(report.status.mcp),
         report.status.mcp === null
           ? "not run"
           : "native runtime, schemas and pre-dispatch refusal passed",
@@ -99,12 +132,17 @@ function renderReport(report) {
   )}\n\n## Re-run\n\n\`\`\`bash\nnode tools/macuse-demo.mjs --out ${report.out}\n\`\`\`\n`;
 }
 
+/**
+ * @param {DemoReport} report
+ * @returns {string}
+ */
 function renderHtml(report) {
-  const safe = (value) =>
-    String(value ?? "").replace(
-      /[&<>]/g,
-      (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[char],
-    );
+  /** @param {unknown} value @returns {string} */
+  const safe = (value) => escapeHtml(typeof value === "string" ? value : JSON.stringify(value));
+  /** @param {string} value @returns {string} */
+  const escapeHtml = (value) => value.replace(/[&<>]/g, escapeChar);
+  /** @param {string} char @returns {string} */
+  const escapeChar = (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[char] ?? char;
   const badge = report.ok
     ? '<span class="badge pass">READY</span>'
     : '<span class="badge fail">CHECK</span>';
@@ -113,12 +151,13 @@ function renderHtml(report) {
 
 async function main() {
   const opts = parse(process.argv.slice(2));
-  if (opts.help) {
+  if (opts.help === true) {
     help();
     return;
   }
   ensureDir(opts.out);
 
+  /** @type {Transcript} */
   const transcript = { generatedAt: new Date().toISOString(), out: opts.out, commands: [] };
   const cursorConfigPath = resolve(opts.out, "cursor-mcp.json");
   const config = runCommand(
@@ -156,7 +195,7 @@ async function main() {
         ],
         opts.toolTimeoutMs * 4,
       );
-  if (doctor) transcript.commands.push(doctor);
+  if (doctor !== null) transcript.commands.push(doctor);
 
   const focus = runJsonCommand(
     "background focus validation",
@@ -184,22 +223,22 @@ async function main() {
         ],
         600_000,
       );
-  if (mcp) transcript.commands.push(mcp);
+  if (mcp !== null) transcript.commands.push(mcp);
 
+  const doctorOk = doctor !== null && isRecord(doctor.json) && doctor.json.ok === true;
+  const focusOk = isRecord(focus.json) && focus.json.ok === true;
+  const mcpOk = mcp !== null && isRecord(mcp.json) && mcp.json.ok === true;
+  /** @type {DemoReport} */
   const report = {
-    ok:
-      config.ok &&
-      (doctor ? doctor.json?.ok === true : true) &&
-      focus.json?.ok === true &&
-      (mcp ? mcp.json?.ok === true : true),
+    ok: config.ok && doctorOk && focusOk && mcpOk,
     generatedAt: transcript.generatedAt,
     out: opts.out,
     repoRoot: REPO_ROOT,
     status: {
-      doctor: doctor ? doctor.json?.ok === true : null,
-      mutating: focus.json?.ok === true,
-      focus: focus.json?.ok === true,
-      mcp: mcp ? mcp.json?.ok === true : null,
+      doctor: doctor !== null ? doctorOk : null,
+      mutating: focusOk,
+      focus: focusOk,
+      mcp: mcp !== null ? mcpOk : null,
     },
     artifacts: {
       report: resolve(opts.out, "report.md"),
@@ -221,7 +260,12 @@ async function main() {
   if (!report.ok) process.exitCode = 1;
 }
 
-main().catch((error) => {
-  process.stderr.write(`FAIL ${error.message || String(error)}\n`);
+/** @param {unknown} error @returns {string} */
+const failureText = (error) => {
+  if (error instanceof Error && error.message !== "") return error.message;
+  return String(error);
+};
+main().catch((/** @type {unknown} */ error) => {
+  process.stderr.write(`FAIL ${failureText(error)}\n`);
   process.exitCode = 1;
 });

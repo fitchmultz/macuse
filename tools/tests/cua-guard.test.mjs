@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createGuard } from "../../lib/cua-guard-service.mjs";
 
+/**
+ * @param {{ title?: string, value?: string, index?: number, duplicate?: boolean, focus?: number }} [spec]
+ * @returns {string}
+ */
 const tree = ({
   title = "fixture",
   value = "old",
@@ -16,20 +20,62 @@ const gates = {
   allowMutating: true,
   safetyNote: "Change only the isolated fixture field.",
 };
+/**
+ * @param {string} method
+ * @param {Record<string, unknown>} [input]
+ * @returns {import("../../lib/cua-guard-service.mjs").SkyRequest}
+ */
 const request = (method, input) => ({
   type: "execute",
   method,
   args: input === undefined ? [] : [{ app: "App", ...input }],
 });
 
+/**
+ * @param {unknown} value
+ * @returns {value is Record<string, unknown>}
+ */
+const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * One observation entry the guard publishes through `setResponseMeta`.
+ *
+ * @typedef {{ app?: unknown, text?: unknown, elements: Array<Record<string, unknown>>, windows?: unknown, nativeWindowIdentity?: unknown, nativeSheetId?: unknown }} ObservedApp
+ */
+/**
+ * The evidence object the guard always publishes under the `macuse` key.
+ *
+ * @typedef {{ runId: unknown, actions: Array<Record<string, unknown>>, observations: Array<ObservedApp>, resolvedApps: Record<string, unknown>, mutationBlocked: boolean }} MacuseEvidence
+ */
+/**
+ * @typedef {{ macuse?: MacuseEvidence | undefined } | undefined} ResponseMeta
+ */
+/**
+ * @typedef {{ requestMeta: { macuse?: import("../../lib/cua-guard-service.mjs").MacuseRunMeta }, meta: ResponseMeta, setResponseMeta: (meta: unknown) => void }} GuardContext
+ */
+
+/**
+ * @param {unknown} value
+ * @returns {value is ResponseMeta}
+ */
+const isResponseMeta = (value) =>
+  isRecord(value) && (value.macuse === undefined || isRecord(value.macuse));
+
+/**
+ * @param {{ mutate?: (message: import("../../lib/cua-guard-service.mjs").SkyRequest) => unknown, states?: string[], nativeApp?: string }} [options]
+ */
 function fixture({ mutate, states, nativeApp = "App" } = {}) {
   let value = "old";
   let reads = 0;
+  /** @type {import("../../lib/cua-guard-service.mjs").SkyRequest[]} */
   const calls = [];
+  /** @type {GuardContext} */
   const context = {
     requestMeta: { macuse: { ...gates } },
+    meta: undefined,
     setResponseMeta(meta) {
-      this.meta = structuredClone(meta);
+      const cloned = structuredClone(meta);
+      this.meta = isResponseMeta(cloned) ? cloned : undefined;
     },
   };
   const guard = createGuard({
@@ -50,42 +96,45 @@ function fixture({ mutate, states, nativeApp = "App" } = {}) {
             "unknown",
           ],
         };
-      if (message.method === "get_app_state")
+      if (message.method === "get_app_state") {
+        const state =
+          states !== undefined ? states[Math.min(reads++, states.length - 1)] : undefined;
         return {
           app: nativeApp,
-          text: states?.[Math.min(reads++, states.length - 1)] ?? tree({ value }),
+          text: state ?? tree({ value }),
           screenshot: null,
         };
+      }
       if (message.method === "list_apps") return [{ id: "App" }];
-      if (mutate) return mutate(message);
-      if (message.method === "set_value") value = message.args[0].value;
+      if (mutate !== undefined) return mutate(message);
+      if (message.method === "set_value") {
+        const first = message.args?.[0];
+        if (isRecord(first) && typeof first.value === "string") value = first.value;
+      }
+      return;
     },
   });
+  const actions = () => context.meta?.macuse?.actions ?? [];
   return {
     guard,
     context,
     calls,
-    actions: () => context.meta.macuse.actions,
+    actions,
     observe: () => guard(request("get_app_state", {})),
   };
 }
 
-test("setup preserves GUI primitives but removes audio and unknown services; metadata is mandatory", async () => {
+await test("setup preserves GUI primitives but removes audio and unknown services; metadata is mandatory", async () => {
   const f = fixture();
   const setup = await f.guard({ type: "setup" });
-  assert.deepEqual(setup.methods, [
-    "get_app_state",
-    "list_apps",
-    "set_value",
-    "type_text",
-    "paste",
-  ]);
+  const methods = isRecord(setup) && Array.isArray(setup.methods) ? setup.methods : undefined;
+  assert.deepEqual(methods, ["get_app_state", "list_apps", "set_value", "type_text", "paste"]);
   f.context.requestMeta = {};
   await assert.rejects(f.guard(request("list_apps")), /trusted macuse/);
   await assert.rejects(f.guard({ type: "drag_start", point: [1, 1] }), /trusted macuse/);
 });
 
-test("exact app scope and nonempty mutation note fail before dispatch", async () => {
+await test("exact app scope and nonempty mutation note fail before dispatch", async () => {
   for (const meta of [
     { ...gates, allowMutating: false },
     { ...gates, apps: ["app"] },
@@ -102,41 +151,42 @@ test("exact app scope and nonempty mutation note fail before dispatch", async ()
   }
 });
 
-test("short mutation notes and pointer actions use the ordinary mutation scope", async () => {
-  for (const [method, input] of [
+await test("short mutation notes and pointer actions use the ordinary mutation scope", async () => {
+  for (const [method, input] of /** @type {[string, Record<string, unknown>][]} */ ([
     ["click", { element_index: 3 }],
     ["click", { x: 1, y: 1 }],
     ["drag", { from_x: 1, from_y: 1, to_x: 2, to_y: 2 }],
     ["scroll", { x: 1, y: 1, direction: "down" }],
-  ]) {
+  ])) {
     const f = fixture();
     await f.observe();
+    assert.ok(f.context.requestMeta.macuse !== undefined);
     f.context.requestMeta.macuse.safetyNote = "App fixture only.";
     await f.guard(request(method, input));
-    assert.equal(f.calls.at(-1).method, method);
-    assert.equal(f.actions()[0].outcome, "completed");
+    assert.equal(f.calls.at(-1)?.method, method);
+    assert.equal(f.actions()[0]?.outcome, "completed");
   }
   const f = fixture();
   await f.observe();
   await f.guard(request("scroll", { element_index: 3, direction: "down" }));
-  assert.equal(f.actions()[0].outcome, "completed");
+  assert.equal(f.actions()[0]?.outcome, "completed");
 });
 
-test("native click modifiers and action durations pass through the ordinary guard", async () => {
-  for (const [method, input] of [
+await test("native click modifiers and action durations pass through the ordinary guard", async () => {
+  for (const [method, input] of /** @type {[string, Record<string, unknown>][]} */ ([
     ["click", { element_index: 1, key: "shift", duration: 0.001 }],
     ["click", { x: 1, y: 1, key: "shift", duration: 0.001 }],
     ["press_key", { key: "Right", duration: 0.001 }],
-  ]) {
+  ])) {
     const f = fixture();
     await f.observe();
     await f.guard(request(method, input));
     assert.deepEqual(f.calls.at(-1), request(method, input));
-    assert.equal(f.actions()[0].outcome, "completed");
+    assert.equal(f.actions()[0]?.outcome, "completed");
   }
 });
 
-test("key chords held during clicks preserve keyboard and close checks", async () => {
+await test("key chords held during clicks preserve keyboard and close checks", async () => {
   const missing = tree().replace(/\nThe focused UI element.*$/, "");
   for (const key of ["Return", "cmd+Delete"]) {
     const f = fixture({ states: [missing, missing] });
@@ -156,13 +206,13 @@ test("key chords held during clicks preserve keyboard and close checks", async (
   const f = fixture({ states: [missing, missing] });
   await f.observe();
   await f.guard(request("click", { x: 1, y: 1, key: "shift" }));
-  assert.equal(f.actions().at(-1).outcome, "completed");
+  assert.equal(f.actions().at(-1)?.outcome, "completed");
   await f.guard(request("click", { x: 1, y: 1, key: "cmd+w" }));
-  assert.equal(f.actions().at(-1).closesWindow, true);
+  assert.equal(f.actions().at(-1)?.closesWindow, true);
 });
 
-test("validate complete arguments and block corrupting Unicode typing before action", async () => {
-  for (const [method, input] of [
+await test("validate complete arguments and block corrupting Unicode typing before action", async () => {
+  for (const [method, input] of /** @type {[string, Record<string, unknown>][]} */ ([
     ["type_text", { text: "café 漢字 🙂" }],
     ["paste", { text: "bad\ud800", format: "text" }],
     ["paste", { text: "ascii", format: "rtf" }],
@@ -176,28 +226,28 @@ test("validate complete arguments and block corrupting Unicode typing before act
     ["set_value", { element_index: 1, value: "new", hidden: true }],
     ["click", { element_index: 3, x: 1, y: 2 }],
     ["drag", { from_x: NaN, from_y: 1, to_x: 2, to_y: 2 }],
-  ]) {
+  ])) {
     const f = fixture();
     await f.observe();
     const count = f.calls.length;
     await assert.rejects(f.guard(request(method, input)));
     assert.equal(f.calls.length, count, `${method} must fail before even preflight`);
-    assert.equal(f.actions()[0].dispatched, false);
+    assert.equal(f.actions()[0]?.dispatched, false);
   }
 });
 
-test("native paste accepts vendor text, Markdown and HTML formats with Unicode", async () => {
+await test("native paste accepts vendor text, Markdown and HTML formats with Unicode", async () => {
   for (const format of ["text", "md", "html"]) {
     const f = fixture();
     await f.observe();
     const input = { text: "café 漢字 🙂", format };
     await f.guard(request("paste", input));
     assert.deepEqual(f.calls.at(-1), request("paste", input));
-    assert.equal(f.actions()[0].outcome, "completed");
+    assert.equal(f.actions()[0]?.outcome, "completed");
   }
 });
 
-test("paste shortcuts and Control+V reach the native key implementation", async () => {
+await test("paste shortcuts and Control+V reach the native key implementation", async () => {
   for (const key of [
     "super+v",
     "cmd+v",
@@ -210,11 +260,13 @@ test("paste shortcuts and Control+V reach the native key implementation", async 
     const f = fixture();
     await f.observe();
     await f.guard(request("press_key", { key }));
-    assert.equal(f.calls.at(-1).args[0].key, key);
+    const pressArg = f.calls.at(-1)?.args?.[0];
+    if (!isRecord(pressArg)) assert.fail("missing press_key arg");
+    assert.equal(pressArg.key, key);
   }
 });
 
-test("paste retains exact scope, observation, document and focused-input guards", async () => {
+await test("paste retains exact scope, observation, document and focused-input guards", async () => {
   for (const after of [
     tree().replace("file:///tmp/fixture", "file:///tmp/other"),
     tree({ focus: 3 }),
@@ -237,7 +289,7 @@ test("paste retains exact scope, observation, document and focused-input guards"
   );
 });
 
-test("a click can hand off to paste when the clicked field becomes focused", async () => {
+await test("a click can hand off to paste when the clicked field becomes focused", async () => {
   // Reduced from the Seltzer search workflow.
   const before = `Window: "Seltzer", App: Seltzer.
 0 standard window Seltzer, Secondary Actions: Raise
@@ -247,10 +299,10 @@ test("a click can hand off to paste when the clicked field becomes focused", asy
 	28 scroll area
 		29 outline Session waterfall. 50 visible lanes.
 The focused UI element is 29 outline`;
-  for (const [focus, succeeds] of [
+  for (const [focus, succeeds] of /** @type {[string, boolean][]} */ ([
     ["1 search text field", true],
     ["20 text field", false],
-  ]) {
+  ])) {
     const afterClick = before.replace(
       "The focused UI element is 29 outline",
       `The focused UI element is ${focus}`,
@@ -261,15 +313,15 @@ The focused UI element is 29 outline`;
     const paste = f.guard(request("paste", { text: "trace-000", format: "text" }));
     if (succeeds) {
       await paste;
-      assert.equal(f.actions()[1].outcome, "completed");
+      assert.equal(f.actions()[1]?.outcome, "completed");
     } else {
       await assert.rejects(paste, /Focused field/);
-      assert.equal(f.actions()[1].dispatched, false);
+      assert.equal(f.actions()[1]?.dispatched, false);
     }
   }
 });
 
-test("a click that leaves the previously observed field focused does not block input", async () => {
+await test("a click that leaves the previously observed field focused does not block input", async () => {
   // Reduced from System Settings after clicking its settable content scroll bar.
   const before = `Window: "Privacy & Security", App: System Settings.
 0 standard window Privacy & Security, ID: Main, Secondary Actions: Raise
@@ -289,10 +341,10 @@ The focused UI element is 51 search text field`;
   await f.observe();
   await f.guard(request("click", { element_index: 100 }));
   await f.guard(request("press_key", { key: "Left" }));
-  assert.equal(f.actions()[1].outcome, "completed");
+  assert.equal(f.actions()[1]?.outcome, "completed");
 });
 
-test("an indexed dismissal can return focus to its containing document for a following shortcut", async () => {
+await test("an indexed dismissal can return focus to its containing document for a following shortcut", async () => {
   // Reduced from a real WebKit notice dismissal and the recorded Comfy Desktop flow.
   const before = `Window: "macuse row fixture", App: FocusProbe.
 0 standard window macuse row fixture, URL: file:///tmp/macuse-owned-row-document
@@ -309,19 +361,19 @@ The focused UI element is 4 row Workflow`;
 \t\t\t3 outline Workflows
 \t\t\t\t4 row Workflow
 The focused UI element is 2 HTML content`;
-  for (const [method, input] of [
+  for (const [method, input] of /** @type {[string, Record<string, unknown>][]} */ ([
     ["perform_secondary_action", { element_index: 6, action: "Press" }],
     ["click", { element_index: 6 }],
-  ]) {
+  ])) {
     const f = fixture({ nativeApp: "FocusProbe", states: [before, before, after] });
     await f.observe();
     await f.guard(request(method, input));
     await f.guard(request("press_key", { key: "period" }));
-    assert.equal(f.actions()[1].outcome, "completed");
+    assert.equal(f.actions()[1]?.outcome, "completed");
   }
 });
 
-test("a verified setValue can hand off to Return on the same focused field", async () => {
+await test("a verified setValue can hand off to Return on the same focused field", async () => {
   // Reduced from Finder's Go to Folder panel.
   const before = `Window: "Go to Folder", App: Finder.
 0 standard window Go to Folder, ID: GoToWindow, Secondary Actions: Raise
@@ -333,29 +385,29 @@ test("a verified setValue can hand off to Return on the same focused field", asy
 	2 button Description: Close, ID: CloseButton
 	3 text field (settable) Value: /Applications, ID: PathTextField
 The focused UI element is 3 text field`;
-  for (const [readback, succeeds] of [
+  for (const [readback, succeeds] of /** @type {[string, boolean][]} */ ([
     [after, true],
     [
       after.replace("The focused UI element is 3 text field", "The focused UI element is 2 button"),
       false,
     ],
-  ]) {
+  ])) {
     const f = fixture({ nativeApp: "Finder", states: [before, before, readback, readback] });
     await f.observe();
     await f.guard(request("set_value", { element_index: 2, value: "/Applications" }));
     const key = f.guard(request("press_key", { key: "Return" }));
-    assert.equal(f.actions()[0].verification, "exact-field-value");
+    assert.equal(f.actions()[0]?.verification, "exact-field-value");
     if (succeeds) {
       await key;
-      assert.equal(f.actions()[1].outcome, "completed");
+      assert.equal(f.actions()[1]?.outcome, "completed");
     } else {
       await assert.rejects(key, /Focused field/);
-      assert.equal(f.actions()[1].dispatched, false);
+      assert.equal(f.actions()[1]?.dispatched, false);
     }
   }
 });
 
-test("failed paste preserves uncertain outcome and prevents replay", async () => {
+await test("failed paste preserves uncertain outcome and prevents replay", async () => {
   const f = fixture({
     mutate: () => {
       throw new Error("native pipe closed");
@@ -370,21 +422,23 @@ test("failed paste preserves uncertain outcome and prevents replay", async () =>
     f.guard(request("paste", { text: "new", format: "text" })),
     /uncertain outcome/,
   );
-  assert.equal(f.actions()[0].outcome, "unknown");
+  assert.equal(f.actions()[0]?.outcome, "unknown");
   assert.equal(f.calls.filter((call) => call.method === "paste").length, 1);
 });
 
-test("native canonical app bindings keep the observed exact scope without fuzzy aliases", async () => {
+await test("native canonical app bindings keep the observed exact scope without fuzzy aliases", async () => {
   const f = fixture({ nativeApp: "/Applications/Test.app" });
   await f.observe();
   await f.guard(request("press_key", { app: "/Applications/Test.app", key: "Escape" }));
-  assert.equal(f.calls.at(-1).method, "press_key");
-  assert.equal(f.context.meta.macuse.observations[0].app, "/Applications/Test.app");
-  assert.equal(f.context.meta.macuse.resolvedApps.App, "/Applications/Test.app");
+  assert.equal(f.calls.at(-1)?.method, "press_key");
+  const evidence = f.context.meta?.macuse;
+  if (evidence === undefined) assert.fail("missing published evidence");
+  assert.equal(evidence.observations[0]?.app, "/Applications/Test.app");
+  assert.equal(evidence.resolvedApps.App, "/Applications/Test.app");
   await assert.rejects(f.guard(request("press_key", { app: "app", key: "Escape" })), /outside/);
 });
 
-test("primary AX Press remains usable when Sky lists only secondary actions", async () => {
+await test("primary AX Press remains usable when Sky lists only secondary actions", async () => {
   const f = fixture({
     states: [
       tree().replace(
@@ -395,14 +449,14 @@ test("primary AX Press remains usable when Sky lists only secondary actions", as
   });
   await f.observe();
   await f.guard(request("perform_secondary_action", { element_index: 3, action: "Press" }));
-  assert.equal(f.calls.at(-1).method, "perform_secondary_action");
+  assert.equal(f.calls.at(-1)?.method, "perform_secondary_action");
   await assert.rejects(
     f.guard(request("perform_secondary_action", { element_index: 3, action: "Unlisted action" })),
     /not listed/,
   );
 });
 
-test("preflight rejects document or field drift and ambiguous target identity", async () => {
+await test("preflight rejects document or field drift and ambiguous target identity", async () => {
   for (const after of [
     tree().replace("file:///tmp/fixture", "file:///tmp/other"),
     tree({ value: "external edit" }),
@@ -418,11 +472,11 @@ test("preflight rejects document or field drift and ambiguous target identity", 
       f.calls.some((c) => c.method === "set_value"),
       false,
     );
-    assert.equal(f.actions()[0].outcome, "not_dispatched");
+    assert.equal(f.actions()[0]?.outcome, "not_dispatched");
   }
 });
 
-test("a distinct scroll area remains addressable when another has the same generic name", async () => {
+await test("a distinct scroll area remains addressable when another has the same generic name", async () => {
   // Reduced from the System Settings Privacy & Security page.
   const before = `Window: "Privacy & Security", App: System Settings.
 0 standard window Privacy & Security, ID: Main, Secondary Actions: Raise
@@ -441,18 +495,20 @@ test("a distinct scroll area remains addressable when another has the same gener
   const f = fixture({ nativeApp: "System Settings", states: [before, fresh] });
   await f.observe();
   await f.guard(request("scroll", { element_index: 55, direction: "up", pages: 1 }));
-  assert.equal(f.calls.at(-1).args[0].element_index, 155);
-  assert.equal(f.actions()[0].outcome, "completed");
+  const scrollArg = f.calls.at(-1)?.args?.[0];
+  if (!isRecord(scrollArg)) assert.fail("missing scroll arg");
+  assert.equal(scrollArg.element_index, 155);
+  assert.equal(f.actions()[0]?.outcome, "completed");
 });
 
-test("setValue verifies a distinguishable same-named field, not its peer", async () => {
+await test("setValue verifies a distinguishable same-named field, not its peer", async () => {
   const before = `Window: "fixture", App: App.
 0 standard window fixture, URL: file:///tmp/fixture
 	1 group Billing
 		2 text field (settable) Value: old
 	3 group Shipping
 		4 text field (settable) Value: other`;
-  for (const [after, verified] of [
+  for (const [after, verified] of /** @type {[string, boolean][]} */ ([
     [before.replace("Value: old", "Value: new"), true],
     [before.replace("Value: other", "Value: new"), false],
     [
@@ -461,21 +517,21 @@ test("setValue verifies a distinguishable same-named field, not its peer", async
         .replace("Value: other", "Value: new"),
       false,
     ],
-  ]) {
+  ])) {
     const f = fixture({ states: [before, before, after] });
     await f.observe();
     const edit = f.guard(request("set_value", { element_index: 2, value: "new" }));
     if (verified) {
       await edit;
-      assert.equal(f.actions()[0].verification, "exact-field-value");
+      assert.equal(f.actions()[0]?.verification, "exact-field-value");
     } else {
       await assert.rejects(edit, /readback/);
-      assert.equal(f.actions()[0].outcome, "unknown");
+      assert.equal(f.actions()[0]?.outcome, "unknown");
     }
   }
 });
 
-test("setValue verifies a scroll bar whose value indicator changes with it", async () => {
+await test("setValue verifies a scroll bar whose value indicator changes with it", async () => {
   // Reduced from the live System Settings Privacy & Security page.
   const before = `Window: "Privacy & Security", App: System Settings.
 0 standard window Privacy & Security, ID: Main, Secondary Actions: Raise
@@ -493,10 +549,10 @@ test("setValue verifies a scroll bar whose value indicator changes with it", asy
   const f = fixture({ nativeApp: "System Settings", states: [before, before, after] });
   await f.observe();
   await f.guard(request("set_value", { element_index: 100, value: "0" }));
-  assert.equal(f.actions()[0].verification, "exact-field-value");
+  assert.equal(f.actions()[0]?.verification, "exact-field-value");
 });
 
-test("setValue can use unchanged descendants when same-named controls share context", async () => {
+await test("setValue can use unchanged descendants when same-named controls share context", async () => {
   const before = `Window: "fixture", App: App.
 0 standard window fixture, URL: file:///tmp/fixture
 	1 slider (settable, float) 0
@@ -512,11 +568,15 @@ test("setValue can use unchanged descendants when same-named controls share cont
   });
   await f.observe();
   await f.guard(request("set_value", { element_index: 1, value: "5" }));
-  assert.equal(f.actions()[0].verification, "exact-field-value");
+  assert.equal(f.actions()[0]?.verification, "exact-field-value");
 });
 
-test("a progress title can change without blocking an action in the same observed workflow", async () => {
+await test("a progress title can change without blocking an action in the same observed workflow", async () => {
   // Reduced from the Comfy Desktop snapshots whose 68% -> 76% title change blocked Fit View.
+  /**
+   * @param {string | number | boolean} progress
+   * @param {string} [workflow]
+   */
   const snapshot = (
     progress,
     workflow = "workflow",
@@ -531,13 +591,13 @@ test("a progress title can change without blocking an action in the same observe
   const same = fixture({ nativeApp, states: [snapshot(68), snapshot(76)] });
   await same.observe();
   await same.guard(click);
-  assert.equal(same.actions()[0].outcome, "completed");
+  assert.equal(same.actions()[0]?.outcome, "completed");
   assert.equal(same.calls.filter((call) => call.method === "click").length, 1);
 
   const changed = fixture({ nativeApp, states: [snapshot(68), snapshot(76, "other")] });
   await changed.observe();
   await assert.rejects(changed.guard(click), /document changed/);
-  assert.equal(changed.actions()[0].dispatched, false);
+  assert.equal(changed.actions()[0]?.dispatched, false);
 
   const unproven = fixture({
     nativeApp,
@@ -548,11 +608,15 @@ test("a progress title can change without blocking an action in the same observe
   });
   await unproven.observe();
   await assert.rejects(unproven.guard(click), /document changed/);
-  assert.equal(unproven.actions()[0].dispatched, false);
+  assert.equal(unproven.actions()[0]?.dispatched, false);
 });
 
-test("a changing embedded frame does not stale an unchanged native window", async () => {
+await test("a changing embedded frame does not stale an unchanged native window", async () => {
   // Reduced from a real WebKit window with a changing local iframe.
+  /**
+   * @param {string} page
+   * @param {string} [title]
+   */
   const snapshot = (page, title = "macuse row fixture") => `Window: "${title}", App: FrameProbe.
 0 standard window ${title}, URL: file:///tmp/macuse-owned-row-document
 \t1 scroll area
@@ -563,7 +627,7 @@ test("a changing embedded frame does not stale an unchanged native window", asyn
   const f = fixture({ nativeApp, states: [snapshot("one"), snapshot("two")] });
   await f.observe();
   await f.guard(request("press_key", { key: "super+h" }));
-  assert.equal(f.actions()[0].outcome, "completed");
+  assert.equal(f.actions()[0]?.outcome, "completed");
 
   const progress = fixture({
     nativeApp,
@@ -571,10 +635,13 @@ test("a changing embedded frame does not stale an unchanged native window", asyn
   });
   await progress.observe();
   await progress.guard(request("press_key", { key: "super+h" }));
-  assert.equal(progress.actions()[0].outcome, "completed");
+  assert.equal(progress.actions()[0]?.outcome, "completed");
 });
 
-test("a changing title does not make the same focused native window stale", async () => {
+await test("a changing title does not make the same focused native window stale", async () => {
+  /**
+   * @param {string | number | boolean} progress
+   */
   const snapshot = (progress) => `Window: "macuse progress ${progress}%", App: ProgressProbe.
 0 standard window macuse progress ${progress}%, URL: file:///tmp/macuse-owned-progress-document, Secondary Actions: Raise
 \t1 button No-op
@@ -588,12 +655,12 @@ The focused UI element is 0 standard window macuse progress ${progress}%`;
   const f = fixture({ nativeApp, states: [snapshot(10), snapshot(11)] });
   await f.observe();
   await f.guard(request("press_key", { key: "Escape" }));
-  assert.equal(f.actions()[0].outcome, "completed");
+  assert.equal(f.actions()[0]?.outcome, "completed");
 
   const button = fixture({ nativeApp, states: [snapshot(10), snapshot(11)] });
   await button.observe();
   await button.guard(request("perform_secondary_action", { element_index: 1, action: "Press" }));
-  assert.equal(button.actions()[0].outcome, "completed");
+  assert.equal(button.actions()[0]?.outcome, "completed");
 
   const changed = fixture({
     nativeApp,
@@ -604,7 +671,7 @@ The focused UI element is 0 standard window macuse progress ${progress}%`;
     changed.guard(request("press_key", { key: "Escape" })),
     /Focused field changed/,
   );
-  assert.equal(changed.actions()[0].dispatched, false);
+  assert.equal(changed.actions()[0]?.dispatched, false);
 });
 
 const popupUrl =
@@ -612,7 +679,7 @@ const popupUrl =
 const popupTree = ({ page = `HTML content ${popupUrl}`, value = "old" } = {}) =>
   `Window: "", App: Brave Browser.\n0 window Secondary Actions: Raise\n\t1 container\n\t\t2 scroll area\n\t\t\t3 ${page}\n\t\t\t\t4 container\n\t\t\t\t\t8 button Open navigation\n\t\t\t\t\t11 text field (settable) Search in all items…, Value: ${value}`;
 
-test("an empty-title popup uses its sole full page label as title, not URL proof, for exact setValue", async () => {
+await test("an empty-title popup uses its sole full page label as title, not URL proof, for exact setValue", async () => {
   for (const page of [
     `HTML content ${popupUrl}`,
     `web area ${popupUrl}`,
@@ -626,19 +693,20 @@ test("an empty-title popup uses its sole full page label as title, not URL proof
     await f.observe();
     await f.guard(request("set_value", { element_index: 11, value: "new" }));
     assert.deepEqual(
-      f.actions()[0].before,
+      f.actions()[0]?.before,
       page.includes("URL:")
         ? { title: "", url: popupUrl, nativeWindowIdentity: false }
         : { title: popupUrl, url: null, nativeWindowIdentity: false },
     );
-    assert.equal(f.actions()[0].verification, "exact-field-value");
-    assert.equal(f.actions()[0].outcome, "completed");
+    assert.equal(f.actions()[0]?.verification, "exact-field-value");
+    assert.equal(f.actions()[0]?.outcome, "completed");
     assert.equal(f.calls.filter((call) => call.method === "set_value").length, 1);
   }
 });
 
-test("popup actions reject observed document or target drift and require exact readback", async () => {
+await test("popup actions reject observed document or target drift and require exact readback", async () => {
   const before = popupTree();
+  /** @type {[string, string, string, RegExp][]} */
   const cases = [
     ["changed full URL", before, before.replace("item/fixture", "item/other"), /document changed/],
     [
@@ -673,7 +741,7 @@ test("popup actions reject observed document or target drift and require exact r
       false,
       name,
     );
-    assert.equal(f.actions()[0].outcome, "not_dispatched", name);
+    assert.equal(f.actions()[0]?.outcome, "not_dispatched", name);
   }
   for (const after of [
     popupTree(),
@@ -685,7 +753,7 @@ test("popup actions reject observed document or target drift and require exact r
       f.guard(request("set_value", { element_index: 11, value: "new" })),
       /readback/,
     );
-    assert.equal(f.actions()[0].outcome, "unknown");
+    assert.equal(f.actions()[0]?.outcome, "unknown");
     await assert.rejects(
       f.guard(request("set_value", { element_index: 11, value: "new" })),
       /uncertain outcome/,
@@ -694,17 +762,26 @@ test("popup actions reject observed document or target drift and require exact r
   }
 });
 
-test("native sheets and windows permit targeted actions but reject observed title drift", async () => {
+await test("native sheets and windows permit targeted actions but reject observed title drift", async () => {
   const title = 'Add "Proton Pass: Free Password Manager"?';
   for (const role of ["sheet", "window"]) {
+    /**
+     * @param {string} name
+     * @param {string} actions
+     */
     const snapshot = (name, actions) =>
-      `Window: "", App: Google Chrome.\n0 ${role} ${name}${name ? ", " : ""}Secondary Actions: ${actions}\n\t1 container ${title}\n\t\t2 container\n\t\t\t3 heading ${title}\n\t\t\t8 container\n\t\t\t\t9 button Cancel\n\t\t\t\t10 button Add extension\n11 menu bar\n\t12 Chrome`;
-    for (const [observed, fresh, allowed, actions = "Raise"] of [
+      `Window: "", App: Google Chrome.\n0 ${role} ${name}${name !== "" ? ", " : ""}Secondary Actions: ${actions}\n\t1 container ${title}\n\t\t2 container\n\t\t\t3 heading ${title}\n\t\t\t8 container\n\t\t\t\t9 button Cancel\n\t\t\t\t10 button Add extension\n11 menu bar\n\t12 Chrome`;
+    for (const [
+      observed,
+      fresh,
+      allowed,
+      actions = "Raise",
+    ] of /** @type {[string, string, boolean, string?][]} */ ([
       [title, title, true],
       [title, "Other sheet", false],
       ["", "", true],
       ["", "", true, "Raise, Minimize"],
-    ]) {
+    ])) {
       const f = fixture({
         nativeApp: "Google Chrome",
         states: [snapshot(observed, actions), snapshot(fresh, actions)],
@@ -715,12 +792,12 @@ test("native sheets and windows permit targeted actions but reject observed titl
       );
       if (allowed) {
         await action;
-        assert.deepEqual(f.actions()[0].before, {
+        assert.deepEqual(f.actions()[0]?.before, {
           title: observed,
           url: null,
           nativeWindowIdentity: false,
         });
-        assert.equal(f.actions()[0].outcome, "completed");
+        assert.equal(f.actions()[0]?.outcome, "completed");
       } else {
         await assert.rejects(action, /document changed/);
         assert.equal(
@@ -740,7 +817,7 @@ const goToSheet = ({
 } = {}) =>
   `Window: "", App: Pi Durable.\n0 ${root}\n\t1 text Go to the folder:\n\t${index} text field (settable) ID: PathTextField, Value: ${value}\n\t3 button Go, ID: GoButton\n\t4 button Cancel, ID: CancelButton\n5 menu bar\n\t6 Pi Durable${focused ? `\nThe focused UI element is ${index} text field` : ""}`;
 
-test("observed untitled System Settings sheet permits its application-scripting switch", async () => {
+await test("observed untitled System Settings sheet permits its application-scripting switch", async () => {
   const sheet = `Window: "", App: System Settings.
 0 sheet Secondary Actions: Raise
 \t1 container
@@ -750,24 +827,25 @@ test("observed untitled System Settings sheet permits its application-scripting 
 \t\t13 button Done
 14 menu bar
 \t15 System Settings`;
-  for (const [method, input] of [
+  for (const [method, input] of /** @type {[string, Record<string, unknown>][]} */ ([
     ["perform_secondary_action", { element_index: 3, action: "Press" }],
     ["click", { x: 837, y: 78 }],
-  ]) {
+  ])) {
     const f = fixture({ nativeApp: "System Settings", states: [sheet] });
     await f.observe();
     await f.guard(request(method, input));
-    assert.equal(f.actions()[0].outcome, "completed");
+    assert.equal(f.actions()[0]?.outcome, "completed");
     assert.equal(f.calls.filter((call) => call.method === method).length, 1);
   }
 });
 
-test("same-ID menu actions preserve full labels with metadata and reject changed labels before dispatch", async () => {
-  for (const [prefix, metadata] of [
+await test("same-ID menu actions preserve full labels with metadata and reject changed labels before dispatch", async () => {
+  for (const [prefix, metadata] of /** @type {[string, string][]} */ ([
     ["", ""],
     ["menu item ", ""],
     ["", ", Description: Recording control"],
-  ]) {
+  ])) {
+    /** @param {string} label */
     const state = (label) =>
       `Window: "Fixture", App: App.\n0 standard window Fixture\n1 menu bar\n\t2 ${prefix}${label}, ID: recording-toggle${metadata}`;
     for (const changed of [true, false]) {
@@ -775,7 +853,7 @@ test("same-ID menu actions preserve full labels with metadata and reject changed
         states: [state("Start Recording"), state(changed ? "Stop Recording" : "Start Recording")],
       });
       await f.observe();
-      const original = f.context.meta.macuse.observations[0].elements.find(
+      const original = f.context.meta?.macuse?.observations[0]?.elements.find(
         (element) => element.id === "recording-toggle",
       );
       const action = f.guard(
@@ -783,23 +861,24 @@ test("same-ID menu actions preserve full labels with metadata and reject changed
       );
       if (changed) {
         await assert.rejects(action, /Target identity or value changed/);
-        assert.equal(f.actions()[0].dispatched, false);
-        assert.equal(f.actions()[0].outcome, "not_dispatched");
+        assert.equal(f.actions()[0]?.dispatched, false);
+        assert.equal(f.actions()[0]?.outcome, "not_dispatched");
       } else {
         await action;
-        assert.equal(f.actions()[0].outcome, "completed");
+        assert.equal(f.actions()[0]?.outcome, "completed");
       }
       assert.equal(
         f.calls.filter((call) => call.method === "perform_secondary_action").length,
         changed ? 0 : 1,
       );
+      if (original === undefined) assert.fail("missing recording-toggle element");
       assert.equal(original.role, "menu item");
       assert.equal(original.name, "Start Recording");
     }
   }
 });
 
-test("actual GoToWindow snapshot with Window menu label verifies setValue on its own PathTextField", async () => {
+await test("actual GoToWindow snapshot with Window menu label verifies setValue on its own PathTextField", async () => {
   const original = "/private/tmp/cuebox-ui-evidence-closeout-20260711/.ui-evidence-isolation";
   const before = `Window: "", App: Pi Durable.
 0 sheet ID: GoToWindow, Secondary Actions: Raise
@@ -829,20 +908,21 @@ Note: Pay special attention to the content selected by the user. If the user ask
     const action = f.guard(request("set_value", { element_index: 2, value }));
     if (readback === value) {
       await action;
-      assert.equal(f.actions()[0].verification, "exact-field-value");
-      assert.equal(f.actions()[0].outcome, "completed");
-      const observed = f.context.meta.macuse.observations[0];
+      assert.equal(f.actions()[0]?.verification, "exact-field-value");
+      assert.equal(f.actions()[0]?.outcome, "completed");
+      const observed = f.context.meta?.macuse?.observations[0];
+      if (observed === undefined) assert.fail("missing observation");
       assert.equal(observed.nativeSheetId, "GoToWindow");
       assert.equal(observed.nativeWindowIdentity, false);
       assert.equal(
-        observed.elements.find((element) => element.id === "PathTextField").value,
+        observed.elements.find((element) => element.id === "PathTextField")?.value,
         value,
       );
-      assert.equal(observed.elements.find((element) => element.index === "8").role, "menu item");
-      assert.equal(observed.elements.find((element) => element.index === "8").name, "Window");
+      assert.equal(observed.elements.find((element) => element.index === "8")?.role, "menu item");
+      assert.equal(observed.elements.find((element) => element.index === "8")?.name, "Window");
     } else {
       await assert.rejects(action, /readback/);
-      assert.equal(f.actions()[0].outcome, "unknown");
+      assert.equal(f.actions()[0]?.outcome, "unknown");
       await assert.rejects(
         f.guard(request("set_value", { element_index: 2, value })),
         /uncertain outcome/,
@@ -855,7 +935,7 @@ Note: Pay special attention to the content selected by the user. If the user ask
   }
 });
 
-test("a sole identified untitled native sheet permits exact setValue and Escape with fresh target resolution", async () => {
+await test("a sole identified untitled native sheet permits exact setValue and Escape with fresh target resolution", async () => {
   const value = "/tmp/café folder";
   const f = fixture({
     nativeApp: "Pi Durable",
@@ -867,26 +947,30 @@ test("a sole identified untitled native sheet permits exact setValue and Escape 
     f.calls.find((call) => call.method === "set_value"),
     request("set_value", { element_index: 9, value }),
   );
-  assert.equal(f.actions()[0].verification, "exact-field-value");
-  assert.equal(f.actions()[0].outcome, "completed");
+  assert.equal(f.actions()[0]?.verification, "exact-field-value");
+  assert.equal(f.actions()[0]?.outcome, "completed");
+  // A sheet identity is not proof of an AXWindow for host selected-text insertion.
+  const sheetEvidence = f.context.meta?.macuse;
+  if (sheetEvidence === undefined) assert.fail("missing published evidence");
+  const observation = sheetEvidence.observations[0];
+  if (observation === undefined) assert.fail("missing observation");
   assert.equal(
-    f.context.meta.macuse.observations[0].elements.find((element) => element.id === "PathTextField")
-      .value,
+    observation.elements.find((element) => element.id === "PathTextField")?.value,
     value,
   );
-  // A sheet identity is not proof of an AXWindow for host selected-text insertion.
-  assert.equal(f.context.meta.macuse.observations[0].nativeWindowIdentity, false);
+  assert.equal(observation.nativeWindowIdentity, false);
   for (const focused of [false, true]) {
     const escape = fixture({ nativeApp: "Pi Durable", states: [goToSheet({ focused })] });
     await escape.observe();
     await escape.guard(request("press_key", { key: "Escape" }));
-    assert.equal(escape.calls.at(-1).method, "press_key");
-    assert.equal(escape.actions()[0].outcome, "completed");
+    assert.equal(escape.calls.at(-1)?.method, "press_key");
+    assert.equal(escape.actions()[0]?.outcome, "completed");
   }
 });
 
-test("untitled sheet actions reject observed document identity changes before dispatch", async () => {
+await test("untitled sheet actions reject observed document identity changes before dispatch", async () => {
   const before = goToSheet();
+  /** @type {[string, string, string][]} */
   const cases = [
     ["changed sheet ID", before, before.replace("ID: GoToWindow", "ID: OtherSheet")],
     ["missing sheet ID", before, before.replace("ID: GoToWindow, ", "")],
@@ -896,10 +980,10 @@ test("untitled sheet actions reject observed document identity changes before di
     ["new ambiguous parent", before, `${before}\n7 standard window Parent document`],
   ];
   for (const [name, observed, fresh] of cases) {
-    for (const [method, input] of [
+    for (const [method, input] of /** @type {[string, Record<string, unknown>][]} */ ([
       ["set_value", { element_index: 2, value: "/tmp/new" }],
       ["press_key", { key: "Escape" }],
-    ]) {
+    ])) {
       const f = fixture({ states: [observed, fresh] });
       await f.observe();
       await assert.rejects(f.guard(request(method, input)), /document changed/, name);
@@ -908,14 +992,19 @@ test("untitled sheet actions reject observed document identity changes before di
         false,
         name,
       );
-      assert.equal(f.actions()[0].outcome, "not_dispatched", name);
+      assert.equal(f.actions()[0]?.outcome, "not_dispatched", name);
     }
   }
 });
 
-test("identified sheets retain exact scope, observation, control, focused-value and readback guards", async () => {
+await test("identified sheets retain exact scope, observation, control, focused-value and readback guards", async () => {
   const before = goToSheet({ focused: true });
-  for (const [method, input, fresh, error] of [
+  for (const [
+    method,
+    input,
+    fresh,
+    error,
+  ] of /** @type {[string, Record<string, unknown>, string, RegExp][]} */ ([
     [
       "set_value",
       { element_index: 2, value: "/tmp/new" },
@@ -958,7 +1047,7 @@ test("identified sheets retain exact scope, observation, control, focused-value 
       before.replace("focused UI element is 2", "focused UI element is 4"),
       /Focused field changed/,
     ],
-  ]) {
+  ])) {
     const f = fixture({ states: [before, fresh] });
     await f.observe();
     await assert.rejects(f.guard(request(method, input)), error);
@@ -984,7 +1073,7 @@ test("identified sheets retain exact scope, observation, control, focused-value 
       f.guard(request("set_value", { element_index: 2, value: "/tmp/new" })),
       /readback/,
     );
-    assert.equal(f.actions()[0].outcome, "unknown");
+    assert.equal(f.actions()[0]?.outcome, "unknown");
     await assert.rejects(
       f.guard(request("set_value", { element_index: 2, value: "/tmp/new" })),
       /uncertain outcome/,
@@ -993,7 +1082,7 @@ test("identified sheets retain exact scope, observation, control, focused-value 
   }
 });
 
-test("preflight detects an external edit after a metadata-looking field line", async () => {
+await test("preflight detects an external edit after a metadata-looking field line", async () => {
   const f = fixture({
     states: [
       tree({ value: "heading\nNote: schedule\nfirst draft" }),
@@ -1009,30 +1098,33 @@ test("preflight detects an external edit after a metadata-looking field line", a
     f.calls.some((call) => call.method === "set_value"),
     false,
   );
-  assert.equal(f.actions()[0].dispatched, false);
+  assert.equal(f.actions()[0]?.dispatched, false);
 });
 
-test("setValue readback excludes a structural wrapper after the last field", async () => {
+await test("setValue readback excludes a structural wrapper after the last field", async () => {
+  /** @param {string} value */
   const wrapped = (value) =>
     `Window: "Draft", App: App.\n<app_state>\n0 standard window Draft, URL: file:///tmp/draft\n\t1 text field (settable) ID: editor, Value: ${value}\nSelected text: [${value}]\n</app_state>\nThe focused UI element is 1 text field`;
   const f = fixture({ states: [wrapped("old"), wrapped("old"), wrapped("new")] });
   await f.observe();
   await f.guard(request("set_value", { element_index: 1, value: "new" }));
-  assert.equal(f.actions()[0].verification, "exact-field-value");
-  assert.equal(f.actions()[0].outcome, "completed");
+  assert.equal(f.actions()[0]?.verification, "exact-field-value");
+  assert.equal(f.actions()[0]?.outcome, "completed");
 });
 
-test("setValue readback excludes a selection trailer without a focus summary", async () => {
+await test("setValue readback excludes a selection trailer without a focus summary", async () => {
+  /** @param {string} value */
   const selected = (value) =>
     `Window: "Draft", App: App.\n0 standard window Draft, URL: file:///tmp/draft\n\t1 text field (settable) ID: editor, Value: ${value}\nSelected text: [${value}]`;
   const f = fixture({ states: [selected("old"), selected("old"), selected("new")] });
   await f.observe();
   await f.guard(request("set_value", { element_index: 1, value: "new" }));
-  assert.equal(f.actions()[0].verification, "exact-field-value");
-  assert.equal(f.actions()[0].outcome, "completed");
+  assert.equal(f.actions()[0]?.verification, "exact-field-value");
+  assert.equal(f.actions()[0]?.outcome, "completed");
 });
 
-test("a disappearing row cannot retarget its Delete action to an originally identical button", async () => {
+await test("a disappearing row cannot retarget its Delete action to an originally identical button", async () => {
+  /** @param {string[]} names */
   const files = (names) =>
     `Window: "Files", App: App.\n0 standard window Files\n${names
       .map((name, index) => `\t${index * 2 + 1} row ${name}\n\t\t${index * 2 + 2} button Delete`)
@@ -1047,11 +1139,12 @@ test("a disappearing row cannot retarget its Delete action to an originally iden
     f.calls.some((c) => c.method === "perform_secondary_action"),
     false,
   );
-  assert.equal(f.actions()[0].outcome, "not_dispatched");
+  assert.equal(f.actions()[0]?.outcome, "not_dispatched");
 });
 
+/** @param {string} body */
 const fileState = (body) => `Window: "Files", App: App.\n0 standard window Files\n${body}`;
-for (const [scenario, index, body] of [
+for (const [scenario, index, body] of /** @type {[string, number, string][]} */ ([
   ["an idless row changes", 2, "\t1 row draft.txt\n\t\t2 button Delete\n\t3 text ready"],
   ["an unlabeled row's filename changes", 3, "\t1 row\n\t\t2 text draft.txt\n\t\t3 button Delete"],
   [
@@ -1090,8 +1183,8 @@ for (const [scenario, index, body] of [
     5,
     "\t1 scroll area Library\n\t\t2 group\n\t\t\t3 text draft.txt\n\t\t4 group\n\t\t\t5 button Delete, ID: delete",
   ],
-])
-  test(`Delete cannot retarget when ${scenario}`, async () => {
+]))
+  await test(`Delete cannot retarget when ${scenario}`, async () => {
     const before = fileState(body);
     const f = fixture({ states: [before, before.replace("draft.txt", "important.txt")] });
     await f.observe();
@@ -1105,16 +1198,17 @@ for (const [scenario, index, body] of [
     );
   });
 
-test("unrelated status outside a row does not block Delete", async () => {
+await test("unrelated status outside a row does not block Delete", async () => {
   const before = fileState("\t1 row draft.txt\n\t\t2 button Delete\n\t3 text ready");
   const f = fixture({ states: [before, before.replace("text ready", "text updated")] });
   await f.observe();
   await f.guard(request("perform_secondary_action", { element_index: 2, action: "Press" }));
-  assert.equal(f.actions()[0].outcome, "completed");
+  assert.equal(f.actions()[0]?.outcome, "completed");
 });
 
-test("a disappearing tooltip does not stale an unchanged named workflow row", async () => {
+await test("a disappearing tooltip does not stale an unchanged named workflow row", async () => {
   // Reduced from the Comfy Desktop observations before the rejected workflow double-click.
+  /** @param {boolean} tooltip */
   const snapshot = (
     tooltip,
   ) => `Window: "ComfyUI — [0%] Node — Comfy Desktop v1.1.7", App: Comfy Desktop.
@@ -1136,7 +1230,7 @@ ${tooltip ? "\t\t\t95 container Refresh\n\t\t\t\t96 text Refresh\n" : ""}\t97 cl
   });
   await f.observe();
   await f.guard(request("click", { element_index: 53, click_count: 2 }));
-  assert.equal(f.actions()[0].outcome, "completed");
+  assert.equal(f.actions()[0]?.outcome, "completed");
 
   const changed = fixture({
     nativeApp: "/Applications/Comfy Desktop.app",
@@ -1150,11 +1244,12 @@ ${tooltip ? "\t\t\t95 container Refresh\n\t\t\t\t96 text Refresh\n" : ""}\t97 cl
     changed.guard(request("click", { element_index: 53, click_count: 2 })),
     /Target identity/,
   );
-  assert.equal(changed.actions()[0].dispatched, false);
+  assert.equal(changed.actions()[0]?.dispatched, false);
 });
 
-test("a duplicate-named row appearing does not stale a distinct cell", async () => {
+await test("a duplicate-named row appearing does not stale a distinct cell", async () => {
   // Reduced from a real WebKit grid whose second row appeared after observation.
+  /** @param {boolean} duplicate */
   const snapshot = (duplicate) => `Window: "macuse row fixture", App: RowProbe.
 0 standard window macuse row fixture, URL: file:///tmp/macuse-owned-row-document
 \t1 scroll area
@@ -1167,19 +1262,20 @@ ${duplicate ? "\t\t\t\t7 row (selectable) Qwen Image 2.1 UC - Text to Image\n\t\
   const f = fixture({ nativeApp: "RowProbe", states: [snapshot(false), snapshot(true)] });
   await f.observe();
   await f.guard(request("click", { element_index: 6 }));
-  assert.equal(f.actions()[0].outcome, "completed");
+  assert.equal(f.actions()[0]?.outcome, "completed");
 });
 
-test("scroll position changes outside the row do not block its Delete button", async () => {
+await test("scroll position changes outside the row do not block its Delete button", async () => {
+  /** @param {string} position */
   const files = (position) =>
     `Window: "Files", App: App.\n0 standard window Files\n\t1 scroll area Library, Value: ${position}\n\t\t2 row draft.txt\n\t\t\t3 button Delete`;
   const f = fixture({ states: [files("0"), files("120")] });
   await f.observe();
   await f.guard(request("perform_secondary_action", { element_index: 3, action: "Press" }));
-  assert.equal(f.actions()[0].outcome, "completed");
+  assert.equal(f.actions()[0]?.outcome, "completed");
 });
 
-test("keyboard input rejects focus drift before dispatch", async () => {
+await test("keyboard input rejects focus drift before dispatch", async () => {
   const before = tree().replace(
     "\t3 button",
     "\t2 text field (settable) ID: notes, Value: notes\n\t3 button",
@@ -1193,10 +1289,10 @@ test("keyboard input rejects focus drift before dispatch", async () => {
     f.calls.some((c) => c.method === "press_key"),
     false,
   );
-  assert.equal(f.actions()[0].outcome, "not_dispatched");
+  assert.equal(f.actions()[0]?.outcome, "not_dispatched");
 });
 
-test("missing focus evidence never authorizes keyboard editing or submission", async () => {
+await test("missing focus evidence never authorizes keyboard editing or submission", async () => {
   const before = tree().replace(
     "\t3 button",
     "\t2 text field (settable) ID: notes, Value: notes\n\t3 button",
@@ -1244,15 +1340,19 @@ test("missing focus evidence never authorizes keyboard editing or submission", a
     ]) {
       const f = fixture({ states: [missing, fresh] });
       await f.observe();
-      const error = await f.guard(request("press_key", { key })).then(
-        () => undefined,
-        (error) => error,
+      const thrown = await f.guard(request("press_key", { key })).then(
+        () => null,
+        (/** @type {unknown} */ error) => error,
       );
       assert.equal(f.calls.filter((call) => call.method === "press_key").length, 0, key);
-      assert.match(error?.message ?? "", /Focused field changed or is unavailable/, key);
-      assert.equal(f.actions()[0].dispatched, false, key);
-      assert.equal(f.actions()[0].outcome, "not_dispatched", key);
-      assert.equal(f.actions()[0].verification, "none", key);
+      assert.match(
+        thrown instanceof Error ? thrown.message : String(thrown),
+        /Focused field changed or is unavailable/,
+        key,
+      );
+      assert.equal(f.actions()[0]?.dispatched, false, key);
+      assert.equal(f.actions()[0]?.outcome, "not_dispatched", key);
+      assert.equal(f.actions()[0]?.verification, "none", key);
     }
     const unchanged = fixture({ states: [before] });
     await unchanged.observe();
@@ -1261,11 +1361,11 @@ test("missing focus evidence never authorizes keyboard editing or submission", a
       unchanged.calls.filter((call) => call.method === "press_key"),
       [request("press_key", { key })],
     );
-    assert.equal(unchanged.actions()[0].outcome, "completed", key);
+    assert.equal(unchanged.actions()[0]?.outcome, "completed", key);
   }
 });
 
-test("bare Escape and directional navigation preserve focusless dispatch without ignoring known focus drift", async () => {
+await test("bare Escape and directional navigation preserve focusless dispatch without ignoring known focus drift", async () => {
   const missing = tree().replace(/\nThe focused UI element.*$/, "");
   for (const key of ["Escape", "Left", "Right", "Up", "Down"]) {
     for (const fresh of [missing, tree()]) {
@@ -1276,7 +1376,7 @@ test("bare Escape and directional navigation preserve focusless dispatch without
         f.calls.filter((call) => call.method === "press_key"),
         [request("press_key", { key })],
       );
-      assert.equal(f.actions()[0].outcome, "completed", key);
+      assert.equal(f.actions()[0]?.outcome, "completed", key);
     }
     for (const fresh of [missing, tree({ value: "external edit" }), tree({ focus: 3 })]) {
       const f = fixture({ states: [tree(), fresh] });
@@ -1287,12 +1387,12 @@ test("bare Escape and directional navigation preserve focusless dispatch without
         false,
         key,
       );
-      assert.equal(f.actions()[0].outcome, "not_dispatched", key);
+      assert.equal(f.actions()[0]?.outcome, "not_dispatched", key);
     }
   }
 });
 
-test("window-level shortcuts preserve dispatch without prior focused-field evidence", async () => {
+await test("window-level shortcuts preserve dispatch without prior focused-field evidence", async () => {
   for (const key of ["super+w", "super+s", "cmd+s", "command+shift+s", "meta+alt+s"]) {
     for (const before of [tree(), tree().replace(/\nThe focused UI element.*$/, "")]) {
       const f = fixture({ states: [before, tree({ value: "edited draft", focus: 3 })] });
@@ -1302,12 +1402,12 @@ test("window-level shortcuts preserve dispatch without prior focused-field evide
         f.calls.filter((call) => call.method === "press_key"),
         [request("press_key", { key })],
       );
-      assert.equal(f.actions()[0].outcome, "completed");
+      assert.equal(f.actions()[0]?.outcome, "completed");
     }
   }
 });
 
-test("app-wide Command shortcuts tolerate changed focused text but never document drift", async () => {
+await test("app-wide Command shortcuts tolerate changed focused text but never document drift", async () => {
   for (const key of [
     "super+s",
     "cmd+s",
@@ -1324,7 +1424,7 @@ test("app-wide Command shortcuts tolerate changed focused text but never documen
     const f = fixture({ states: [tree(), tree({ value: "edited draft" })] });
     await f.observe();
     await f.guard(request("press_key", { key }));
-    assert.equal(f.calls.at(-1).method, "press_key");
+    assert.equal(f.calls.at(-1)?.method, "press_key");
     const drift = fixture({
       states: [tree(), tree().replace("file:///tmp/fixture", "file:///tmp/other")],
     });
@@ -1333,7 +1433,7 @@ test("app-wide Command shortcuts tolerate changed focused text but never documen
   }
 });
 
-test("text entry and editing shortcuts retain focused-field value checks", async () => {
+await test("text entry and editing shortcuts retain focused-field value checks", async () => {
   for (const key of [
     "a",
     "Right",
@@ -1356,7 +1456,7 @@ test("text entry and editing shortcuts retain focused-field value checks", async
   }
 });
 
-test("formatting, submission and unknown Command chords retain value and focus checks", async () => {
+await test("formatting, submission and unknown Command chords retain value and focus checks", async () => {
   const before = tree().replace(
     "\t3 button",
     "\t2 text field (settable) ID: notes, Value: notes\n\t3 button",
@@ -1391,11 +1491,11 @@ test("formatting, submission and unknown Command chords retain value and focus c
     const unchanged = fixture({ states: [before] });
     await unchanged.observe();
     await unchanged.guard(request("press_key", { key }));
-    assert.equal(unchanged.actions()[0].outcome, "completed", key);
+    assert.equal(unchanged.actions()[0]?.outcome, "completed", key);
   }
 });
 
-test("typing cannot retarget to an originally identical field when the focused field disappears", async () => {
+await test("typing cannot retarget to an originally identical field when the focused field disappears", async () => {
   const f = fixture({ states: [tree({ duplicate: true }), tree({ index: 8 })] });
   await f.observe();
   await assert.rejects(f.guard(request("type_text", { text: "new" })), /Focused field changed/);
@@ -1403,10 +1503,11 @@ test("typing cannot retarget to an originally identical field when the focused f
     f.calls.some((c) => c.method === "type_text"),
     false,
   );
-  assert.equal(f.actions()[0].outcome, "not_dispatched");
+  assert.equal(f.actions()[0]?.outcome, "not_dispatched");
 });
 
-test("typing cannot retarget when the focused editor moves to another cell", async () => {
+await test("typing cannot retarget when the focused editor moves to another cell", async () => {
+  /** @param {string} cell */
   const files = (cell) =>
     fileState(
       `\t1 cell Value: ${cell}\n\t\t2 text field (settable) ID: editor, Value: unchanged\nThe focused UI element is 2 text field`,
@@ -1418,30 +1519,34 @@ test("typing cannot retarget when the focused editor moves to another cell", asy
     f.calls.some((c) => c.method === "type_text"),
     false,
   );
-  assert.equal(f.actions()[0].outcome, "not_dispatched");
+  assert.equal(f.actions()[0]?.outcome, "not_dispatched");
 });
 
-test("unique field identity re-resolves its index and exact Unicode setValue readback is required", async () => {
+await test("unique field identity re-resolves its index and exact Unicode setValue readback is required", async () => {
   const value = "café 漢字 🙂\n2026 roadmap\n2026 text of agreement\n  exact trailing whitespace  ";
-  for (const [identity, key] of [
+  for (const [identity, key] of /** @type {[string, string][]} */ ([
     ["ID: editor", "id"],
     ["Description: editor", "description"],
-  ]) {
+  ])) {
+    /** @param {Parameters<typeof tree>[0]} [options] */
     const state = (options) => tree(options).replace("ID: editor", identity);
     const f = fixture({ states: [state(), state({ index: 7 }), state({ index: 7, value })] });
     await f.observe();
     await f.guard(request("set_value", { element_index: 1, value }));
-    assert.equal(f.calls.find((c) => c.method === "set_value").args[0].element_index, 7);
-    assert.equal(f.actions()[0].verification, "exact-field-value");
-    assert.equal(f.actions()[0].outcome, "completed");
+    const setValueCall = f.calls.find((c) => c.method === "set_value");
+    const setValueArg = setValueCall?.args?.[0];
+    if (!isRecord(setValueArg)) assert.fail("missing set_value arg");
+    assert.equal(setValueArg.element_index, 7);
+    assert.equal(f.actions()[0]?.verification, "exact-field-value");
+    assert.equal(f.actions()[0]?.outcome, "completed");
     assert.equal(
-      f.context.meta.macuse.observations[0].elements.find((e) => e[key] === "editor").value,
+      f.context.meta?.macuse?.observations[0]?.elements.find((e) => e[key] === "editor")?.value,
       value,
     );
   }
 });
 
-test("setValue verifies the search field when its results sidebar and index change", async () => {
+await test("setValue verifies the search field when its results sidebar and index change", async () => {
   // Reduced from the System Settings Full Disk Access snapshots surrounding the edit.
   const before = `Window: "Full Disk Access", App: System Settings.
 0 standard window Full Disk Access, ID: Main, Secondary Actions: Raise
@@ -1481,12 +1586,13 @@ test("setValue verifies the search field when its results sidebar and index chan
       [request("set_value", { element_index: 42, value })],
     );
     assert.equal(
-      f.context.meta.macuse.observations[0].elements.find((element) => element.index === "7").value,
+      f.context.meta?.macuse?.observations[0]?.elements.find((element) => element.index === "7")
+        ?.value,
       value,
     );
   }
-  assert.equal(f.actions()[0].verification, "exact-field-value");
-  assert.equal(f.actions()[0].outcome, "completed");
+  assert.equal(f.actions()[0]?.verification, "exact-field-value");
+  assert.equal(f.actions()[0]?.outcome, "completed");
 
   const changedBeforeDispatch = after.replace(`Value: ${value}, Placeholder: Search`, "Search");
   const stale = fixture({ nativeApp: "System Settings", states: [before, changedBeforeDispatch] });
@@ -1510,7 +1616,7 @@ test("setValue verifies the search field when its results sidebar and index chan
     ambiguous.guard(request("set_value", { element_index: 42, value })),
     /readback/,
   );
-  assert.equal(ambiguous.actions()[0].outcome, "unknown");
+  assert.equal(ambiguous.actions()[0]?.outcome, "unknown");
   await assert.rejects(
     ambiguous.guard(request("set_value", { element_index: 42, value })),
     /uncertain outcome/,
@@ -1518,16 +1624,21 @@ test("setValue verifies the search field when its results sidebar and index chan
   assert.equal(ambiguous.calls.filter((call) => call.method === "set_value").length, 1);
 });
 
-test("editing a field within a row still verifies its changed value", async () => {
+await test("editing a field within a row still verifies its changed value", async () => {
+  /** @param {string} value */
   const files = (value) =>
     `Window: "Files", App: App.\n0 standard window Files\n\t1 row draft.txt\n\t\t2 text field (settable) ID: editor, Value: ${value}`;
   const f = fixture({ states: [files("old"), files("old"), files("new")] });
   await f.observe();
   await f.guard(request("set_value", { element_index: 2, value: "new" }));
-  assert.equal(f.actions()[0].verification, "exact-field-value");
+  assert.equal(f.actions()[0]?.verification, "exact-field-value");
 });
 
-test("editing a field within a cell verifies its changed value", async () => {
+await test("editing a field within a cell verifies its changed value", async () => {
+  /**
+   * @param {string} cell
+   * @param {string} field
+   */
   const files = (cell, field) =>
     `Window: "Files", App: App.\n0 standard window Files\n\t1 cell Value: ${cell}\n\t\t2 text field (settable) ID: editor, Value: ${field}`;
   for (const cellAfter of ["old", "new"]) {
@@ -1536,14 +1647,14 @@ test("editing a field within a cell verifies its changed value", async () => {
     });
     await f.observe();
     await f.guard(request("set_value", { element_index: 2, value: "new" }));
-    assert.equal(f.actions()[0].verification, "exact-field-value");
+    assert.equal(f.actions()[0]?.verification, "exact-field-value");
   }
 });
 
-test("unrelated text changes cannot verify setValue; caught uncertain action latches this run", async () => {
+await test("unrelated text changes cannot verify setValue; caught uncertain action latches this run", async () => {
   const f = fixture({
     states: [tree(), tree(), tree().replace("unrelated clock", "new clock")],
-    mutate: () => undefined,
+    mutate: () => null,
   });
   await f.observe();
   await assert.rejects(
@@ -1553,14 +1664,14 @@ test("unrelated text changes cannot verify setValue; caught uncertain action lat
   const count = f.calls.length;
   await assert.rejects(f.guard(request("press_key", { key: "Escape" })), /uncertain outcome/);
   assert.equal(f.calls.length, count);
-  assert.equal(f.actions()[0].dispatched, true);
-  assert.equal(f.actions()[0].outcome, "unknown");
-  assert.equal(f.actions()[1].dispatched, false);
+  assert.equal(f.actions()[0]?.dispatched, true);
+  assert.equal(f.actions()[0]?.outcome, "unknown");
+  assert.equal(f.actions()[1]?.dispatched, false);
   f.context.requestMeta.macuse = { ...gates, runId: "run-2" };
   await assert.rejects(f.guard(request("press_key", { key: "Escape" })), /Observe this exact app/);
 });
 
-test("dispatch exceptions preserve partial evidence and prohibit replay, even after public reads", async () => {
+await test("dispatch exceptions preserve partial evidence and prohibit replay, even after public reads", async () => {
   const f = fixture({
     mutate: () => {
       throw new Error("native pipe closed");
@@ -1573,11 +1684,17 @@ test("dispatch exceptions preserve partial evidence and prohibit replay, even af
   assert.equal(f.calls.filter((c) => c.method === "press_key").length, 1);
 });
 
-test("full preflight/action/readback units serialize concurrent guest calls and public reads", async () => {
-  let release;
-  const hold = new Promise((resolve) => (release = resolve));
-  let started;
-  const dispatched = new Promise((resolve) => (started = resolve));
+await test("full preflight/action/readback units serialize concurrent guest calls and public reads", async () => {
+  /** @type {(value?: unknown) => void} */
+  let release = () => null;
+  const hold = new Promise((resolve) => {
+    release = resolve;
+  });
+  /** @type {(value?: unknown) => void} */
+  let started = () => null;
+  const dispatched = new Promise((resolve) => {
+    started = resolve;
+  });
   const f = fixture({
     states: [tree(), tree(), tree({ value: "new" })],
     mutate: async () => {
@@ -1590,7 +1707,9 @@ test("full preflight/action/readback units serialize concurrent guest calls and 
   await dispatched;
   const publicRead = f.observe();
   const second = f.guard(request("press_key", { key: "Escape" }));
-  await new Promise((resolve) => setImmediate(resolve));
+  await new Promise((resolve) => {
+    setImmediate(resolve);
+  });
   assert.deepEqual(
     f.calls.map((c) => c.method),
     ["get_app_state", "get_app_state", "set_value"],
@@ -1612,21 +1731,24 @@ test("full preflight/action/readback units serialize concurrent guest calls and 
   assert.ok(
     f.calls
       .filter((c) => c.method === "get_app_state")
-      .every((c) => c.args[0].disableDiff === true),
+      .every((c) => {
+        const arg = c.args?.[0];
+        return isRecord(arg) && arg.disableDiff === true;
+      }),
   );
 });
 
-test("host insertion invalidates observations once per run without resetting bindings", async () => {
+await test("host insertion invalidates observations once per run without resetting bindings", async () => {
   const f = fixture();
   await f.observe();
   f.context.requestMeta.macuse = { ...gates, runId: "after-insertion", invalidatedApps: ["App"] };
   await assert.rejects(f.guard(request("press_key", { key: "Escape" })), /Observe this exact app/);
   await f.observe();
   await f.guard(request("press_key", { key: "Escape" }));
-  assert.equal(f.actions().at(-1).outcome, "completed");
+  assert.equal(f.actions().at(-1)?.outcome, "completed");
 });
 
-test("setValue readback requires the unique field, exact value and same document", async () => {
+await test("setValue readback requires the unique field, exact value and same document", async () => {
   for (const after of [
     tree({ value: "new" }).replace("file:///tmp/fixture", "file:///tmp/other"),
     tree().replace("4 text unrelated clock", "4 text field (settable) ID: unrelated, Value: new"),
@@ -1634,14 +1756,14 @@ test("setValue readback requires the unique field, exact value and same document
     tree({ value: "new", duplicate: true }),
     tree({ value: "new" }).replace("ID: editor, Value:", "editor, Value:"),
   ]) {
-    const f = fixture({ states: [tree(), tree(), after], mutate: () => undefined });
+    const f = fixture({ states: [tree(), tree(), after], mutate: () => null });
     await f.observe();
     await assert.rejects(
       f.guard(request("set_value", { element_index: 1, value: "new" })),
       /readback/,
     );
-    assert.equal(f.actions()[0].dispatched, true);
-    assert.equal(f.actions()[0].outcome, "unknown");
+    assert.equal(f.actions()[0]?.dispatched, true);
+    assert.equal(f.actions()[0]?.outcome, "unknown");
     await assert.rejects(
       f.guard(request("set_value", { element_index: 1, value: "new" })),
       /uncertain outcome/,
@@ -1650,12 +1772,12 @@ test("setValue readback requires the unique field, exact value and same document
   }
 });
 
-test("explicit window close reports identity without a native read that could reopen the app", async () => {
-  for (const [method, input] of [
+await test("explicit window close reports identity without a native read that could reopen the app", async () => {
+  for (const [method, input] of /** @type {[string, Record<string, unknown>][]} */ ([
     ["press_key", { key: "super+w" }],
     ["click", { element_index: 5 }],
     ["perform_secondary_action", { element_index: 5, action: "Press" }],
-  ]) {
+  ])) {
     const text = tree().replace(
       "3 button Save",
       "5 close button Close, Secondary Actions: Press\n3 button Save",
@@ -1663,18 +1785,18 @@ test("explicit window close reports identity without a native read that could re
     const f = fixture({ states: [text] });
     await f.observe();
     await f.guard(request(method, input));
-    assert.equal(f.calls.at(-1).method, method);
-    assert.equal(f.actions()[0].closesWindow, true);
-    assert.deepEqual(f.actions()[0].before, {
+    assert.equal(f.calls.at(-1)?.method, method);
+    assert.equal(f.actions()[0]?.closesWindow, true);
+    assert.deepEqual(f.actions()[0]?.before, {
       title: "fixture",
       url: "file:///tmp/fixture",
       nativeWindowIdentity: true,
     });
-    assert.equal(f.actions()[0].verification, "native-returned");
+    assert.equal(f.actions()[0]?.verification, "native-returned");
   }
 });
 
-test("native Command aliases and modifier order share close classification", async () => {
+await test("native Command aliases and modifier order share close classification", async () => {
   for (const key of [
     "super+w",
     "cmd+w",
@@ -1694,18 +1816,18 @@ test("native Command aliases and modifier order share close classification", asy
     const f = fixture({ states: [tree(), tree({ value: "edited draft" })] });
     await f.observe();
     await f.guard(request("press_key", { key }));
-    assert.equal(f.actions()[0].closesWindow, true, key);
-    assert.equal(f.calls.at(-1).method, "press_key", key);
+    assert.equal(f.actions()[0]?.closesWindow, true, key);
+    assert.equal(f.calls.at(-1)?.method, "press_key", key);
   }
   for (const key of ["ctrl+w", "super+ctrl+w", "super+s", "w"]) {
     const f = fixture();
     await f.observe();
     await f.guard(request("press_key", { key }));
-    assert.equal(f.actions()[0].closesWindow, undefined, key);
+    assert.equal(f.actions()[0]?.closesWindow, undefined, key);
   }
 });
 
-test("unsupported native diff and focused-field drift fail closed", async () => {
+await test("unsupported native diff and focused-field drift fail closed", async () => {
   const diff = fixture({
     states: ['The following is a diff from the previous accessibility tree for Window: "fixture"'],
   });

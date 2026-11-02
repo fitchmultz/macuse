@@ -5,20 +5,44 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CuaRuntime, resolveLaunch, appApproval, imageMetadata } from "../../lib/cua-runtime.mjs";
 
-const success = (request, extra = {}) => ({
-  content: [{ type: "text", text: "ok" }],
-  _meta: { macuse: { runId: request._meta.macuse.runId, actions: [], observations: [], ...extra } },
-});
+/** @typedef {import("../../lib/cua-runtime.mjs").CuaToolRequest} CuaToolRequest */
+/** @typedef {import("../../lib/cua-runtime.mjs").CuaCallToolOptions} CuaCallToolOptions */
+/** @typedef {NonNullable<Parameters<import("../../lib/cua-runtime.mjs").CuaRuntime["execute"]>[1]>["onUpdate"]} OnUpdate */
+/** @typedef {Parameters<NonNullable<OnUpdate>>[0]} CuaUpdate */
+/** @typedef {import("../../lib/cua-runtime.mjs").CuaContent} CuaContent */
+/**
+ * Fixture tool results the fake client resolves with.
+ * @typedef {{ content: CuaContent[], _meta?: ({ macuse: Record<string, unknown> } & Record<string, unknown>) | undefined, isError?: boolean }} FakeToolResult
+ */
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+/**
+ * @param {CuaToolRequest} request
+ * @param {Record<string, unknown>} [extra]
+ * @returns {FakeToolResult}
+ */
+const success = (request, extra = {}) => {
+  const gates = request._meta?.macuse;
+  return {
+    content: [{ type: "text", text: "ok" }],
+    _meta: { macuse: { runId: gates?.runId, actions: [], observations: [], ...extra } },
+  };
+};
 const mutating = {
   code: "mock action",
   apps: ["App"],
   allowMutating: true,
   safetyNote: "Change only the isolated fixture field.",
 };
+/**
+ * @param {(request: CuaToolRequest, emit?: (event: unknown) => void) => unknown} [call]
+ */
 function fixture(call) {
+  /** @type {{ request: CuaToolRequest, options: CuaCallToolOptions | undefined }[]} */
   const calls = [];
   let connects = 0;
   let closes = 0;
+  /** @type {((event: unknown) => void) | undefined} */
   let diagnostic;
   const runtime = new CuaRuntime({
     connect: async (_options, emit) => {
@@ -39,7 +63,7 @@ function fixture(call) {
   return { runtime, calls, connects: () => connects, closes: () => closes };
 }
 
-test("one owned MCP connection persists, sends trusted gates and retains full observations", async () => {
+await test("one owned MCP connection persists, sends trusted gates and retains full observations", async () => {
   const observation = {
     app: "App",
     title: "fixture",
@@ -54,14 +78,22 @@ test("one owned MCP connection persists, sends trusted gates and retains full ob
   await f.runtime.execute({ code: "var app = mockApp" });
   await f.runtime.execute(mutating);
   assert.equal(f.connects(), 1);
-  assert.equal(f.calls[1].request._meta.macuse.apps[0], "App");
-  assert.equal(f.calls[1].request._meta.macuse.allowMutating, true);
-  assert.equal(f.calls[1].request.arguments.timeout_ms, 90_000);
-  assert.equal(f.runtime.getObservation("App").text, "complete snapshot");
+  const mutatingCall = f.calls[1];
+  if (mutatingCall === undefined) assert.fail("mutating call missing");
+  const gates = mutatingCall.request._meta?.macuse;
+  if (gates === undefined) assert.fail("trusted gates missing");
+  assert.ok(Array.isArray(gates.apps) && gates.apps[0] === "App");
+  assert.equal(gates.allowMutating, true);
+  assert.equal(mutatingCall.request.arguments.timeout_ms, 90_000);
+  const observed = f.runtime.getObservation("App");
+  if (observed === undefined) assert.fail("App observation missing");
+  assert.equal(observed.text, "complete snapshot");
   f.runtime.invalidateObservation("App");
   assert.equal(f.runtime.getObservation("App"), undefined);
   await f.runtime.execute({ code: "read again" });
-  assert.deepEqual(f.calls[2].request._meta.macuse.invalidatedApps, ["App"]);
+  const thirdCall = f.calls[2];
+  if (thirdCall === undefined) assert.fail("third call missing");
+  assert.deepEqual(thirdCall.request._meta?.macuse?.invalidatedApps, ["App"]);
   await f.runtime.reset();
   assert.equal(f.runtime.getObservation("App"), undefined);
   assert.equal(f.runtime.status().kernelResets, 1);
@@ -69,7 +101,7 @@ test("one owned MCP connection persists, sends trusted gates and retains full ob
   assert.equal(f.closes(), 1);
 });
 
-test("host selected-text observations follow native canonical bindings and invalidate that same app", async () => {
+await test("host selected-text observations follow native canonical bindings and invalidate that same app", async () => {
   const observation = {
     app: "/Applications/Test.app",
     title: "fixture",
@@ -83,19 +115,25 @@ test("host selected-text observations follow native canonical bindings and inval
       : undefined,
   );
   await f.runtime.execute({ code: "observe App" });
-  assert.equal(f.runtime.getObservation("App").app, observation.app);
+  const observed = f.runtime.getObservation("App");
+  if (observed === undefined) assert.fail("App observation missing");
+  assert.equal(observed.app, observation.app);
   f.runtime.invalidateObservation("App");
   assert.equal(f.runtime.getObservation("App"), undefined);
   await f.runtime.execute({ code: "observe again" });
-  assert.deepEqual(f.calls[1].request._meta.macuse.invalidatedApps, [observation.app]);
+  const secondCall = f.calls[1];
+  if (secondCall === undefined) assert.fail("second call missing");
+  assert.deepEqual(secondCall.request._meta?.macuse?.invalidatedApps, [observation.app]);
   await f.runtime.stop();
 });
 
-test("abort uses concurrent js_reset, awaits original settlement, and invalidates queued work", async () => {
+await test("abort uses concurrent js_reset, awaits original settlement, and invalidates queued work", async () => {
+  /** @type {unknown[]} */
   const events = [];
+  /** @type {((reason?: unknown) => void) | undefined} */
   let rejectActive;
-  let started;
-  const ready = new Promise((resolve) => (started = resolve));
+  /** @type {PromiseWithResolvers<void>} */
+  const ready = Promise.withResolvers();
   const f = fixture((request) => {
     if (request.name === "js_reset") {
       events.push("reset");
@@ -106,8 +144,10 @@ test("abort uses concurrent js_reset, awaits original settlement, and invalidate
       return { content: [] };
     }
     if (request.arguments.code === "waiting") {
-      started();
-      return new Promise((_resolve, reject) => (rejectActive = reject));
+      ready.resolve();
+      return new Promise((_resolve, reject) => {
+        rejectActive = reject;
+      });
     }
     events.push(request.arguments.code);
     return success(request);
@@ -117,7 +157,7 @@ test("abort uses concurrent js_reset, awaits original settlement, and invalidate
     { code: "waiting", timeoutMs: 2000 },
     { signal: controller.signal },
   );
-  await ready;
+  await ready.promise;
   const queued = f.runtime.execute({ code: "queued-before-reset" });
   controller.abort();
   const result = await first;
@@ -128,34 +168,37 @@ test("abort uses concurrent js_reset, awaits original settlement, and invalidate
   assert.ok(events.indexOf("settled") < events.indexOf("after-reset"));
   assert.equal(events.includes("queued-before-reset"), false);
   assert.ok(
-    f.calls.every((c) => c.options.signal === undefined),
+    f.calls.every((c) => c.options?.signal === undefined),
     "MCP cancellation alone must not replace native reset",
   );
-  assert.equal(f.calls.filter((c) => c.request.arguments?.code === "waiting").length, 1);
+  assert.equal(f.calls.filter((c) => c.request.arguments.code === "waiting").length, 1);
   await f.runtime.stop();
 });
 
-test("explicit reset waits until the running execute result has settled", async () => {
+await test("explicit reset waits until the running execute result has settled", async () => {
+  /** @type {((value: unknown) => void) | undefined} */
   let release;
-  let start;
-  const ready = new Promise((resolve) => (start = resolve));
+  /** @type {PromiseWithResolvers<void>} */
+  const ready = Promise.withResolvers();
   const f = fixture((request) => {
     if (request.name === "js_reset") {
-      release({ content: [{ type: "text", text: "js execution reset" }], isError: true });
+      release?.({ content: [{ type: "text", text: "js execution reset" }], isError: true });
       return { content: [] };
     }
-    start();
-    return new Promise((resolve) => (release = resolve));
+    ready.resolve();
+    return new Promise((resolve) => {
+      release = resolve;
+    });
   });
   const pending = f.runtime.execute({ code: "wait" });
-  await ready;
+  await ready.promise;
   const status = await f.runtime.reset();
   assert.equal(status.running, false);
   assert.equal((await pending).details.macuse.kernelReset, true);
   await f.runtime.stop();
 });
 
-test("native timeout advice is replaced; observations are cleared and no script is retried", async () => {
+await test("native timeout advice is replaced; observations are cleared and no script is retried", async () => {
   const f = fixture((request) =>
     request.name === "js"
       ? {
@@ -170,10 +213,12 @@ test("native timeout advice is replaced; observations are cleared and no script 
   assert.equal(result.details.macuse.status, "unknown");
   assert.equal(result.details.macuse.kernelReset, true);
   assert.equal(
-    result.content.some((c) => /rerun your request/i.test(c.text)),
+    result.content.some((c) => c.type === "text" && /rerun your request/i.test(c.text)),
     false,
   );
-  assert.ok(result.content.some((c) => /do not automatically replay/.test(c.text)));
+  assert.ok(
+    result.content.some((c) => c.type === "text" && /do not automatically replay/.test(c.text)),
+  );
   assert.deepEqual(
     f.calls.map((c) => c.request.name),
     ["js", "js_reset"],
@@ -181,12 +226,13 @@ test("native timeout advice is replaced; observations are cleared and no script 
   await f.runtime.stop();
 });
 
-test("lost metadata and diagnostic text cannot certify action success or no dispatch", async () => {
+await test("lost metadata and diagnostic text cannot certify action success or no dispatch", async () => {
+  /** @type {CuaUpdate[]} */
   const updates = [];
   const f = fixture((request, emit) => {
     if (request.name !== "js") return;
-    emit({
-      runId: request._meta.macuse.runId,
+    emit?.({
+      runId: request._meta?.macuse?.runId,
       method: "set_value",
       dispatched: false,
       outcome: "completed",
@@ -197,12 +243,15 @@ test("lost metadata and diagnostic text cannot certify action success or no disp
   const result = await f.runtime.execute(mutating, { onUpdate: (update) => updates.push(update) });
   assert.equal(result.details.macuse.status, "unknown");
   assert.deepEqual(result.details.macuse.actions, []);
+  assert.ok(Array.isArray(result.details.macuse.provisionalActions));
   assert.equal(result.details.macuse.provisionalActions.length, 1);
-  assert.equal(updates[0].details.macuse.status, "running");
+  const firstUpdate = updates[0];
+  if (firstUpdate === undefined) assert.fail("first update missing");
+  assert.equal(firstUpdate.details.macuse.status, "running");
   await f.runtime.stop();
 });
 
-test("an unawaited native action is reset before later code can use the owned runtime", async () => {
+await test("an unawaited native action is reset before later code can use the owned runtime", async () => {
   const f = fixture((request) =>
     request.name === "js"
       ? success(request, {
@@ -222,7 +271,7 @@ test("an unawaited native action is reset before later code can use the owned ru
   await f.runtime.stop();
 });
 
-test("ordinary guest errors preserve authoritative partial outcomes without resetting JS", async () => {
+await test("ordinary guest errors preserve authoritative partial outcomes without resetting JS", async () => {
   const action = {
     id: 1,
     method: "set_value",
@@ -239,6 +288,7 @@ test("ordinary guest errors preserve authoritative partial outcomes without rese
     const f = fixture((request) => {
       if (request.name !== "js") return;
       const result = success(request, { actions: [action] });
+      if (result._meta === undefined) assert.fail("fake result meta missing");
       result._meta["codex/nodeReplExecutionDurationMs"] = 0;
       return { ...result, isError: true, content: [{ type: "text", text }] };
     });
@@ -251,7 +301,7 @@ test("ordinary guest errors preserve authoritative partial outcomes without rese
   }
 });
 
-test("guard rejection caught by guest still surfaces an error and its partial record", async () => {
+await test("guard rejection caught by guest still surfaces an error and its partial record", async () => {
   const f = fixture((request) =>
     request.name === "js"
       ? success(request, {
@@ -268,31 +318,36 @@ test("guard rejection caught by guest still surfaces an error and its partial re
   );
   const result = await f.runtime.execute(mutating);
   assert.equal(result.isError, true);
-  assert.match(result.content.at(-1).text, /outside app scope/);
+  const lastBlock = result.content.at(-1);
+  if (lastBlock === undefined || lastBlock.type !== "text") assert.fail("text result missing");
+  assert.match(lastBlock.text, /outside app scope/);
   await f.runtime.stop();
 });
 
-test("reset failure closes the connection and still settles a possibly dispatched call", async () => {
+await test("reset failure closes the connection and still settles a possibly dispatched call", async () => {
+  /** @type {((reason?: unknown) => void) | undefined} */
   let rejectCall;
-  let started;
-  const ready = new Promise((resolve) => (started = resolve));
+  /** @type {PromiseWithResolvers<void>} */
+  const ready = Promise.withResolvers();
   const controller = new AbortController();
   let closed = false;
   const runtime = new CuaRuntime({
     connect: async () => ({
       callTool: (request) => {
         if (request.name === "js_reset") return Promise.reject(new Error("transport closed"));
-        started();
-        return new Promise((_resolve, reject) => (rejectCall = reject));
+        ready.resolve();
+        return new Promise((_resolve, reject) => {
+          rejectCall = reject;
+        });
       },
       close: async () => {
         closed = true;
-        rejectCall(new Error("transport closed"));
+        rejectCall?.(new Error("transport closed"));
       },
     }),
   });
   const pending = runtime.execute(mutating, { signal: controller.signal });
-  await ready;
+  await ready.promise;
   controller.abort();
   const result = await pending;
   assert.equal(result.details.macuse.status, "unknown");
@@ -302,7 +357,7 @@ test("reset failure closes the connection and still settles a possibly dispatche
   await runtime.stop();
 });
 
-test("invalid envelopes and pre-aborted calls never start the native runtime", async () => {
+await test("invalid envelopes and pre-aborted calls never start the native runtime", async () => {
   const f = fixture();
   assert.throws(() => f.runtime.execute({ ...mutating, safetyNote: " \n " }), /safetyNote/);
   for (const timeoutMs of [NaN, 0, -1, 2_147_468_648])
@@ -313,18 +368,20 @@ test("invalid envelopes and pre-aborted calls never start the native runtime", a
   assert.equal(f.calls.length, 0);
 });
 
-test("caller deadlines supported by the native runtime are passed through", async () => {
+await test("caller deadlines supported by the native runtime are passed through", async () => {
   const f = fixture();
   for (const timeoutMs of [1, 999, 300_001, 2_147_468_647]) {
     const result = await f.runtime.execute({ code: "mock", timeoutMs });
     assert.equal(result.isError, false);
-    assert.equal(f.calls.at(-1).request.arguments.timeout_ms, timeoutMs);
-    assert.equal(f.calls.at(-1).options.timeout, timeoutMs + 15_000);
+    const lastCall = f.calls.at(-1);
+    if (lastCall === undefined) assert.fail("deadline call missing");
+    assert.equal(lastCall.request.arguments.timeout_ms, timeoutMs);
+    assert.equal(lastCall.options?.timeout, timeoutMs + 15_000);
   }
   await f.runtime.stop();
 });
 
-test("only computer app-access elicitations inherit standing approval", () => {
+await test("only computer app-access elicitations inherit standing approval", () => {
   const params = {
     message: 'Allow Computer Use to use "App"?',
     _meta: {
@@ -372,7 +429,7 @@ test("only computer app-access elicitations inherit standing approval", () => {
 });
 
 for (const packaged of [false, true])
-  test(`launcher resolves ${packaged ? "packaged" : "legacy"} Codex, limits trust and preserves CODEX_HOME`, async (t) => {
+  await test(`launcher resolves ${packaged ? "packaged" : "legacy"} Codex, limits trust and preserves CODEX_HOME`, async (t) => {
     const root = await mkdtemp(join(tmpdir(), "macuse-cua-launch-"));
     t.after(() => rm(root, { recursive: true, force: true }));
     const modules = join(root, "cua_node", "custom-modules");
@@ -414,7 +471,11 @@ for (const packaged of [false, true])
       assert.equal(config.env.CODEX_CLI_PATH, codex);
       assert.match(config.env.MACUSE_SKY_SERVICE_URL, /native-service\.js$/);
       assert.equal(config.env.NODE_REPL_TRUSTED_CODE_PATHS.split(":").length, 2);
-      assert.deepEqual(Object.keys(JSON.parse(config.env.NODE_REPL_TRUSTED_SERVICES)), ["sky"]);
+      const trustedServices = /** @type {unknown} */ (
+        JSON.parse(config.env.NODE_REPL_TRUSTED_SERVICES)
+      );
+      assert.ok(isRecord(trustedServices), "trusted services manifest must be an object");
+      assert.deepEqual(Object.keys(trustedServices), ["sky"]);
       assert.equal(JSON.stringify(config).includes("disable-sandbox"), false);
       assert.equal(JSON.stringify(config).includes("plugin-cache"), false);
     } finally {
@@ -423,7 +484,7 @@ for (const packaged of [false, true])
     }
   });
 
-test("image signatures correct JPEG MIME and dimensions without changing payload or coordinate space", async () => {
+await test("image signatures correct JPEG MIME and dimensions without changing payload or coordinate space", async () => {
   const jpeg = Buffer.from([
     0xff, 0xd8, 0xff, 0xe0, 0, 4, 0, 0, 0xff, 0xc0, 0, 11, 8, 3, 26, 3, 0, 1, 1, 0x11, 0, 0xff,
     0xd9,
@@ -435,9 +496,13 @@ test("image signatures correct JPEG MIME and dimensions without changing payload
       : undefined,
   );
   const result = await f.runtime.execute({ code: "mock screenshot" });
-  assert.equal(result.content[0].data, jpeg);
-  assert.equal(result.content[0].mimeType, "image/jpeg");
-  assert.equal(result.details.macuse.images[0].coordinateSpace, "native-screenshot");
+  const firstBlock = result.content[0];
+  if (firstBlock === undefined || firstBlock.type !== "image") assert.fail("image result missing");
+  assert.equal(firstBlock.data, jpeg);
+  assert.equal(firstBlock.mimeType, "image/jpeg");
+  const firstImage = result.details.macuse.images[0];
+  if (firstImage === undefined) assert.fail("macuse image receipt missing");
+  assert.equal(firstImage.coordinateSpace, "native-screenshot");
   const png = Buffer.alloc(24);
   Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]).copy(png);
   png.write("IHDR", 12);

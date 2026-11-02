@@ -146,9 +146,10 @@ export default function macuse(pi: ExtensionAPI) {
   });
 
   pi.on("tool_result", (event) => {
-    if (!tools.some((tool) => tool.name === event.toolName)) return;
-    const details = event.details as { macuse?: { isError?: boolean } } | undefined;
-    if (details?.macuse?.isError) return { isError: true };
+    const details = tools.some((tool) => tool.name === event.toolName)
+      ? (event.details as { macuse?: { isError?: boolean } } | undefined)
+      : undefined;
+    return details?.macuse?.isError === true ? { isError: true } : undefined;
   });
   pi.on("message_end", (event, ctx) =>
     imageIndex.messageEnd(event.message, ctx.model?.inputLimits?.images?.resize),

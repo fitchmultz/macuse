@@ -3,8 +3,8 @@ export type ToolSpec = {
   description: string;
   inputSchema: {
     type: "object";
-    properties: Record<string, unknown>;
-    required?: string[];
+    properties: Record<string, import("@modelcontextprotocol/sdk/validation").JsonSchemaType>;
+    required: string[];
     additionalProperties: false;
   };
   annotations: {

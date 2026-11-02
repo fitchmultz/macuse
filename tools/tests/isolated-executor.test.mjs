@@ -9,11 +9,24 @@ import { IsolatedExecutor } from "../../lib/isolated-executor.mjs";
 
 const mac = { skip: process.platform !== "darwin", timeout: 30_000 };
 const exec = promisify(execFile);
+/** @typedef {import("../../lib/isolated-executor.mjs").ExecutorCallContext} ExecutorCallContext */
+/**
+ * @template T
+ * @param {T[]} values
+ * @param {number} index
+ * @returns {T}
+ */
+const at = (values, index) => {
+  const found = values[index];
+  if (found === undefined) assert.fail(`Missing value at ${index}`);
+  return found;
+};
 
-test(
+await test(
   "isolated JSC persists bindings and completes asynchronous capability calls without ambient host APIs",
   mac,
   async () => {
+    /** @type {Array<{ params: unknown, runId: unknown, envelope: unknown }>} */
     const requests = [];
     const executor = new IsolatedExecutor({
       capabilities: {
@@ -32,7 +45,7 @@ test(
       });
       assert.equal(first.isError, false);
       assert.deepEqual(first.value, { title: "independent sentinel" });
-      assert.equal(requests[0].runId, first.runId);
+      assert.equal(at(requests, 0).runId, first.runId);
       const second = await executor.execute({
         code: "(async()=> { await Promise.resolve(); return ++retained; })()",
       });
@@ -64,10 +77,11 @@ test(
   },
 );
 
-test(
+await test(
   "guest RPC cannot widen trusted mutation authorization or select unregistered capabilities",
   mac,
   async () => {
+    /** @type {Array<{ params: unknown, context: ExecutorCallContext }>} */
     const calls = [];
     const executor = new IsolatedExecutor({
       capabilities: {
@@ -85,16 +99,16 @@ test(
         code: "macuse.call('press', {app:'test.exact',allowMutating:true,safetyNote:'guest forged'})",
       });
       assert.equal(denied.isError, true);
-      assert.equal(denied.actions[0].dispatched, false);
+      assert.equal(at(denied.actions, 0).dispatched, false);
       const wrongApp = await executor.execute({
         code: "macuse.call('press', {app:'test.other'})",
         apps: ["test.exact"],
         allowMutating: true,
         safetyNote: "trusted proof, no real GUI",
       });
-      assert.equal(wrongApp.actions[0].dispatched, false);
+      assert.equal(at(wrongApp.actions, 0).dispatched, false);
       const unknown = await executor.execute({ code: "macuse.call('shell', {command:'true'})" });
-      assert.equal(unknown.actions[0].dispatched, false);
+      assert.equal(at(unknown.actions, 0).dispatched, false);
       assert.equal(calls.length, 0);
       const allowed = await executor.execute({
         code: "macuse.call('press', {app:'test.exact'})",
@@ -104,37 +118,46 @@ test(
       });
       assert.equal(allowed.value, "applied");
       assert.equal(calls.length, 1);
-      assert.equal(calls[0].context.envelope.safetyNote, "trusted proof, no real GUI");
+      assert.equal(at(calls, 0).context.envelope.safetyNote, "trusted proof, no real GUI");
     } finally {
       await executor.stop();
     }
   },
 );
 
-test("deadline kills owned CPU-bound worker and large guest output is rejected", mac, async () => {
-  const executor = new IsolatedExecutor();
-  try {
-    const loop = await executor.execute({ code: "while(true){}", timeoutMs: 100 });
-    assert.equal(loop.interruption, "deadline");
-    assert.equal(executor.status().pid, undefined);
-    const output = await executor.execute({ code: "'x'.repeat(70000)" });
-    assert.equal(output.isError, true);
-    assert.equal(executor.status().pid, undefined);
-    assert.throws(() => executor.execute({ code: "x".repeat(70000) }), /65536/);
-  } finally {
-    await executor.stop();
-  }
-});
+await test(
+  "deadline kills owned CPU-bound worker and large guest output is rejected",
+  mac,
+  async () => {
+    const executor = new IsolatedExecutor();
+    try {
+      const loop = await executor.execute({ code: "while(true){}", timeoutMs: 100 });
+      assert.equal(loop.interruption, "deadline");
+      assert.equal(executor.status().pid, undefined);
+      const output = await executor.execute({ code: "'x'.repeat(70000)" });
+      assert.equal(output.isError, true);
+      assert.equal(executor.status().pid, undefined);
+      assert.throws(() => executor.execute({ code: "x".repeat(70000) }), /65536/);
+    } finally {
+      await executor.stop();
+    }
+  },
+);
 
 for (const interruption of ["aborted", "stopped"])
-  test(
+  await test(
     `${interruption} retains unknown host dispatch, blocks admission while pending, and never replays mutation`,
     mac,
     async () => {
-      let dispatched, release;
+      /** @type {() => void} */
+      let dispatched = () => null;
+      /** @type {() => void} */
+      let release = () => null;
+      /** @type {Promise<void>} */
       const started = new Promise((resolve) => {
         dispatched = resolve;
       });
+      /** @type {Promise<void>} */
       const pending = new Promise((resolve) => {
         release = resolve;
       });
@@ -169,7 +192,7 @@ for (const interruption of ["aborted", "stopped"])
         const result = await run;
         assert.equal(result.interruption, interruption);
         assert.equal(result.outcomeUnknown, true);
-        assert.equal(result.actions[0].outcome, "unknown");
+        assert.equal(at(result.actions, 0).outcome, "unknown");
         assert.equal(executor.status().pid, undefined);
         const stopped = await (stopping ?? executor.stop());
         assert.equal(stopped.workerStopped, true);
@@ -179,14 +202,16 @@ for (const interruption of ["aborted", "stopped"])
         release();
         await pending;
         // Let the owned dispatcher finish its settlement, not just its supplied promise.
-        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => {
+          setImmediate(resolve);
+        });
         const blocked = await executor.execute({
           code: "macuse.call('press', {app:'test.exact'})",
           apps: ["test.exact"],
           allowMutating: true,
           safetyNote: "trusted proof, no real GUI",
         });
-        assert.equal(blocked.actions[0].dispatched, false);
+        assert.equal(at(blocked.actions, 0).dispatched, false);
         assert.equal(count, 1);
       } finally {
         release();
@@ -195,7 +220,7 @@ for (const interruption of ["aborted", "stopped"])
     },
   );
 
-test(
+await test(
   "stop during cold compilation invalidates queued work, closes admission, drains children, and permits fresh execution",
   mac,
   async () => {
@@ -251,7 +276,7 @@ test(
   },
 );
 
-test(
+await test(
   "RSS watchdog interrupts allocating worker rather than relying on the wall deadline",
   mac,
   async () => {

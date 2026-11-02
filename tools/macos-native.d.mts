@@ -46,12 +46,10 @@ export type NativeAppState = {
 };
 export type NativeTextRequest = {
   pid: number;
+  /** Match fields are validated by the native service; callers may send
+   * partial or invalid data and receive a guard failure. */
   expected: {
-    windowToken: string;
-    windowTitle: string | null;
-    document: string | null;
-    elementToken: string;
-    value?: string | null;
+    [key: string]: unknown;
   };
   text: string;
 };
@@ -70,7 +68,7 @@ export function nativeWindowClosed(
   after: NativeAppState | null,
 ): boolean;
 export function nativeTextUnavailableReason(state: NativeAppState | null): string;
-export type NativeRequestOptions = { signal?: AbortSignal };
+export type NativeRequestOptions = { signal?: AbortSignal | undefined };
 export class MacOSNative {
   snapshot(options?: NativeRequestOptions): Promise<NativeSnapshot>;
   resolveApp(identifier: string, options?: NativeRequestOptions): Promise<NativeApplication>;

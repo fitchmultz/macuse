@@ -9,72 +9,146 @@ import { parseAppState } from "../../lib/app-state.mjs";
 import { createGuard } from "../../lib/cua-guard-service.mjs";
 import { activityMonitorCheck } from "../validate-macuse.mjs";
 
+/** @typedef {import("../../lib/macuse-session.mjs").SessionRuntime} SessionRuntime */
+/** @typedef {import("../../lib/macuse-session.mjs").SessionNative} SessionNative */
+/** @typedef {import("../../lib/macuse-session.mjs").SessionAuxiliary} SessionAuxiliary */
+/** @typedef {import("../../lib/macuse-session.mjs").SessionResult} SessionResult */
+/** @typedef {import("../../lib/app-state.mjs").AppObservation} AppObservation */
+/**
+ * @param {unknown} value
+ * @returns {value is Record<string, unknown>}
+ */
+const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
+/**
+ * @typedef {{ requestMeta: { macuse?: unknown }, meta: { macuse?: Record<string, unknown> } | undefined, setResponseMeta: (meta: unknown) => void }} GuardContext
+ */
+
+/**
+ * @param {import("../../lib/macuse-session.mjs").Content | undefined} part
+ * @returns {string}
+ */
+const textOf = (part) => (part !== undefined && part.type === "text" ? part.text : "");
+/**
+ * @returns {SessionResult}
+ */
 const result = () => ({
   content: [{ type: "text", text: "Observed" }],
   isError: false,
   details: { macuse: {} },
 });
+const focused = {
+  index: "1",
+  role: "text field",
+  name: "editor field",
+  id: "editor",
+  value: "old",
+  disabled: false,
+  settable: true,
+  secondaryActions: [],
+  line: "",
+  context: "",
+  cellValueContext: "",
+  descendants: "",
+};
+/** @type {AppObservation} */
 const observed = {
   app: "Test",
   title: "Fixture",
   url: null,
+  documentIdentity: null,
   nativeWindowIdentity: true,
   observedAt: 1,
-  elements: [],
-  focused: { index: "1", role: "text field", id: "editor", value: "old" },
+  text: 'Window: "Fixture", App: Test',
+  elements: [focused],
+  focused,
 };
-observed.elements = [observed.focused];
 const app = { pid: 42, bundleId: "test.app", name: "Test", path: "/Test.app" };
+/** @type {import("../../tools/macos-native.mjs").NativeAppState} */
 const state = {
   pid: 42,
   app,
   accessibilityTrusted: true,
+  windowsCount: 1,
+  windowsError: 0,
+  windows: null,
   focusedWindow: { token: "w", title: "Fixture", document: null },
   focusedElement: {
     token: "f",
     role: "AXTextField",
     roleDescription: "text field",
     identifier: "editor",
+    title: "editor field",
+    description: null,
     value: "old",
     selectedTextSettable: true,
+    selectedTextError: 0,
   },
 };
 function fixture() {
+  /** @type {string[]} */
   const events = [];
+  /** @type {SessionRuntime & { observation: AppObservation | undefined }} */
   const runtime = {
     observation: observed,
     execute: async () => {
       events.push("code");
       runtime.observation = { ...observed, observedAt: Date.now() };
-      return { ...result(), details: { macuse: { observations: [runtime.observation] } } };
+      const current = runtime.observation;
+      return {
+        ...result(),
+        details: { macuse: { observations: [current] } },
+      };
     },
     getObservation: () => runtime.observation,
     invalidateObservation: (app) => {
       events.push(`invalidate:${app}`);
       runtime.observation = undefined;
     },
-    reset: async () => events.push("reset"),
-    stop: async () => events.push("stop-code"),
+    reset: async () => {
+      events.push("reset");
+    },
+    stop: async () => {
+      events.push("stop-code");
+    },
     status: () => ({ running: false }),
   };
+  /** @type {SessionNative} */
   const native = {
     resolveApp: async () => app,
     inspectApp: async () => state,
     beginObservation: async () => ({ id: "watch" }),
-    endObservation: async () => ({ transitions: [], coverage: { applicationActivation: true } }),
+    endObservation: async () => ({
+      before: { frontmost: null, focusedWindow: null },
+      after: { frontmost: null, focusedWindow: null },
+      transitions: [],
+      coverage: {
+        applicationActivation: true,
+        focusedWindow: {},
+        truncated: false,
+        inputAttribution: false,
+        windowDetails: "targetAppsOnly",
+      },
+    }),
     replaceSelectedText: async () => ({
       status: "applied",
       verified: true,
       mutationAttempted: true,
+      insertedUTF16Length: 4,
+      replacedUTF16Length: 0,
     }),
-    stop: async () => events.push("stop-native"),
+    stop: async () => {
+      events.push("stop-native");
+    },
   };
+  /** @type {SessionAuxiliary} */
   const auxiliary = {
     callTool: async () => {
       events.push("auxiliary");
       return result();
     },
-    stop: async () => events.push("stop-auxiliary"),
+    stop: async () => {
+      events.push("stop-auxiliary");
+    },
     status: () => ({ running: false }),
   };
   return {
@@ -86,18 +160,23 @@ function fixture() {
   };
 }
 
-test("code never starts auxiliary transport; invalid envelopes fail before native access", async () => {
+await test("code never starts auxiliary transport; invalid envelopes fail before native access", async () => {
   const f = fixture();
   const valid = await f.session.callTool("macuse", { code: "42", trackFocus: false });
   assert.equal(valid.isError, false);
   assert.deepEqual(f.events, ["code"]);
-  for (const [name, input] of [
-    ["macuse", []],
+  /** @type {[string, Record<string, unknown>][]} */
+  const invalidInputs = [
+    // Deliberately runtime-invalid input (a JSON array): this exercises the
+    // session-side validation path, which the typed boundary cannot express.
+    // oxlint-disable-next-line no-unsafe-type-assertion
+    ["macuse", /** @type {Record<string, unknown>} */ (JSON.parse("[]"))],
     ["macuse", { code: 1 }],
     ["macuse", { code: "42", trackFocus: "false" }],
     ["macuse_insert_text", {}],
     ["unknown", {}],
-  ]) {
+  ];
+  for (const [name, input] of invalidInputs) {
     const invalid = await f.session.callTool(name, input);
     assert.equal(invalid.isError, true);
     assert.equal(invalid.details.macuse.dispatched, false);
@@ -106,7 +185,7 @@ test("code never starts auxiliary transport; invalid envelopes fail before nativ
   await f.session.stop();
 });
 
-test("session accepts native deadline values outside the old wrapper range", async () => {
+await test("session accepts native deadline values outside the old wrapper range", async () => {
   const f = fixture();
   for (const timeoutMs of [999, 300_001]) {
     const result = await f.session.callTool("macuse", { code: "42", timeoutMs, trackFocus: false });
@@ -116,7 +195,7 @@ test("session accepts native deadline values outside the old wrapper range", asy
   await f.session.stop();
 });
 
-test("missing Sky focus marker is joined only to a unique matching native ID in the observed document", async () => {
+await test("missing Sky focus marker is joined only to a unique matching native ID in the observed document", async () => {
   for (const mismatch of [
     false,
     "document",
@@ -127,16 +206,19 @@ test("missing Sky focus marker is joined only to a unique matching native ID in 
     "window",
   ]) {
     const f = fixture();
-    const source = ["page label", "sheet", "window"].includes(mismatch)
-      ? parseAppState(
-          "Test",
-          `Window: "", App: Test.\n0 ${mismatch === "page label" ? "window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html" : `${mismatch} Fixture`}\n\t2 text field ID: editor, Value: old`,
-        )
-      : observed;
+    const source =
+      typeof mismatch === "string" && ["page label", "sheet", "window"].includes(mismatch)
+        ? parseAppState(
+            "Test",
+            `Window: "", App: Test.\n0 ${mismatch === "page label" ? "window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html" : `${mismatch} Fixture`}\n\t2 text field ID: editor, Value: old`,
+          )
+        : observed;
     const field = source.focused ?? source.elements.find((e) => e.id === "editor");
+    if (field === undefined) assert.fail("missing editor field");
+    const { focused: _omitted, ...rest } = source;
+    /** @type {AppObservation} */
     const observation = {
-      ...source,
-      focused: undefined,
+      ...rest,
       observedAt: Date.now() + 1000,
       elements: mismatch === "duplicate" ? [field, field] : source.elements,
     };
@@ -144,21 +226,35 @@ test("missing Sky focus marker is joined only to a unique matching native ID in 
       ...result(),
       details: { macuse: { observations: [observation] } },
     });
+    const baseWindow = state.focusedWindow;
+    const baseElement = state.focusedElement;
     f.native.inspectApp = async () => ({
       ...state,
-      focusedWindow: {
-        ...state.focusedWindow,
-        title: mismatch === "document" ? "Other" : source.title,
-      },
-      focusedElement: { ...state.focusedElement, value: mismatch === "value" ? "changed" : "old" },
+      focusedWindow:
+        baseWindow === null
+          ? null
+          : { ...baseWindow, title: mismatch === "document" ? "Other" : source.title },
+      focusedElement:
+        baseElement === null
+          ? null
+          : { ...baseElement, value: mismatch === "value" ? "changed" : "old" },
     });
     await f.session.callTool("macuse", { code: "observe", trackFocus: false });
-    assert.equal(observation.focused?.id, mismatch ? undefined : "editor", String(mismatch));
+    assert.equal(
+      observation.focused?.id,
+      mismatch !== false ? undefined : "editor",
+      String(mismatch),
+    );
   }
 });
 
-test("guard-generated close evidence cannot certify labels or nonstandard roots absent from a populated native window list", async () => {
-  for (const [root, nativeTitle, nativeDocument, closed] of [
+await test("guard-generated close evidence cannot certify labels or nonstandard roots absent from a populated native window list", async () => {
+  for (const [
+    root,
+    nativeTitle,
+    nativeDocument,
+    closed,
+  ] of /** @type {[string, string, string | null, boolean][]} */ ([
     [
       "window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html",
       "",
@@ -188,14 +284,21 @@ test("guard-generated close evidence cannot certify labels or nonstandard roots 
       false,
     ],
     ["standard window Fixture, URL: file:///tmp/Fixture.txt", "Other window", null, false],
-  ]) {
+  ])) {
     for (const empty of [false, true]) {
       const f = fixture();
       let reads = 0,
         closes = 0;
+      /**
+       * @typedef {{ requestMeta: { macuse?: Record<string, unknown> } | undefined, meta: { macuse?: Record<string, unknown> } | undefined, setResponseMeta: (meta: unknown) => void }} CloseGuardContext
+       */
+      /** @type {CloseGuardContext} */
       const context = {
+        requestMeta: undefined,
+        meta: undefined,
         setResponseMeta(meta) {
-          this.meta = structuredClone(meta);
+          const cloned = structuredClone(meta);
+          this.meta = isRecord(cloned) && isRecord(cloned.macuse) ? cloned : undefined;
         },
       };
       const guard = createGuard({
@@ -207,22 +310,29 @@ test("guard-generated close evidence cannot certify labels or nonstandard roots 
           }
           assert.equal(request.method, "press_key");
           closes++;
+          return;
         },
       });
       f.runtime.execute = async (input) => {
-        context.requestMeta = { macuse: { runId: "close-regression", ...input } };
+        context.requestMeta = {
+          macuse: { runId: "close-regression", ...(isRecord(input) ? input : {}) },
+        };
         await guard({ type: "execute", method: "get_app_state", args: [{ app: "Test" }] });
         await guard({
           type: "execute",
           method: "press_key",
           args: [{ app: "Test", key: "cmd+w" }],
         });
-        return { ...result(), details: context.meta };
+        const published = context.meta;
+        return {
+          ...result(),
+          details: { macuse: published?.macuse ?? {} },
+        };
       };
       f.native.inspectApp = async () => ({
         ...state,
         windowsCount: empty ? 0 : 1,
-        windows: empty ? [] : [{ title: nativeTitle, document: nativeDocument }],
+        windows: empty ? [] : [{ token: "w", title: nativeTitle, document: nativeDocument }],
       });
       const response = await f.session.callTool("macuse", {
         code: "observe then close",
@@ -232,7 +342,10 @@ test("guard-generated close evidence cannot certify labels or nonstandard roots 
         trackFocus: false,
       });
       assert.equal(response.isError, false);
-      const action = response.details.macuse.actions[0];
+      const actionList = response.details.macuse.actions;
+      const action =
+        Array.isArray(actionList) && isRecord(actionList[0]) ? actionList[0] : undefined;
+      if (action === undefined) assert.fail("missing close action record");
       assert.equal(action.dispatched, true);
       assert.equal(action.closesWindow, true);
       assert.equal(
@@ -241,8 +354,9 @@ test("guard-generated close evidence cannot certify labels or nonstandard roots 
         `${root}; empty=${empty}`,
       );
       assert.equal(
-        response.content.some((part) =>
-          part.text?.includes("confirms the target window is closed"),
+        response.content.some(
+          (part) =>
+            part.type === "text" && part.text.includes("confirms the target window is closed"),
         ),
         empty || closed,
       );
@@ -252,8 +366,9 @@ test("guard-generated close evidence cannot certify labels or nonstandard roots 
   }
 });
 
-test("native documentation and app state reach the caller with action outcomes intact", async () => {
+await test("native documentation and app state reach the caller with action outcomes intact", async () => {
   const f = fixture();
+  /** @type {import("../../lib/macuse-session.mjs").Content[]} */
   const content = [
     {
       type: "text",
@@ -276,14 +391,17 @@ test("native documentation and app state reach the caller with action outcomes i
     details: { macuse: { status: "unknown", actions } },
   });
   const response = await f.session.callTool("macuse", { code: "observe", trackFocus: false });
-  assert.equal(response.content[0].text.length, content[0].text.length);
-  assert.equal(response.content[0].text, content[0].text);
+  const firstText = textOf(response.content[0]);
+  assert.equal(firstText.length, textOf(content[0]).length);
+  assert.equal(firstText, textOf(content[0]));
   assert.deepEqual(response.content.slice(1, 3), content.slice(1));
-  assert.deepEqual(JSON.parse(response.content.at(-2).text).actions, actions);
-  assert.match(response.content.at(-1).text, /never automatically replay/);
+  /** @type {unknown} */
+  const parsed = JSON.parse(textOf(response.content.at(-2)));
+  assert.deepEqual(isRecord(parsed) ? parsed.actions : undefined, actions);
+  assert.match(textOf(response.content.at(-1)), /never automatically replay/);
 });
 
-test("screenshot export preserves the literal requested path and refuses overwrite", async (t) => {
+await test("screenshot export preserves the literal requested path and refuses overwrite", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "macuse-image-test-"));
   t.after(() => rm(dir, { recursive: true, force: true }));
   const f = fixture();
@@ -299,7 +417,9 @@ test("screenshot export preserves the literal requested path and refuses overwri
     trackFocus: false,
   });
   assert.equal(saved.isError, false);
-  assert.equal(saved.details.macuse.savedImage.path, join(dir, "@capture.jpg"));
+  const savedImage = saved.details.macuse.savedImage;
+  if (!isRecord(savedImage)) assert.fail("missing saved image record");
+  assert.equal(savedImage.path, join(dir, "@capture.jpg"));
   assert.deepEqual(await readFile(join(dir, "@capture.jpg")), bytes);
   const exists = await f.session.callTool("macuse", {
     code: "screenshot",
@@ -307,18 +427,26 @@ test("screenshot export preserves the literal requested path and refuses overwri
     trackFocus: false,
   });
   assert.equal(exists.isError, true);
-  assert.match(exists.content.map((p) => p.text ?? "").join("\n"), /EEXIST/);
+  assert.match(exists.content.map((p) => (p.type === "text" ? p.text : "")).join("\n"), /EEXIST/);
   assert.deepEqual(await readFile(join(dir, "@capture.jpg")), bytes);
 });
 
-test("selected insertion owns the same queue as code and invalidates its prior observation", async () => {
+await test("selected insertion owns the same queue as code and invalidates its prior observation", async () => {
   const f = fixture();
-  const editing = Promise.withResolvers(),
-    edited = Promise.withResolvers();
+  /** @type {PromiseWithResolvers<void>} */
+  const editing = Promise.withResolvers();
+  /** @type {PromiseWithResolvers<void>} */
+  const edited = Promise.withResolvers();
   f.native.replaceSelectedText = async () => {
     editing.resolve();
     await edited.promise;
-    return { status: "applied", mutationAttempted: true, verified: true };
+    return {
+      status: "applied",
+      mutationAttempted: true,
+      verified: true,
+      insertedUTF16Length: 4,
+      replacedUTF16Length: 0,
+    };
   };
   const edit = f.session.callTool("macuse_insert_text", {
     app: "Test",
@@ -337,8 +465,9 @@ test("selected insertion owns the same queue as code and invalidates its prior o
   await f.session.stop();
 });
 
-test("insertion refresh rejects a reused record and cannot authorize a later insertion", async () => {
+await test("insertion refresh rejects a reused record and cannot authorize a later insertion", async () => {
   const f = fixture();
+  /** @param {string} record */
   const snapshot = (record) =>
     parseAppState(
       "Test",
@@ -350,7 +479,7 @@ The focused UI element is 2 text field`,
     );
   f.runtime.observation = snapshot("draft.txt");
   f.runtime.execute = async (input) => {
-    assert.equal(input.code, 'await cua.getApp("Test")');
+    assert.equal(isRecord(input) ? input.code : undefined, 'await cua.getApp("Test")');
     f.events.push("refresh");
     f.runtime.observation = snapshot("important.txt");
     return { ...result(), details: { macuse: { observations: [f.runtime.observation] } } };
@@ -364,18 +493,23 @@ The focused UI element is 2 text field`,
   };
   const first = await f.session.callTool("macuse_insert_text", input);
   assert.equal(first.details.macuse.dispatched, false);
-  assert.match(first.content[0].text, /Focused field changed/);
-  assert.equal(f.runtime.getObservation(), undefined);
+  assert.match(textOf(first.content[0]), /Focused field changed/);
+  assert.equal(f.runtime.getObservation("Test"), undefined);
   const second = await f.session.callTool("macuse_insert_text", input);
-  assert.match(second.content[0].text, /Observe the intended app/);
+  assert.match(textOf(second.content[0]), /Observe the intended app/);
   assert.deepEqual(f.events, ["refresh", "invalidate:Test"]);
 });
 
-test("insertion refresh retains native focus joining for snapshots without a Sky focused marker", async () => {
+await test("insertion refresh retains native focus joining for snapshots without a Sky focused marker", async () => {
   const f = fixture();
   f.runtime.execute = async () => {
-    f.runtime.observation = { ...observed, focused: undefined, observedAt: Date.now() };
-    return { ...result(), details: { macuse: { observations: [f.runtime.observation] } } };
+    const { focused: _omitted, ...rest } = observed;
+    f.runtime.observation = { ...rest, observedAt: Date.now() };
+    const refreshed = f.runtime.observation;
+    return {
+      ...result(),
+      details: { macuse: { observations: [refreshed] } },
+    };
   };
   const response = await f.session.callTool("macuse_insert_text", {
     app: "Test",
@@ -384,13 +518,15 @@ test("insertion refresh retains native focus joining for snapshots without a Sky
     safetyNote: "Only replace the fixture selection; no other effects.",
   });
   assert.equal(response.details.macuse.outcome, "verified");
-  assert.equal(f.runtime.getObservation(), undefined);
+  assert.equal(f.runtime.getObservation("Test"), undefined);
 });
 
-test("an interrupted insertion refresh preserves reset evidence and cancels queued code", async () => {
-  const f = fixture(),
-    started = Promise.withResolvers(),
-    finish = Promise.withResolvers();
+await test("an interrupted insertion refresh preserves reset evidence and cancels queued code", async () => {
+  const f = fixture();
+  /** @type {PromiseWithResolvers<void>} */
+  const started = Promise.withResolvers();
+  /** @type {PromiseWithResolvers<void>} */
+  const finish = Promise.withResolvers();
   f.runtime.execute = async () => {
     f.events.push("refresh");
     started.resolve();
@@ -416,13 +552,15 @@ test("an interrupted insertion refresh preserves reset evidence and cancels queu
   assert.equal(response.details.macuse.dispatched, false);
   assert.equal(response.details.macuse.kernelReset, true);
   assert.equal(response.details.macuse.interruption, "timeout");
-  assert.equal(response.details.macuse.refresh.status, "unknown");
-  assert.match(response.content[0].text, /Snapshot timed out/);
-  assert.match((await queued).content[0].text, /Cancelled before dispatch/);
+  const refresh = response.details.macuse.refresh;
+  if (!isRecord(refresh)) assert.fail("missing refresh record");
+  assert.equal(refresh.status, "unknown");
+  assert.match(textOf(response.content[0]), /Snapshot timed out/);
+  assert.match(textOf((await queued).content[0]), /Cancelled before dispatch/);
   assert.deepEqual(f.events, ["refresh", "invalidate:Test"]);
 });
 
-test("stale or failed insertion snapshots never reuse the prior cached observation", async () => {
+await test("stale or failed insertion snapshots never reuse the prior cached observation", async () => {
   for (const failed of [false, true]) {
     const f = fixture();
     f.runtime.execute = async () => ({ ...result(), isError: failed });
@@ -435,18 +573,24 @@ test("stale or failed insertion snapshots never reuse the prior cached observati
     });
     assert.equal(response.isError, true);
     assert.equal(response.details.macuse.dispatched, false);
-    assert.match(response.content[0].text, failed ? /Observed/ : /fresh full app snapshot/);
-    assert.equal(f.runtime.getObservation(), undefined);
+    assert.match(textOf(response.content[0]), failed ? /Observed/ : /fresh full app snapshot/);
+    assert.equal(f.runtime.getObservation("Test"), undefined);
   }
 });
 
-test("reset aborts the active call, drains it, cancels queued calls, and never replays", async () => {
-  const f = fixture(),
-    started = Promise.withResolvers(),
-    settled = Promise.withResolvers();
-  f.runtime.execute = async (_input, { signal }) => {
+await test("reset aborts the active call, drains it, cancels queued calls, and never replays", async () => {
+  const f = fixture();
+  /** @type {PromiseWithResolvers<void>} */
+  const started = Promise.withResolvers();
+  /** @type {PromiseWithResolvers<void>} */
+  const settled = Promise.withResolvers();
+  f.runtime.execute = async (_input, options) => {
+    const signal = options?.signal;
+    if (signal === undefined) assert.fail("missing abort signal");
     started.resolve();
-    await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+    await new Promise((resolve) => {
+      signal.addEventListener("abort", resolve, { once: true });
+    });
     await settled.promise;
     f.events.push("aborted-code-settled");
     return { ...result(), isError: true };
@@ -465,10 +609,12 @@ test("reset aborts the active call, drains it, cancels queued calls, and never r
   await f.session.stop();
 });
 
-test("new calls wait through an in-progress kernel reset", async () => {
-  const f = fixture(),
-    started = Promise.withResolvers(),
-    finished = Promise.withResolvers();
+await test("new calls wait through an in-progress kernel reset", async () => {
+  const f = fixture();
+  /** @type {PromiseWithResolvers<void>} */
+  const started = Promise.withResolvers();
+  /** @type {PromiseWithResolvers<void>} */
+  const finished = Promise.withResolvers();
   f.runtime.reset = async () => {
     started.resolve();
     await finished.promise;
@@ -486,14 +632,19 @@ test("new calls wait through an in-progress kernel reset", async () => {
 });
 
 for (const interruption of ["abort", "timeout", "reset"])
-  test(`${interruption} cancels pending session calls while allowing fresh work`, async (t) => {
-    const f = fixture(),
-      started = Promise.withResolvers(),
-      held = Promise.withResolvers();
+  await test(`${interruption} cancels pending session calls while allowing fresh work`, async (t) => {
+    const f = fixture();
+    /** @type {PromiseWithResolvers<void>} */
+    const started = Promise.withResolvers();
+    /** @type {PromiseWithResolvers<{ content: Array<{ type: "text"; text: string }>; isError: boolean }>} */
+    const held = Promise.withResolvers();
+    /** @type {unknown[]} */
     const calls = [];
     f.session.runtime = new CuaRuntime({
       connect: async () => ({
-        callTool: async (request) => {
+        callTool: async (
+          /** @type {{ name: string; arguments: Record<string, unknown>; _meta?: { macuse?: { runId?: unknown } } }} */ request,
+        ) => {
           if (request.name === "js_reset") {
             held.resolve({ content: [], isError: true });
             return { content: [] };
@@ -504,15 +655,22 @@ for (const interruption of ["abort", "timeout", "reset"])
             started.resolve();
             return held.promise;
           }
+          const meta = request._meta;
+          const runId =
+            meta !== undefined && meta.macuse !== undefined ? meta.macuse.runId : undefined;
           return {
             content: [],
-            _meta: { macuse: { runId: request._meta.macuse.runId, actions: [], observations: [] } },
+            _meta: { macuse: { runId, actions: [], observations: [] } },
           };
         },
-        close: async () => {},
+        close: () => Promise.resolve(),
       }),
     });
     t.after(() => f.session.stop());
+    /**
+     * @param {string} code
+     * @param {{ signal?: AbortSignal | undefined; timeoutMs?: number }} [options]
+     */
     const call = (code, options) =>
       f.session.callTool("macuse", { code, trackFocus: false, timeoutMs: 1000 }, options);
     const controller = new AbortController();
@@ -539,17 +697,29 @@ for (const interruption of ["abort", "timeout", "reset"])
     );
   });
 
-test("missing native focus coverage remains explicit without blocking a read-only result", async () => {
+await test("missing native focus coverage remains explicit without blocking a read-only result", async () => {
   const f = fixture();
   f.native.beginObservation = async () => {
     throw new Error("Compiler unavailable");
   };
   const response = await f.session.callTool("macuse", { code: "42" });
   assert.equal(response.isError, false);
-  assert.equal(response.details.macuse.focus.observationAvailable, false);
-  assert.match(response.content.at(-1).text, /Compiler unavailable/);
-  assert.equal(response.details.macuse.focus.isolationGuaranteed, false);
+  const focus = response.details.macuse.focus;
+  if (!isRecord(focus)) assert.fail("missing focus record");
+  assert.equal(focus.observationAvailable, false);
+  assert.match(textOf(response.content.at(-1)), /Compiler unavailable/);
+  assert.equal(focus.isolationGuaranteed, false);
 });
+
+/**
+ * @param {string} mode
+ * @returns {string | undefined}
+ */
+const originalTab = (mode) => {
+  if (mode === "unknown") return;
+  if (mode === "initial-memory") return "Memory";
+  return "Disk";
+};
 
 for (const mode of [
   "initial-disk",
@@ -559,8 +729,8 @@ for (const mode of [
   "missing-coverage",
   "activation",
 ])
-  test(`Activity Monitor validation cleanup: ${mode}`, async () => {
-    const original = mode === "unknown" ? undefined : mode === "initial-memory" ? "Memory" : "Disk";
+  await test(`Activity Monitor validation cleanup: ${mode}`, async () => {
+    const original = originalTab(mode);
     let current = original,
       mutations = 0;
     const tabs = () =>
@@ -574,16 +744,23 @@ for (const mode of [
       }));
     const fixture = {
       runtime: { getObservation: () => ({ elements: tabs() }) },
-      callTool: async (_tool, input) => {
-        const action = input.code.match(/performSecondaryAction\((\d+)/);
+      callTool: async (
+        /** @type {string} */ _tool,
+        /** @type {Record<string, unknown>} */ input,
+      ) => {
+        const code = typeof input.code === "string" ? input.code : "";
+        const action = code.match(/performSecondaryAction\((\d+)/);
         if (action) {
-          current = tabs()[Number(action[1])].name;
+          const selected = tabs()[Number(action[1] ?? 0)];
+          if (selected !== undefined) {
+            current = selected.name;
+          }
           mutations++;
         }
-        const changed = mutations === 1 && action;
+        const changed = mutations === 1 && action !== null;
         return {
           ...result(),
-          isError: mode === "failed-action" && Boolean(changed),
+          isError: mode === "failed-action" && changed,
           details: {
             macuse: {
               focus: {

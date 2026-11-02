@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "skipLibCheck": false,
+    "allowJs": false,
+    "checkJs": false,
+    "lib": ["ES2024", "DOM"]
+  },
+  "include": ["lib/**/*.d.mts", "tools/*.d.mts"]
+}
