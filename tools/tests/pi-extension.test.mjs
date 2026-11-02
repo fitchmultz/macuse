@@ -390,6 +390,12 @@ test("every resized original in one result is verified and retained at its own i
   const [wide, tall] = await Promise.all(
     [wideBytes, tallBytes].map((data) => resizeImage(Buffer.from(data, "base64"), "image/png")),
   );
+  // Pi may re-encode a resized screenshot as JPEG when that is smaller.
+  const shown = [wide, image(smallBytes), tall].map(({ mimeType, data }) => ({
+    type: "image",
+    mimeType,
+    data,
+  }));
   const message = {
     role: "toolResult",
     toolName: "macuse",
@@ -397,10 +403,10 @@ test("every resized original in one result is verified and retained at its own i
     timestamp: 456,
     content: [
       text("Observed"),
-      image(wide.data),
+      shown[0],
       text(formatDimensionNote(wide)),
-      image(smallBytes),
-      image(tall.data),
+      shown[1],
+      shown[2],
       text(formatDimensionNote(tall)),
     ],
     details: {
@@ -425,10 +431,10 @@ test("every resized original in one result is verified and retained at its own i
               type: "input_text",
               text: `Observed\n${formatDimensionNote(wide)}\n${formatDimensionNote(tall)}`,
             },
-            ...[wide.data, smallBytes, tall.data].map((data) => ({
+            ...shown.map(({ mimeType, data }) => ({
               type: "input_image",
               detail: "auto",
-              image_url: `data:image/png;base64,${data}`,
+              image_url: `data:${mimeType};base64,${data}`,
             })),
           ],
         },
