@@ -13,7 +13,7 @@ _macuse checks the app and document before each action. The assistant receives a
 
 ## Install in Pi
 
-Use macOS, Pi 1.0.0 or later, and Node 24.21.0 or later. Set up ChatGPT Computer Use with its normal authentication and macOS permissions.
+Use macOS, Pi 1.5.0 or later, and Node 24.21.0 or later. Set up ChatGPT Computer Use with its normal authentication and macOS permissions.
 
 Native focus checks and selected-text insertion also require Accessibility access and `xcrun swiftc`. See [local requirements](docs/reference/codex-computer-use-local-install.md) for setup details.
 
