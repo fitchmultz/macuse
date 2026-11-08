@@ -2,7 +2,13 @@
 
 ## Supported behavior
 
-Pi 1.5.0 is the supported floor. The native persistent Computer Use runtime, guarded actions, focus observations, selected-text insertion, screenshot ownership, recording/history privacy gates, and enable-first auxiliary loadout remain unchanged. Native codemode composes these tools; it does not replace their persistent runtime. The kept synchronous `pi:instruction-groups` collector remains optional; official Pi receives the complete `macos` prompt section.
+Pi 1.5.0 is the supported floor. The native persistent Computer Use runtime, guarded actions, focus observations, selected-text insertion, screenshot ownership, and recording/history privacy gates remain unchanged. The eight recording/history tools use Pi's native `deferred` exposure; native codemode and `tool_search` compose and load them without replacing their persistent runtime. macuse adds one short `macos` prompt section on every host and performs no tool selection of its own.
+
+## Checked 2026-11-08 — native deferred exposure
+
+- The `macuse_tools` loader, `macuse_enable` recovery tool, `/macuse-enable` command, initialization marker, self-activation logic, and `pi:instruction-groups` collector are removed. Activation follows the host: `defaultTools`, `tool_search`, `codemode`, saved transcript loadouts, allowlists, exclusions, and `noTools`.
+- Offline native SDK lifecycle checks pass on official 1.5.0 and the current `fitchmultz/pi` main: entry tools active and auxiliary tools deferred-but-callable at startup; `defaultTools` selection of one auxiliary tool; first installation on reload/resume/fork; loaded deferred tools surviving reload/resume/fork; tool policy enforcement; recorded removals, branches and compaction through resume; explicit host selection over saved declarations; and lifecycle boundaries stopping the owned session without starting native services. Live deselection survival across `/reload` is host-owned: the fork preserves it and official 1.5.0 re-activates default-active extension tools, so the macuse suite no longer asserts it.
+- `tools/validate-pi-host.mjs` and `.github/scripts/validate-pi-cli.mjs` pass on both hosts; the CLI observer reports exactly the three entry tools active and the eight auxiliary tools registered but not active.
 
 Astra original-image restoration now checks model/API eligibility before touching history. The first eligible context seeds one retained-window raw result index. Finalized message events feed it; the next eligible request reconciles appended entries after host persistence, including post-handler compaction drafts. Supplied request messages select candidates, and exact wire text/image fields, order, detail, and image bytes must still match. Branch/resume/reload/compaction reseed or invalidate. Reused wire call IDs fail closed. Filtering and context edits cannot become a new restoration baseline.
 

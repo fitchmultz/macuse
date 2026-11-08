@@ -75,15 +75,7 @@
     "path": "tools/tests/pi-lifecycle.test.mjs",
     "rule": "no-unsafe-type-assertion",
     "id": "QX-007",
-    "owner": "\"macuse-only loading delivers standalone guidance and lazy loaders without browser resources\"",
-    "conditions": [],
-    "operation": "/** @type {import(\"@earendil-works/pi-coding-agent\").ExtensionCommandContext} */ ({"
-  },
-  {
-    "path": "tools/tests/pi-lifecycle.test.mjs",
-    "rule": "no-unsafe-type-assertion",
-    "id": "QX-007",
-    "owner": "`explicit ${frontDoor} recovery repairs marker-only selection within policy ${JSON.stringify(policy)}`",
+    "owner": "\"macuse-only loading activates the entry tools, defers recording/history, and delivers short guidance\"",
     "conditions": [],
     "operation": "/** @type {import(\"@earendil-works/pi-coding-agent\").ExtensionCommandContext} */ ({"
   },

@@ -61,9 +61,9 @@ The exact authorized sites are listed in `configs/engineering-directive-sites.js
 
 ### QX-007: Partial Pi command contexts in tests
 
-- **Finding and scope:** `typescript/no-unsafe-type-assertion` reports the three inventoried `ExtensionCommandContext` test fixtures in `tools/tests/pi-lifecycle.test.mjs`.
+- **Finding and scope:** `typescript/no-unsafe-type-assertion` reports the two inventoried `ExtensionCommandContext` test fixtures in `tools/tests/pi-lifecycle.test.mjs`.
 - **Contract and comparison:** these direct status-command tests supply `hasUI` and `ui.notify`, the fields read by the status handler in `extensions/macuse.ts`. A complete context contains the Pi session, UI, and command lifecycle (`@earendil-works/pi-coding-agent` extension types), which cannot be represented by this small fake. Building a second simulated Pi host would add behavior unrelated to these status assertions; the same suite separately exercises actual SDK session boundaries.
-- **Adjustment and evidence:** the three direct handler calls alone use operation-bound casts. The handler's field use and the real-host tests are the soundness boundary, not the assertion itself. Other unsafe assertions remain errors. Revisit if the handler reads more context fields or the tests switch to a real command context.
+- **Adjustment and evidence:** the two direct handler calls alone use operation-bound casts. The handler's field use and the real-host tests are the soundness boundary, not the assertion itself. Other unsafe assertions remain errors. Revisit if the handler reads more context fields or the tests switch to a real command context.
 
 ### QX-008: Node test registration promises
 

@@ -23,12 +23,12 @@ The auxiliary app-server starts only for Record & Replay or Computer History. It
 
 ## Public interface
 
-| Surface       | Tools                                                                              |
-| ------------- | ---------------------------------------------------------------------------------- |
-| Pi defaults   | `macuse`, `macuse_insert_text`, `macuse_reset`, `macuse_tools`                     |
-| Pi lazy tools | Three `event_stream_*` tools and five `computer_history_*` tools                   |
-| Standard MCP  | Eleven tools: code, insert, reset, and eight auxiliary tools; no activation loader |
-| CLI           | The same eleven tools through `call` or persistent JSONL `session`                 |
+| Surface      | Tools                                                                              |
+| ------------ | ---------------------------------------------------------------------------------- |
+| Pi defaults  | `macuse`, `macuse_insert_text`, `macuse_reset`                                     |
+| Pi deferred  | Three `event_stream_*` tools and five `computer_history_*` tools via `tool_search` |
+| Standard MCP | Eleven tools: code, insert, reset, and eight auxiliary tools                       |
+| CLI          | The same eleven tools through `call` or persistent JSONL `session`                 |
 
 Bootstrap with `await cua.getState()` or `var app = await cua.getApp("Exact App")`. Documentation and initial state are emitted automatically. Bindings persist until reset or a session boundary. `app.getAXState()`, `app.getScreenshot()`, and `app.getAXStateAndScreenshot()` also auto-emit. Use normal JavaScript conditions, bounded loops, assertions, and `try/finally` instead of a separate workflow language; await every action and keep programs short enough to adapt to observed UI state.
 
@@ -69,7 +69,7 @@ Screenshot coordinates refer to the native returned image, with no assumed Retin
 - Replace `macuse_restart` with `macuse_reset` when bindings/observations need clearing. Reset does not restart global services.
 - Replace the old extension/module tree with `extensions/macuse.ts` and `lib/`. Replace the old GUI CLI/MCP bridges with `tools/macuse.mjs` and `tools/macuse-mcp.mjs`. There are no backwards-compatible aliases.
 - Regenerate MCP configuration: server `macuse`, environment variable `MACUSE_CWD`. See [MCP setup](cursor-mcp-setup.md).
-- Restart the full Pi/CLI/MCP process after updating. Pi's loader enables only selected auxiliary recording/history tools. Pi preserves its live selection during reload, including newly added defaults where supported; the native transcript preserves saved selections across resume, fork and compaction. Owned runtime bindings and observations still reset. Explicit allowlists/exclusions are never widened. CLI `--tools` overrides saved selection; SDK replacement requires the [post-bind selection boundary](codex-computer-use-local-install.md#sdk-tool-selection) because official Pi does not expose selection-policy provenance to extensions. Optional source-owned `macos` discovery metadata requires no settings inventory; official Pi retains ordinary loader behavior.
+- Restart the full Pi/CLI/MCP process after updating. Pi's native `tool_search` loads the deferred recording/history tools; the native transcript preserves saved selections across resume, fork and compaction. Owned runtime bindings and observations still reset. Explicit allowlists/exclusions are never widened. CLI `--tools` overrides saved selection; SDK replacement requires the [post-bind selection boundary](codex-computer-use-local-install.md#sdk-tool-selection) because official Pi does not expose selection-policy provenance to extensions.
 
 ## Historical findings
 
