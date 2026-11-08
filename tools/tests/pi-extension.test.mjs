@@ -58,6 +58,8 @@ if (!isRecord(extensionModule) || !isExtensionFactory(extensionModule.default)) 
   assert.fail("macuse extension default export missing");
 }
 const extension = extensionModule.default;
+/** macuse registers its Pi surface only on macOS; the macOS CI job runs these. */
+const mac = { skip: process.platform !== "darwin" };
 /** @typedef {Record<string, unknown> & { properties?: Record<string, Record<string, unknown>> }} SchemaMock */
 /**
  * The tool surfaces the fixture reads. `execute` models the trailing-optional
@@ -110,6 +112,7 @@ export function extensionFixture() {
 
 nodeTest(
   "Pi uses the shared strict surface: entry tools direct, recording/history tools deferred",
+  mac,
   async () => {
     const f = extensionFixture();
     const verifyToolSurface = () => {
@@ -193,7 +196,7 @@ nodeTest(
   },
 );
 
-nodeTest("each run adds the macos section; unreachable deferred tools warn once", async () => {
+nodeTest("each run adds the macos section; unreachable deferred tools warn once", mac, async () => {
   const f = extensionFixture();
   /** @type {string[]} */
   const notices = [];
@@ -413,6 +416,7 @@ nodeTest(
 
 nodeTest(
   "image hook does no non-target history work and reconciles only target appends across lifecycle and edits",
+  mac,
   async () => {
     const f = extensionFixture();
     const rows = Array.from({ length: 43000 }, (_, i) => ({

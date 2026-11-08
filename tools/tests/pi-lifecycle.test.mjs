@@ -15,6 +15,8 @@ nodeTest.before(() => {
 nodeTest.after(() => {
   globalThis.fetch = originalFetch;
 });
+/** macuse registers its Pi surface only on macOS; the macOS CI job runs the registration contracts. */
+const mac = { skip: process.platform !== "darwin" };
 
 // Exercise either installed host's real SDK without credentials, providers or desktop calls.
 /** @typedef {typeof import("@earendil-works/pi-coding-agent")} PiPublic */
@@ -196,7 +198,29 @@ function beforeAgentStart(f, prompt) {
 }
 
 nodeTest(
+  "off macOS, the native SDK loads macuse with no tools, commands or macos guidance",
+  { skip: process.platform === "darwin" },
+  async (t) => {
+    const f = await fixture(t);
+    assert.deepEqual(
+      f.resourceLoader.getExtensions().extensions.map((extension) => extension.path),
+      [fileURLToPath(new URL("../../extensions/macuse.ts", import.meta.url))],
+    );
+    for (const name of [...entries, ...auxiliary]) {
+      assert.equal(f.session.getToolDefinition(name), undefined, name);
+    }
+    for (const name of ["macuse-status", "macuse-stop", "macuse-reset"]) {
+      assert.equal(f.session.extensionRunner.getCommand(name), undefined, name);
+    }
+    const start = await beforeAgentStart(f, "Offline guidance off macOS");
+    assert.equal(start.systemPromptOptions.sections.macos, undefined);
+    assert.deepEqual(f.errors, []);
+  },
+);
+
+nodeTest(
   "macuse-only loading activates the entry tools, defers recording/history, and delivers short guidance",
+  mac,
   async (t) => {
     const f = await fixture(t);
     assert.deepEqual(
@@ -261,6 +285,7 @@ nodeTest(
 
 nodeTest(
   "macuse activates the host tool_search on start and tree navigation unless the branch removed it",
+  mac,
   async (t) => {
     const withSearch = { extensionFactories: [createToolSearchExtension()] };
     /** @param {SessionManagerInstance} manager */
@@ -307,6 +332,7 @@ nodeTest(
 
 nodeTest(
   "native defaults can select auxiliary tools at startup without activating their siblings",
+  mac,
   async (t) => {
     const f = await fixture(t, { settings: { defaultTools: ["+computer_history_status"] } });
     assert.ok(f.session.getActiveToolNames().includes("computer_history_status"));
@@ -315,7 +341,7 @@ nodeTest(
   },
 );
 
-nodeTest("first installation on reload activates only the entry tools", async (t) => {
+nodeTest("first installation on reload activates only the entry tools", mac, async (t) => {
   const settings = {
     extensions: ["-builtin:mcp", "-builtin:llama.cpp", "-builtin:codemode", "-builtin:tool-search"],
   };
@@ -340,6 +366,7 @@ nodeTest("first installation on reload activates only the entry tools", async (t
 for (const boundary of ["resume", "fork"]) {
   nodeTest(
     `first installation on ${boundary} activates the entry tools next to unrelated saved declarations`,
+    mac,
     async (t) => {
       const f = await fixture(t, { installed: false });
       declare(f);
@@ -380,7 +407,7 @@ for (const boundary of ["resume", "fork"]) {
 }
 
 for (const boundary of ["reload", "resume", "fork"]) {
-  nodeTest(`native SDK preserves a loaded deferred tool through ${boundary}`, async (t) => {
+  nodeTest(`native SDK preserves a loaded deferred tool through ${boundary}`, mac, async (t) => {
     const f = await fixture(t);
     assert.ok(!f.session.getActiveToolNames().includes("computer_history_status"));
     // tool_search loads a deferred tool through the same native active-tool set.
@@ -410,7 +437,7 @@ for (const options of [
   { tools: [] },
   { noTools: "all" },
 ]) {
-  nodeTest(`native SDK respects tool policy ${JSON.stringify(options)}`, async (t) => {
+  nodeTest(`native SDK respects tool policy ${JSON.stringify(options)}`, mac, async (t) => {
     const f = await fixture(t, options);
     const before = f.session.getActiveToolNames();
     if (options.excludeTools) {
@@ -429,6 +456,7 @@ for (const options of [
 
 nodeTest(
   "native projection respects recorded removals, empty selection, branches and compaction",
+  mac,
   async (t) => {
     const f = await fixture(t);
     // Record the initial loadout before deselecting it. Pi treats an unmentioned
@@ -486,7 +514,7 @@ nodeTest(
   },
 );
 
-nodeTest("an explicit host selection wins over a saved declaration on resume", async (t) => {
+nodeTest("an explicit host selection wins over a saved declaration on resume", mac, async (t) => {
   const f = await fixture(t);
   f.session.setActiveToolsByName(["macuse"]);
   declare(f);
@@ -499,7 +527,7 @@ nodeTest("an explicit host selection wins over a saved declaration on resume", a
   assert.deepEqual(next.errors, []);
 });
 
-nodeTest("exclusion-only resume keeps recorded entry-tool deselections", async (t) => {
+nodeTest("exclusion-only resume keeps recorded entry-tool deselections", mac, async (t) => {
   const f = await fixture(t);
   declare(f);
   f.session.setActiveToolsByName(["macuse"]);
@@ -528,6 +556,7 @@ nodeTest("exclusion-only resume keeps recorded entry-tool deselections", async (
 for (const selected of [["macuse_reset"], ["macuse", "computer_history_status"], []]) {
   nodeTest(
     `SDK post-bind selection replaces saved declaration: ${JSON.stringify(selected)}`,
+    mac,
     async (t) => {
       const f = await fixture(t);
       f.session.setActiveToolsByName(["macuse"]);
@@ -544,7 +573,7 @@ for (const selected of [["macuse_reset"], ["macuse", "computer_history_status"],
   );
 }
 
-nodeTest("SDK post-bind selection cannot bypass exclusions", async (t) => {
+nodeTest("SDK post-bind selection cannot bypass exclusions", mac, async (t) => {
   const f = await fixture(t);
   f.session.setActiveToolsByName(["macuse"]);
   declare(f);
@@ -563,6 +592,7 @@ nodeTest("SDK post-bind selection cannot bypass exclusions", async (t) => {
 
 nodeTest(
   "native tree and reload boundaries stop the owned session without starting native services",
+  mac,
   async (t) => {
     const f = await fixture(t);
     declare(f);
