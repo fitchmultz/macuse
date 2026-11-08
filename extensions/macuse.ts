@@ -251,10 +251,13 @@ export default function macuse(pi: ExtensionAPI): void {
   });
 
   registerOwnedTools(pi, runtime);
-  // Like Pi's own MCP extension, warn once when nothing can reach the deferred tools.
+  pi.on("session_start", (_event, ctx) => activateToolSearch(pi, ctx));
+  pi.on("session_tree", (_event, ctx) => activateToolSearch(pi, ctx));
+  // Like Pi's own MCP extension, warn once when nothing can reach the deferred tools. Check as a
+  // run starts: extensions that load later, such as Pi's MCP extension, can still activate
+  // tool_search or codemode in their own session_start handlers.
   let warnedUnreachable = false;
-  const settleToolSearch = (ctx: ExtensionContext): void => {
-    activateToolSearch(pi, ctx);
+  pi.on("before_agent_start", (_event, ctx) => {
     if (warnedUnreachable || deferredToolsReachable(pi)) {
       return;
     }
@@ -263,9 +266,7 @@ export default function macuse(pi: ExtensionAPI): void {
       "macuse recording and history tools that are not selected directly are only reachable from the tool_search or codemode tool, but neither is active; they cannot be called.",
       "warning",
     );
-  };
-  pi.on("session_start", (_event, ctx) => settleToolSearch(ctx));
-  pi.on("session_tree", (_event, ctx) => settleToolSearch(ctx));
+  });
   attachResultMarker(pi, ownedToolNames);
   const images = attachImageHooks(pi, imageIndex);
   attachSessionLifecycle(pi, runtime, images);

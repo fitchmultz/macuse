@@ -52,7 +52,7 @@ Pi's native tool selection owns activation; macuse never selects its own tools. 
 - A tool the transcript recorded as removed stays inactive on resume, fork, tree navigation, and compaction. A tool the branch never mentioned counts as newly registered.
 - Host allowlists, exclusions, and `noTools` are never widened. Explicit `--tools` and SDK `tools` selections take precedence over saved declarations; SDK callers replacing a saved selection apply it after binding extensions, see [SDK selection](codex-computer-use-local-install.md#sdk-tool-selection).
 - Owned runtime bindings and observations reset at every lifecycle boundary regardless of the selection.
-- When neither `tool_search` nor `codemode` is active, nothing can reach the deferred tools that are not selected; macuse warns once instead of leaving them silently unreachable.
+- When neither `tool_search` nor `codemode` is active as a run starts, nothing can reach the deferred tools that are not selected; macuse warns once instead of leaving them silently unreachable. The check runs after every extension's `session_start` handler, because a later extension, such as Pi's MCP extension, can still activate one of them.
 
 To bring a deselected entry tool back, use the host's tool selector or `defaultTools`; a new session is another option.
 
