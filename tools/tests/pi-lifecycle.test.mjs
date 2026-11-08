@@ -259,14 +259,51 @@ nodeTest(
   },
 );
 
-nodeTest("macuse activates the host tool_search so its deferred tools can be loaded", async (t) => {
-  const f = await fixture(t, { extensionFactories: [createToolSearchExtension()] });
-  assert.ok(f.session.getActiveToolNames().includes("tool_search"));
-  for (const name of auxiliary) {
-    assert.ok(!f.session.getActiveToolNames().includes(name), name);
-  }
-  assert.deepEqual(f.errors, []);
-});
+nodeTest(
+  "macuse activates the host tool_search on start and tree navigation unless the branch removed it",
+  async (t) => {
+    const withSearch = { extensionFactories: [createToolSearchExtension()] };
+    /** @param {SessionManagerInstance} manager */
+    const resume = (manager) =>
+      fixture(
+        t,
+        { ...withSearch, sessionStartEvent: { type: "session_start", reason: "resume" } },
+        manager,
+      );
+    /** @param {Fixture} outcome */
+    const withoutSearch = (outcome) =>
+      outcome.session.setActiveToolsByName(
+        outcome.session.getActiveToolNames().filter((name) => name !== "tool_search"),
+      );
+    const f = await fixture(t, withSearch);
+    assert.ok(f.session.getActiveToolNames().includes("tool_search"));
+    for (const name of auxiliary) {
+      assert.ok(!f.session.getActiveToolNames().includes(name), name);
+    }
+    // A branch recorded before macuse activated tool_search never mentions it.
+    withoutSearch(f);
+    declare(f);
+    const unmentioned = f.sessionManager.getLeafId();
+    if (unmentioned === null) {
+      assert.fail("no leaf entry to navigate");
+    }
+    const resumed = await resume(f.sessionManager);
+    assert.ok(resumed.session.getActiveToolNames().includes("tool_search"));
+    declare(resumed);
+    await resumed.session.navigateTree(unmentioned);
+    assert.ok(resumed.session.getActiveToolNames().includes("tool_search"));
+    // A recorded removal stays inactive, like any other tool Pi restores from the branch.
+    const removed = await fixture(t, withSearch);
+    declare(removed);
+    withoutSearch(removed);
+    declare(removed);
+    const restored = await resume(removed.sessionManager);
+    assert.ok(!restored.session.getActiveToolNames().includes("tool_search"));
+    for (const outcome of [f, resumed, removed, restored]) {
+      assert.deepEqual(outcome.errors, []);
+    }
+  },
+);
 
 nodeTest(
   "native defaults can select auxiliary tools at startup without activating their siblings",

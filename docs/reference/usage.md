@@ -32,7 +32,7 @@ Bindings persist in that session. The next call can use them:
 | `macuse_insert_text` | Replace only the current selection in an already-focused field through native Accessibility, preserving unselected text. |
 | `macuse_reset`       | Clear JavaScript bindings and app observations; it does not undo GUI actions.                                            |
 
-The three entry tools start active on Pi. Eight auxiliary tools register with Pi's native `deferred` exposure: `event_stream_start`, `event_stream_status`, `event_stream_stop`, `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, and `computer_history_update_settings`. A deferred tool stays out of the model's declared tool list until `tool_search` loads it, and `codemode` scripts can call it without loading. macuse activates a registered `tool_search` at session start, as Pi's own MCP extension does. Loading starts no recording. The MCP server exposes all eleven tools directly.
+The three entry tools start active on Pi. Eight auxiliary tools register with Pi's native `deferred` exposure: `event_stream_start`, `event_stream_status`, `event_stream_stop`, `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, and `computer_history_update_settings`. A deferred tool stays out of the model's declared tool list until `tool_search` loads it, and `codemode` scripts can call it without loading. macuse activates a registered `tool_search` at session start and after `/tree` navigation, as Pi's own MCP extension does at session start, unless the current branch recorded removing it. Loading starts no recording. The MCP server exposes all eleven tools directly.
 
 Pi adds one short `macos` section to the system prompt: bootstrap, mutation authorization, unknown-outcome rules, and the names of the deferred tools with their gates. This skill and the [safety policy](codex-computer-use-safety-policy.md) hold the full operating rules.
 
@@ -46,7 +46,7 @@ Record & Replay start and Computer History resume require exact user intent, `al
 
 ## Tool selection
 
-Pi's native tool selection owns activation; macuse registers tools and never selects them itself. The rules that apply:
+Pi's native tool selection owns activation; macuse never selects its own tools. Its one selection is activating `tool_search`, described above. The rules that apply:
 
 - `defaultTools` entries such as `+computer_history_status` select a deferred tool at startup, and `/reload` activates entries newly added to that setting.
 - First installation into an existing session activates the three entry tools on reload, resume, or fork, next to whatever that session already declares.
