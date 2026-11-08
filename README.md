@@ -47,16 +47,8 @@ The tool returns API documentation and app state. Bindings persist until reset o
 | `macuse`             | Inspect apps and run JavaScript in a persistent session.        |
 | `macuse_insert_text` | Replace selected text without changes to the rest of the field. |
 | `macuse_reset`       | Clear bindings and observations; preserve app state.            |
-| `macuse_tools`       | Enable Record & Replay or Computer History tools in Pi.         |
-| `macuse_enable`      | Select the four entry tools permitted by Pi.                    |
 
-Pi starts with four entry tools and the separate recovery tool. Enable the `macos` group on Pi hosts with tool discovery. MCP exposes eleven tools, including the eight Record & Replay and Computer History tools. Tool activation starts no recording.
-
-### Saved-session recovery
-
-If macuse tools are missing from a saved session, run `/macuse-enable`. The assistant can also call `macuse_enable({})` when that recovery tool is active. Saved loadouts can omit it; reloading an already registered tool does not explicitly select it.
-
-Recovery preserves other tool selections and host restrictions. It starts no app control or service. See [saved-session recovery](docs/reference/usage.md#saved-session-recovery) for discovery steps and selection limits.
+Pi starts with these three tools. The eight Record & Replay and Computer History tools register with deferred exposure: Pi's `tool_search` loads one on request, `codemode` scripts can call them directly, and `defaultTools` entries such as `+computer_history_status` select them at startup. Loading a tool starts no recording. MCP exposes all eleven tools directly. See [tool selection](docs/reference/usage.md#tool-selection).
 
 ## App changes and limits
 

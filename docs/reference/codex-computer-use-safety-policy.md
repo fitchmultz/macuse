@@ -54,7 +54,7 @@ Native AX features need Accessibility permission and installed `xcrun swiftc`; t
 
 ## Recording and history
 
-Pi's `macuse_tools` enables only these eight auxiliary tools; MCP exposes them directly:
+Pi registers these eight auxiliary tools with deferred exposure (`tool_search` loads them, `codemode` calls them); MCP exposes them directly:
 
 | Tool                               | Required local gate                                                                       |
 | ---------------------------------- | ----------------------------------------------------------------------------------------- |

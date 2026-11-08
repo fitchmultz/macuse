@@ -23,13 +23,11 @@ pi install git:github.com/fitchmultz/macuse
 
 The package supplies `extensions/macuse.ts` and `skills/macuse/SKILL.md`. After installing a local checkout's dependencies with the [source-install procedure](../../README.md#cli-and-mcp), load it with `pi install /absolute/path/to/macuse`. Pi registers that local path without installing or changing its dependencies; the checkout owner maintains them.
 
-Official Pi 1.5.0's `/reload` replaces extension code, disposes macuse's owned session, and preserves the live permitted tool selection. On hosts supporting it, tools newly added to `defaultTools` are enabled; unchanged defaults do not resurrect tools you deselected. Quit Pi and start a new process after dependency/native-runtime updates, or on older hosts whose code reload is unqualified. Restart CLI/MCP processes after changes too; a new process picks up native helper source changes through the source-hash cache.
+Pi's `/reload` replaces extension code and disposes macuse's owned session; Pi's native rules decide which tools stay selected (official Pi 1.5.0 re-activates default-active extension tools on reload, while `fitchmultz/pi` preserves live deselections). Tools newly added to `defaultTools` are enabled on reload. Quit Pi and start a new process after dependency/native-runtime updates, or on older hosts whose code reload is unqualified. Restart CLI/MCP processes after changes too; a new process picks up native helper source changes through the source-hash cache.
 
-For a source-only upgrade from a pre-initialization-marker version, use a new process if no macuse tool declaration has been recorded yet. An entirely deselected legacy session without such a declaration is indistinguishable from first installation; its old reload path also reactivated the primary tools. After initialization by the current version, reload preserves even undeclared live deselections.
+Pi starts with three entry tools: `macuse`, `macuse_insert_text`, and `macuse_reset`. The eight recording/history tools register with native `deferred` exposure: `tool_search` loads them, `codemode` calls them, and `defaultTools` or an explicit host tool policy can select them. Pi's declared selection survives resume, fork and compaction without keeping native runtime bindings alive. No host patches or image-sizing settings edits are required for Astra.
 
-Ordinary Pi starts with four entry tools: `macuse`, `macuse_insert_text`, `macuse_reset`, and `macuse_tools`. Discovery-capable hosts can defer this source-owned `macos` group; official Pi ignores the optional metadata. No `toolDiscovery` settings inventory is required. The eight recording/history tools remain lazy until selected through the loader or an explicit host tool policy. Pi's declared selection survives reload/resume, fork and compaction without keeping native runtime bindings alive. No host patches or image-sizing settings edits are required for Astra.
-
-See [saved-session recovery](usage.md#saved-session-recovery) for first-install behavior, explicit recovery, discovery steps, and the separate recovery tool's lifecycle.
+See [tool selection](usage.md#tool-selection) for the native selection rules.
 
 ## SDK tool selection
 

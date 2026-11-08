@@ -1,6 +1,6 @@
 ---
 name: macuse
-description: "Use macuse to inspect, QA, dogfood, or operate local macOS app UI with persistent Computer Use JavaScript, guarded actions, selected-text insertion, and focus observations. Use for requested Record & Replay or Computer History operations too. Prefer available browser tools for ordinary web DOM automation; not for generic Pi development or raw MCP protocol probes."
+description: "Inspect, QA, or operate native macOS app UI with persistent Computer Use JavaScript, including selected-text insertion and Record & Replay or Computer History operations. Use browser tools for ordinary web pages."
 compatibility: macOS with the macuse Pi package or MCP server, installed ChatGPT Computer Use, existing authentication/permissions, and installed xcrun swiftc plus Accessibility access for native AX features.
 metadata:
   version: "0.6.1"
@@ -13,9 +13,7 @@ Inspect and operate native macOS apps with short adaptive JavaScript programs. P
 
 ## Bootstrap and routing
 
-Ordinary Pi starts with four entry tools: `macuse`, `macuse_insert_text`, `macuse_reset`, and `macuse_tools`. On discovery-capable hosts, enable the source-owned `macos` group to reveal those entry tools; no `toolDiscovery` settings inventory is required. Official Pi ignores the optional discovery metadata. Explicit tool selections and exclusions remain binding. Pi also starts with the ungrouped `macuse_enable` recovery tool. It follows native default-active behavior: first installation on reload can activate it, but live deselections and saved resume/tree loadouts can omit it, and hard restrictions can exclude it. Use `/macuse-enable` if model recovery is unavailable; reloading an already registered tool does not explicitly select it. The MCP server exposes the first three plus eight auxiliary tools directly, without a loader or recovery tool.
-
-If the package is enabled but `macos` is unavailable in a saved session, call `macuse_enable({})` if active, or run `/macuse-enable` through Pi's command interface. It explicitly adds only the four permitted entry tools, preserving other selections and exclusions, and reports unavailable names rather than bypassing restrictions. It starts no app control, service, or recording and does not activate auxiliary tools. Then enable `macos` on discovery hosts and read its full instructions before using the revealed tools in a later turn; group enable alone cannot repair a deselected tool set.
+Pi starts with three entry tools: `macuse`, `macuse_insert_text`, and `macuse_reset`. The eight recording/history tools are deferred: load one with `tool_search` or call it from `codemode`. Pi's native tool selection, `defaultTools`, allowlists, and exclusions remain binding; if an entry tool is deselected in a saved session, use the host's tool selector or a new session. The MCP server exposes all eleven tools directly.
 
 Start by calling `macuse` with one of:
 
@@ -74,13 +72,13 @@ Raw `app.typeText` is ASCII-only. For native paste, use `await app.paste(text)` 
 
 ## Recording and history
 
-In Pi, enable only the requested auxiliary tools:
+In Pi, load only the requested auxiliary tool through `tool_search`:
 
 ```json
-{ "tools": ["event_stream_status"] }
+{ "query": "event_stream_status" }
 ```
 
-Then call `event_stream_status({})`. The loader only activates tools; it does not start a service or recording. Pi's live tool selection survives reload, including newly added defaults where supported; saved declarations survive resume, fork and compaction. Runtime bindings and observations still reset at lifecycle boundaries. An auxiliary-only selection or excluded loader does not hide explicitly permitted tools. The eight supported names are:
+Then call `event_stream_status({})`, or call it directly from a `codemode` script. Loading a tool starts no service or recording. Loaded tools survive reload, resume, fork and compaction through Pi's native selection; runtime bindings and observations still reset at lifecycle boundaries. The eight supported names are:
 
 - `event_stream_start`, `event_stream_status`, `event_stream_stop`
 - `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, `computer_history_update_settings`

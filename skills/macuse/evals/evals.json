@@ -28,12 +28,12 @@
     {
       "id": "auxiliary-status-routing",
       "prompt": "In Pi, check whether Record & Replay is active. Do not start recording.",
-      "expected_output": "Enable only event_stream_status through macuse_tools if needed, then call event_stream_status with an empty object. Do not start recording, resume history, or use macuse JavaScript for the auxiliary call. Note that the status can expose activity/artifact metadata without inventing a recording authorization requirement for the read."
+      "expected_output": "Load only event_stream_status through tool_search if it is not already available, or call it from codemode, then call event_stream_status with an empty object. Do not start recording, resume history, or use macuse JavaScript for the auxiliary call. Note that the status can expose activity/artifact metadata without inventing a recording authorization requirement for the read."
     },
     {
       "id": "privacy-settings-preservation",
       "prompt": "I approve blocking example.com from Computer History observation. Leave every other setting as it is.",
-      "expected_output": "Enable computer_history_get_settings and computer_history_update_settings in Pi if needed, read fresh settings immediately, then submit the complete observation with only the approved domain change, preserving all other fields and entries. Use scope url and bare-domain urlDomain example.com, allowPrivacyChange true, and a concrete safetyNote. Do not reset lists, use a partial object, or resume history."
+      "expected_output": "Load computer_history_get_settings and computer_history_update_settings through tool_search in Pi if needed, read fresh settings immediately, then submit the complete observation with only the approved domain change, preserving all other fields and entries. Use scope url and bare-domain urlDomain example.com, allowPrivacyChange true, and a concrete safetyNote. Do not reset lists, use a partial object, or resume history."
     },
     {
       "id": "screenshot-artifact",

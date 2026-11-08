@@ -151,14 +151,20 @@ try {
   };
   assert.equal(realpathSync(observed.packageDir), realpathSync(root), "The wrong Pi host loaded");
   assert.equal(observed.version, manifestVersion);
-  const expectedTools = [...tools.map((tool) => tool.name), "macuse_tools"];
+  const expectedTools = tools.map((tool) => tool.name);
   assert.deepEqual(
     observed.tools.filter((name) => expectedTools.includes(name)).sort(),
     expectedTools.sort(),
     "macuse tools were not all registered",
   );
-  for (const name of ["macuse", "macuse_insert_text", "macuse_reset", "macuse_tools"]) {
+  for (const name of ["macuse", "macuse_insert_text", "macuse_reset"]) {
     assert.ok(observed.activeTools.includes(name), `${name} was not active`);
+  }
+  for (const deferred of expectedTools.filter((tool) => !tool.startsWith("macuse"))) {
+    assert.ok(
+      !observed.activeTools.includes(deferred),
+      `${deferred} was active instead of deferred`,
+    );
   }
   assert.ok(observed.commands.includes("macuse-status"), "macuse commands were not registered");
   console.log(

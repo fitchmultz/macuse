@@ -366,7 +366,7 @@ try {
         normalizeContext({
           systemPrompt: "Offline test",
           tools: tools.filter((t) =>
-            ["macuse", "macuse_insert_text", "macuse_reset", "macuse_tools"].includes(t.name),
+            ["macuse", "macuse_insert_text", "macuse_reset"].includes(t.name),
           ),
           messages: convertToLlm(contextMessages),
         }),
