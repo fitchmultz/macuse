@@ -40,7 +40,7 @@ await session.bindExtensions(bindings);
 session.setActiveToolsByName(selected);
 ```
 
-Use `[]` to deliberately deselect all tools. This shared public method cannot enable tools excluded by the host. SDK sessions that pass `tools` or `noTools` own their selection: Pi restores a transcript loadout only in default-tool sessions, so reapply an explicit replacement after resume, fork, or tree operations when the SDK session must keep it. macuse performs no selection restoration of its own.
+Use `[]` to deliberately deselect all tools. This shared public method cannot enable tools excluded by the host. SDK sessions that pass a plain `tools` allowlist or `noTools` own their initial selection: Pi restores a transcript loadout at session start only for default-tool sessions, and a `tools` list made only of `+name`/`-name` entries modifies that default selection instead of replacing it. Tree navigation restores the branch loadout in every session. Reapply an explicit replacement after resume, fork, or tree operations when the SDK session must keep it. macuse performs no selection restoration of its own.
 
 ## Installed paths
 
