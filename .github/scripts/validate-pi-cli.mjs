@@ -1,7 +1,15 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
+import { spawn } from "node:child_process";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { findPackageJSON } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -20,7 +28,7 @@ function processOutput(stderr, stdout) {
 }
 
 /**
- * Parses the RPC event stream and checks the probe completed without a model turn.
+ * Parses the RPC event stream and checks the prompt ran to completion.
  *
  * @param {string} stdout
  * @returns {Record<string, unknown>[]}
@@ -46,9 +54,12 @@ function probeEvents(stdout) {
     events.some(
       (event) => event.id === "macuse-ci" && event.type === "response" && event.success === true,
     ),
-    "Probe command did not complete",
+    "The prompt was not accepted",
   );
-  assert.ok(!events.some((event) => event.type === "agent_start"), "Probe started a model turn");
+  assert.ok(
+    events.some((event) => event.type === "agent_settled"),
+    "The run did not settle",
+  );
   return events;
 }
 
@@ -146,12 +157,13 @@ try {
     MACUSE_CI_OBSERVATION: observation,
   };
   /**
-   * Runs the probe command through the real CLI in RPC mode and returns its events and observation.
+   * Runs one prompt through the real CLI in RPC mode, answered by the observer's faux provider, and
+   * returns its events and the observation recorded as the run started.
    *
-   * @param {readonly string[]} hostExtensions extension sources loaded before macuse
+   * @param {readonly string[]} hostExtensions additional extension arguments, such as Pi built-ins
    */
-  const probe = (hostExtensions) => {
-    const result = spawnSync(
+  const probe = async (hostExtensions) => {
+    const child = spawn(
       process.execPath,
       [
         piBin,
@@ -165,33 +177,48 @@ try {
         "--no-themes",
         "--no-approve",
         "--no-session",
+        "--provider",
+        "macuse-ci",
+        "--model",
+        "native",
         ...hostExtensions,
         "-e",
         extension,
         "-e",
         observer,
       ],
-      {
-        cwd: directory,
-        env,
-        encoding: "utf8",
-        input: `${JSON.stringify({ id: "macuse-ci", type: "prompt", message: "/macuse-ci-probe" })}\n`,
-        timeout: 45_000,
-        maxBuffer: 8 * 1024 * 1024,
-      },
+      { cwd: directory, env, timeout: 45_000 },
     );
-    if (result.error) {
-      throw result.error;
-    }
-    assert.equal(result.status, 0, processOutput(result.stderr, result.stdout));
-    const events = probeEvents(result.stdout);
+    /** @type {string[]} */
+    const stdoutChunks = [];
+    /** @type {string[]} */
+    const stderrChunks = [];
+    child.stdout.setEncoding("utf8").on("data", (/** @type {string} */ chunk) => {
+      stdoutChunks.push(chunk);
+    });
+    child.stderr.setEncoding("utf8").on("data", (/** @type {string} */ chunk) => {
+      stderrChunks.push(chunk);
+    });
+    // RPC mode exits when stdin ends, so stdin stays open; the observer shuts Pi down once the run settles.
+    child.stdin.write(
+      `${JSON.stringify({ id: "macuse-ci", type: "prompt", message: "Reply ok." })}\n`,
+    );
+    /** @type {number | null} */
+    const status = await new Promise((resolveStatus, reject) => {
+      child.once("error", reject);
+      child.once("close", resolveStatus);
+    });
+    const stdout = stdoutChunks.join("");
+    const stderr = stderrChunks.join("");
+    assert.equal(status, 0, processOutput(stderr, stdout));
+    const events = probeEvents(stdout);
     return {
       unreachableWarnings: events.filter(isUnreachableWarning),
       observed: readObservation(observation),
     };
   };
   // -ne loads neither tool_search nor codemode, so nothing can reach the deferred tools.
-  const { observed, unreachableWarnings } = probe([]);
+  const { observed, unreachableWarnings } = await probe([]);
   assert.equal(
     unreachableWarnings.length,
     1,
@@ -215,7 +242,7 @@ try {
     );
   }
   assert.ok(observed.commands.includes("macuse-status"), "macuse commands were not registered");
-  const withSearch = probe(["-e", "builtin:tool-search"]);
+  const withSearch = await probe(["-e", "builtin:tool-search"]);
   assert.ok(
     withSearch.observed.activeTools.includes("tool_search"),
     "macuse did not activate tool_search",
@@ -224,6 +251,25 @@ try {
     withSearch.unreachableWarnings,
     [],
     "macuse warned although tool_search reaches its deferred tools",
+  );
+  // Pi's MCP extension loads after macuse and activates codemode for a configured server in its
+  // own session_start handler.
+  mkdirSync(env.PI_CODING_AGENT_DIR, { recursive: true });
+  writeFileSync(
+    join(env.PI_CODING_AGENT_DIR, "mcp.json"),
+    JSON.stringify({
+      mcpServers: { probe: { command: process.execPath, args: ["-e", "process.exit(0)"] } },
+    }),
+  );
+  const withMcp = await probe(["-e", "builtin:codemode", "-e", "builtin:mcp"]);
+  assert.ok(
+    withMcp.observed.activeTools.includes("codemode"),
+    "Pi's MCP extension did not activate codemode",
+  );
+  assert.deepEqual(
+    withMcp.unreachableWarnings,
+    [],
+    "macuse warned although codemode, activated by a later extension, reaches its deferred tools",
   );
   console.log(
     JSON.stringify({

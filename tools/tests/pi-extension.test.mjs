@@ -73,14 +73,18 @@ const extension = extensionModule.default;
  *   registerTool: (tool: RegisteredToolMock) => void,
  *   registerCommand: (name: string, command: unknown) => void,
  *   on: (name: string, handler: ExtensionHandlerMock) => void,
+ *   getAllTools: () => RegisteredToolMock[],
+ *   getActiveTools: () => string[],
  * }} PiApiMock
  */
 
 export function extensionFixture() {
   /** @type {Map<string, RegisteredToolMock>} */
   const tools = new Map();
-  /** @type {Map<string, ExtensionHandlerMock>} */
+  /** @type {Map<string, ExtensionHandlerMock>} The last handler registered for each event. */
   const handlers = new Map();
+  /** @type {Map<string, ExtensionHandlerMock[]>} Every handler for each event, in registration order. */
+  const handlerLists = new Map();
   /** @type {Map<string, unknown>} */
   const commands = new Map();
   /** @type {PiApiMock} */
@@ -93,10 +97,15 @@ export function extensionFixture() {
     },
     on(name, handler) {
       handlers.set(name, handler);
+      handlerLists.set(name, [...(handlerLists.get(name) ?? []), handler]);
     },
+    getAllTools: () => [...tools.values()],
+    // Like Pi, start with every tool that is not deferred.
+    getActiveTools: () =>
+      [...tools.values()].filter((tool) => tool.exposure !== "deferred").map((tool) => tool.name),
   };
   extension(pi);
-  return { tools, handlers, commands };
+  return { tools, handlers, handlerLists, commands };
 }
 
 nodeTest(
@@ -184,17 +193,28 @@ nodeTest(
   },
 );
 
-nodeTest("the always-on macos section is short and names the deferred tools", () => {
+nodeTest("each run adds the macos section; unreachable deferred tools warn once", async () => {
   const f = extensionFixture();
+  /** @type {string[]} */
+  const notices = [];
+  const ctx = {
+    ui: {
+      notify: (/** @type {string} */ message) => {
+        notices.push(message);
+      },
+    },
+  };
+  /** @param {{ systemPromptOptions: { sections: Record<string, string> } }} runEvent */
+  const startRun = async (runEvent) => {
+    for (const handler of f.handlerLists.get("before_agent_start") ?? []) {
+      await handler(runEvent, ctx);
+    }
+  };
   /** @type {{ systemPromptOptions: { sections: Record<string, string> } }} */
   const event = {
     systemPromptOptions: { sections: { existing: "Preserve other instructions." } },
   };
-  const startHandler = f.handlers.get("before_agent_start");
-  if (startHandler === undefined) {
-    assert.fail("missing before_agent_start handler");
-  }
-  startHandler(event);
+  await startRun(event);
   const sections = event.systemPromptOptions.sections;
   assert.equal(sections.existing, "Preserve other instructions.");
   const macos = sections.macos;
@@ -229,6 +249,14 @@ nodeTest("the always-on macos section is short and names the deferred tools", ()
     [...f.tools.values()].every(
       (tool) => tool.discovery !== true && tool.promptGuidelines !== true,
     ),
+  );
+  // No tool_search or codemode is registered, so nothing reaches the deferred tools.
+  await startRun({ systemPromptOptions: { sections: {} } });
+  assert.deepEqual(
+    notices.filter((message) => message.startsWith("macuse recording and history tools")),
+    [
+      "macuse recording and history tools that are not selected directly are only reachable from the tool_search or codemode tool, but neither is active; they cannot be called.",
+    ],
   );
 });
 
