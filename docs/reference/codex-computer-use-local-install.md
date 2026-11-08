@@ -40,9 +40,7 @@ await session.bindExtensions(bindings);
 session.setActiveToolsByName(selected);
 ```
 
-Use `[]` to deliberately deselect all tools. This shared public method cannot enable tools excluded by the host. Reapply an explicit replacement after resume, fork, or tree operations that restore saved declarations, or let declared selections recover normally. Reload preserves the live entry/auxiliary selection, including changes not yet declared to the model; the separate default-active recovery tool follows the [native behavior in the tool reference](usage.md#saved-session-recovery).
-
-**Known limitation:** on official Pi 1.0.0, the extension cannot distinguish an SDK `tools` allowlist from equivalent `excludeTools` through the public filtered catalog and active tool list. Supplying only `tools` before binding on resume can therefore lose newly selected tools when an older declaration exists. macuse conservatively restores permitted saved selections rather than resurrecting deselected tools for exclusion-only resumes. The post-bind call above is required for portable explicit replacement; CLI `--tools` already takes precedence.
+Use `[]` to deliberately deselect all tools. This shared public method cannot enable tools excluded by the host. SDK sessions that pass `tools` or `noTools` own their selection: Pi restores a transcript loadout only in default-tool sessions, so reapply an explicit replacement after resume, fork, or tree operations when the SDK session must keep it. macuse performs no selection restoration of its own.
 
 ## Installed paths
 

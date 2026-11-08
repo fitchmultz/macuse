@@ -48,7 +48,7 @@ The tool returns API documentation and app state. Bindings persist until reset o
 | `macuse_insert_text` | Replace selected text without changes to the rest of the field. |
 | `macuse_reset`       | Clear bindings and observations; preserve app state.            |
 
-Pi starts with these three tools. The eight Record & Replay and Computer History tools register with deferred exposure: Pi's `tool_search` loads one on request, `codemode` scripts can call them directly, and `defaultTools` entries such as `+computer_history_status` select them at startup. Loading a tool starts no recording. MCP exposes all eleven tools directly. See [tool selection](docs/reference/usage.md#tool-selection).
+Pi starts with these three tools. The eight Record & Replay and Computer History tools register with deferred exposure: Pi's `tool_search` loads one on request, `codemode` scripts can call them directly, and `defaultTools` entries such as `+computer_history_status` select them at startup. Loading a tool starts no recording. Stock Pi registers `tool_search` and `codemode` inactive; add `+tool_search` (or `+codemode`) to `defaultTools` in Pi settings so the model can reach the deferred tools. Without one of them, only `defaultTools` entries or an explicit host tool policy select those eight tools. MCP exposes all eleven tools directly. See [tool selection](docs/reference/usage.md#tool-selection).
 
 ## App changes and limits
 

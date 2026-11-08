@@ -31,7 +31,7 @@ Use the actual absolute checkout path and a Node executable available to the cli
 
 ## Use the tools
 
-The server exposes eleven tools: `macuse`, `macuse_insert_text`, `macuse_reset`, and the eight `event_stream_*` / `computer_history_*` tools listed in the [safety policy](codex-computer-use-safety-policy.md). `macuse_tools` is Pi-only and is not an MCP tool.
+The server exposes eleven tools: `macuse`, `macuse_insert_text`, `macuse_reset`, and the eight `event_stream_*` / `computer_history_*` tools listed in the [safety policy](codex-computer-use-safety-policy.md).
 
 Call `macuse` with:
 
