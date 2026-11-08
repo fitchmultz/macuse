@@ -2,7 +2,7 @@
 
 ## Supported behavior
 
-Pi 1.5.0 is the supported floor. The native persistent Computer Use runtime, guarded actions, focus observations, screenshot ownership, and recording/history privacy gates remain unchanged. The eight recording/history tools use Pi's native `deferred` exposure; native codemode and `tool_search` compose and load them without replacing their persistent runtime. macuse adds one short `macos` prompt section on every host. Its only tool selection is activating a registered `tool_search` at session start and after `/tree`, unless the branch recorded removing it.
+Pi 1.5.0 is the supported floor. The native persistent Computer Use runtime, guarded actions, focus observations, screenshot ownership, and recording/history privacy gates remain unchanged. The eight recording/history tools use Pi's native `deferred` exposure; native codemode and `tool_search` compose and load them without replacing their persistent runtime. On macOS, macuse adds one short `macos` prompt section. On other platforms its Pi extension registers no tools, commands, hooks, or prompt section, because macuse requires macOS. Its only tool selection is activating a registered `tool_search` at session start and after `/tree`, unless the branch recorded removing it.
 
 ## Checked 2026-11-08 — native deferred exposure
 

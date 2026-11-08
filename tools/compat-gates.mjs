@@ -15,7 +15,11 @@ export const compatGates = [
   { name: "lock-freshness", command: "node", args: ["tools/check-lock-freshness.mjs"] },
   { name: "policy", command: "node", args: ["tools/check-engineering-policy.mjs"] },
   { name: "extension", command: "node", args: ["tools/validate-macuse.mjs", "extension"] },
-  { name: "pi-host", command: "node", args: ["tools/validate-pi-host.mjs"] },
+  // The host probe drives the macuse Pi tool, which registers only on macOS. Elsewhere
+  // tools/tests/pi-lifecycle.test.mjs asserts the empty Pi surface through the same SDK.
+  ...(process.platform === "darwin"
+    ? [{ name: "pi-host", command: "node", args: ["tools/validate-pi-host.mjs"] }]
+    : []),
   { name: "package", command: "npm", args: ["run", "pack:check"] },
   { name: "proof-help", command: "node", args: ["tools/qualify-independent-proof.mjs", "--help"] },
 ];

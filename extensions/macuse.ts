@@ -228,6 +228,10 @@ const registerCommands = (pi: ExtensionAPI, runtime: MacuseRuntime): void => {
 };
 
 export default function macuse(pi: ExtensionAPI): void {
+  // macuse requires macOS and its ChatGPT Computer Use runtime, so other platforms get no Pi surface.
+  if (process.platform !== "darwin") {
+    return;
+  }
   let session: MacuseSession | undefined;
   const imageIndex = macuseImageIndex();
   const ownedToolNames = new Set(tools.map((tool) => tool.name));
