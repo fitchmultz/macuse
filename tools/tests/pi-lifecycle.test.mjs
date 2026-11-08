@@ -92,7 +92,7 @@ if (
 }
 const getCurrentTools = aiModule.getCurrentTools;
 const getToolStateChanges = aiModule.getToolStateChanges;
-const entries = ["macuse", "macuse_insert_text", "macuse_reset"];
+const entries = ["macuse", "macuse_reset"];
 const auxiliary = [
   "event_stream_start",
   "event_stream_status",

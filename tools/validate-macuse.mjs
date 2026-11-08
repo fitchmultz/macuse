@@ -292,7 +292,6 @@ async function mcpCheck({ live = false, timeoutMs = 90000 } = {}) {
     assert.deepEqual(listed.tools.map((t) => t.name).sort(), tools.map((t) => t.name).sort());
     /** @type {[string, Record<string, unknown>][]} */
     const refusalCases = [
-      ["macuse_insert_text", { app: "must-not-launch", text: "must-not-insert" }],
       ["event_stream_start", {}],
       ["computer_history_update_settings", {}],
     ];

@@ -40,34 +40,12 @@ export type NativeAppState = {
     title: string | null;
     description: string | null;
     value: string | null;
-    selectedTextSettable: boolean;
-    selectedTextError: number;
   } | null;
 };
-export type NativeTextRequest = {
-  pid: number;
-  /** Match fields are validated by the native service; callers may send
-   * partial or invalid data and receive a guard failure. */
-  expected: {
-    [key: string]: unknown;
-  };
-  text: string;
-};
-export type NativeTextResult =
-  | { status: "unsupported" | "guard_failed"; mutationAttempted: false; reason: string }
-  | { status: "unverified"; mutationAttempted: true; reason: string }
-  | {
-      status: "applied";
-      mutationAttempted: true;
-      verified: true;
-      insertedUTF16Length: number;
-      replacedUTF16Length: number;
-    };
 export function nativeWindowClosed(
   before: { title: string | null; url: string | null; nativeWindowIdentity: boolean },
   after: NativeAppState | null,
 ): boolean;
-export function nativeTextUnavailableReason(state: NativeAppState | null): string;
 export type NativeRequestOptions = { signal?: AbortSignal | undefined };
 export class MacOSNative {
   snapshot(options?: NativeRequestOptions): Promise<NativeSnapshot>;
@@ -78,9 +56,5 @@ export class MacOSNative {
   ): Promise<{ id: string; before: NativeSnapshot }>;
   endObservation(id: string, options?: NativeRequestOptions): Promise<NativeObservation>;
   inspectApp(pid: number, options?: NativeRequestOptions): Promise<NativeAppState>;
-  replaceSelectedText(
-    args: NativeTextRequest,
-    options?: NativeRequestOptions,
-  ): Promise<NativeTextResult>;
   stop(): Promise<void>;
 }

@@ -1018,7 +1018,7 @@ nodeTest(
     );
     assert.equal(f.actions()[0]?.verification, "exact-field-value");
     assert.equal(f.actions()[0]?.outcome, "completed");
-    // A sheet identity is not proof of an AXWindow for host selected-text insertion.
+    // A sheet identity is not proof of an AXWindow for native focus evidence.
     const sheetEvidence = f.context.meta?.macuse;
     if (sheetEvidence === undefined) {
       assert.fail("missing published evidence");
@@ -1871,11 +1871,15 @@ nodeTest(
 );
 
 nodeTest(
-  "host insertion invalidates observations once per run without resetting bindings",
+  "host invalidation drops observations once per run without resetting bindings",
   async () => {
     const f = fixture();
     await f.observe();
-    f.context.requestMeta.macuse = { ...gates, runId: "after-insertion", invalidatedApps: ["App"] };
+    f.context.requestMeta.macuse = {
+      ...gates,
+      runId: "after-uncertain-action",
+      invalidatedApps: ["App"],
+    };
     await assert.rejects(
       f.guard(request("press_key", { key: "Escape" })),
       /Observe this exact app/,

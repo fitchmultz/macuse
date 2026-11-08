@@ -157,7 +157,7 @@ try {
     expectedTools.sort(),
     "macuse tools were not all registered",
   );
-  for (const name of ["macuse", "macuse_insert_text", "macuse_reset"]) {
+  for (const name of ["macuse", "macuse_reset"]) {
     assert.ok(observed.activeTools.includes(name), `${name} was not active`);
   }
   for (const deferred of expectedTools.filter((tool) => !tool.startsWith("macuse"))) {

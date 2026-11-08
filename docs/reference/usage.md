@@ -26,13 +26,12 @@ Bindings persist in that session. The next call can use them:
 
 ## Tools
 
-| Tool                 | Purpose                                                                                                                  |
-| -------------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `macuse`             | Run code against the installed `cua` computer API in a persistent sandboxed session.                                     |
-| `macuse_insert_text` | Replace only the current selection in an already-focused field through native Accessibility, preserving unselected text. |
-| `macuse_reset`       | Clear JavaScript bindings and app observations; it does not undo GUI actions.                                            |
+| Tool           | Purpose                                                                              |
+| -------------- | ------------------------------------------------------------------------------------ |
+| `macuse`       | Run code against the installed `cua` computer API in a persistent sandboxed session. |
+| `macuse_reset` | Clear JavaScript bindings and app observations; it does not undo GUI actions.        |
 
-The three entry tools start active on Pi. Eight auxiliary tools register with Pi's native `deferred` exposure: `event_stream_start`, `event_stream_status`, `event_stream_stop`, `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, and `computer_history_update_settings`. A deferred tool stays out of the model's declared tool list until `tool_search` loads it, and `codemode` scripts can call it without loading. macuse activates a registered `tool_search` at session start and after `/tree` navigation, as Pi's own MCP extension does at session start, unless the current branch recorded removing it. Loading starts no recording. The MCP server exposes all eleven tools directly.
+The two entry tools start active on Pi. Eight auxiliary tools register with Pi's native `deferred` exposure: `event_stream_start`, `event_stream_status`, `event_stream_stop`, `computer_history_pause`, `computer_history_resume`, `computer_history_status`, `computer_history_get_settings`, and `computer_history_update_settings`. A deferred tool stays out of the model's declared tool list until `tool_search` loads it, and `codemode` scripts can call it without loading. macuse activates a registered `tool_search` at session start and after `/tree` navigation, as Pi's own MCP extension does at session start, unless the current branch recorded removing it. Loading starts no recording. The MCP server exposes all ten tools directly.
 
 Pi adds one short `macos` section to the system prompt: bootstrap, mutation authorization, unknown-outcome rules, and the names of the deferred tools with their gates. This skill and the [safety policy](codex-computer-use-safety-policy.md) hold the full operating rules.
 
@@ -49,7 +48,7 @@ Record & Replay start and Computer History resume require exact user intent, `al
 Pi's native tool selection owns activation; macuse never selects its own tools. Its one selection is activating `tool_search`, described above. The rules that apply:
 
 - `defaultTools` entries such as `+computer_history_status` select a deferred tool at startup, and `/reload` activates entries newly added to that setting.
-- First installation into an existing session activates the three entry tools on reload, resume, or fork, next to whatever that session already declares.
+- First installation into an existing session activates the two entry tools on reload, resume, or fork, next to whatever that session already declares.
 - A tool the transcript recorded as removed stays inactive on resume, fork, tree navigation, and compaction. A tool the branch never mentioned counts as newly registered.
 - Host allowlists, exclusions, and `noTools` are never widened. Explicit `--tools` and SDK `tools` selections take precedence over saved declarations; SDK callers replacing a saved selection apply it after binding extensions, see [SDK selection](codex-computer-use-local-install.md#sdk-tool-selection).
 - Owned runtime bindings and observations reset at every lifecycle boundary regardless of the selection.
@@ -79,18 +78,7 @@ Controls with the same role and name can be distinguished by their observed cont
 
 For a sole standard window with document URLs, the guard compares the full window and top-level page URLs rather than the changing title; embedded frame navigation does not change the parent document. Matching URLs do not prove native window continuity, so inspect the intended window and target before acting. Without document URLs, title changes require a fresh observation.
 
-For Unicode insertion, observe the intended app and already-focused field, then call `macuse_insert_text`:
-
-```json
-{
-  "app": "TextEdit",
-  "text": "Hello — café",
-  "allowMutating": true,
-  "safetyNote": "TextEdit only: insert this text at the observed selection in the approved draft; do not save or send."
-}
-```
-
-Optional `expectedTitle` and `expectedUrl` pin the native insertion target. When Sky omits a focused-field marker, macuse joins fresh native AX evidence only to a unique stable field ID in the same observed document. Missing or ambiguous identity blocks insertion. Insertion uses guarded `AXSelectedText` replacement and exact readback, with no keyboard input, clipboard writes, or fallback replay. Observe again afterward. `app.setValue(index, value)` replaces an entire field and verifies that field exactly; it is not selected-range insertion. Raw `app.typeText` is ASCII-only. Native `await app.paste("Hello — café")` supports Unicode and restores the previous clipboard. Pass `{format:"md"}` or `{format:"html"}` as the second argument for Markdown or HTML; the default is `text`. Paste shortcuts are also supported. Observe afterward to verify the result; native paste does not provide the exact selected-text readback of `macuse_insert_text`.
+For Unicode text at the current selection, observe the intended app and already-focused field, then use native paste: `await app.paste("Hello — café")` supports Unicode and restores the previous clipboard. Pass `{format:"md"}` or `{format:"html"}` as the second argument for Markdown or HTML; the default is `text`. Paste shortcuts are also supported. Observe afterward to verify the result. When Sky omits a focused-field marker, macuse joins fresh native AX evidence only to a unique stable field ID in the same observed document. `app.setValue(index, value)` replaces an entire field and verifies that field exactly. Raw `app.typeText` is ASCII-only.
 
 Text input and keyboard chords, including non-modifier keys held during a click, check the observed focused field. Modifier-only clicks do not require a focused field. After a successful indexed click on a settable control, or an exact `setValue` readback, the next keyboard action can use that target when a fresh snapshot confirms the same field is focused and its value and descendants remain unchanged. If a click leaves the previously observed field focused, that field remains usable. After an indexed click on a non-settable control or an AX Press, a following `pressKey` can also use an identified ancestor of that target when fresh state shows focus returned there in the same document. Otherwise, without prior focus evidence, editing, formatting, link, and submission keys fail before dispatch. Bare Escape and directional keys (Left, Right, Up, Down) can operate without a focus marker; they still check known focus for drift. Tab and modified navigation keys require focused-field evidence. Standard Command shortcuts for Save, Close, New, Open, Print, Quit, Hide, and Minimize (including Shift/Option variants) do not require that field's text to remain unchanged; document checks still apply.
 

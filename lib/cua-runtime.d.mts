@@ -109,7 +109,6 @@ export class CuaRuntime {
     },
   ): Promise<CuaResult>;
   getObservation(app: string): AppObservation | undefined;
-  invalidateObservation(app: string): void;
   reset(): Promise<CuaStatus>;
   stop(): Promise<void>;
   status(): CuaStatus;

@@ -11,7 +11,6 @@ import { fileURLToPath } from "node:url";
 /** @typedef {import("./macos-native.mjs").NativeSnapshot} NativeSnapshot */
 /** @typedef {import("./macos-native.mjs").NativeObservation} NativeObservation */
 /** @typedef {import("./macos-native.mjs").NativeAppState} NativeAppState */
-/** @typedef {import("./macos-native.mjs").NativeTextResult} NativeTextResult */
 /** @typedef {import("./macos-native.mjs").NativeRequestOptions} NativeRequestOptions */
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
 const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -59,19 +58,6 @@ const isNativeAppState = (value) =>
   hasNativeWindowsState(value) &&
   (value.focusedWindow === null || isNativeWindow(value.focusedWindow)) &&
   (value.focusedElement === null || isRecord(value.focusedElement));
-/** @param {unknown} value @returns {value is NativeTextResult} */
-const isNativeTextResult = (value) =>
-  isRecord(value) &&
-  (value.status === "applied"
-    ? value.mutationAttempted === true &&
-      value.verified === true &&
-      typeof value.insertedUTF16Length === "number" &&
-      typeof value.replacedUTF16Length === "number"
-    : (value.status === "unsupported" ||
-        value.status === "guard_failed" ||
-        value.status === "unverified") &&
-      typeof value.mutationAttempted === "boolean" &&
-      typeof value.reason === "string");
 const source = fileURLToPath(new URL("./macos-native.swift", import.meta.url));
 /** @type {Promise<string> | undefined} */
 let compiled;
@@ -163,33 +149,8 @@ export function nativeWindowClosed(before, after) {
   );
 }
 
-/**
- * @param {NativeAppState | null} state
- * @returns {string}
- */
-export function nativeTextUnavailableReason(state) {
-  if (!state) {
-    return "Native inspection returned no app state.";
-  }
-  if (!state.accessibilityTrusted) {
-    return "Native Accessibility access is unavailable (accessibilityTrusted=false). Enable Accessibility for the parent host in System Settings > Privacy & Security > Accessibility, then restart it.";
-  }
-  if (!state.focusedWindow || !state.focusedElement) {
-    return state.windowsError !== 0
-      ? `Native window inspection failed (AX error ${state.windowsError}); focused text insertion capability is unknown.`
-      : "Native inspection found no focused window/control; text insertion capability is unknown.";
-  }
-  if (state.focusedElement.selectedTextError === -25205) {
-    return "This focused control does not support verified native text insertion (AXSelectedText unsupported; AX error -25205).";
-  }
-  if (state.focusedElement.selectedTextError !== 0) {
-    return `Native selected-text inspection failed (AX error ${state.focusedElement.selectedTextError}).`;
-  }
-  return "This focused control does not support verified native text insertion (AXSelectedText is not settable).";
-}
-
 /** @typedef {{ resolve: (result: unknown) => void, reject: (error: Error & { dispatched?: unknown }) => void, failure?: Error }} PendingCall */
-/** One lazy child owned by the caller's session. No retries of potentially applied edits. */
+/** One lazy child owned by the caller's session. Every request only reads native state. */
 export class MacOSNative {
   /** @type {import("node:child_process").ChildProcessByStdio<import("node:stream").Writable, import("node:stream").Readable, import("node:stream").Readable> | undefined} */
   #child;
@@ -303,7 +264,6 @@ export class MacOSNative {
     }
     const id = ++this.#nextId;
     return new Promise((resolve, reject) => {
-      let dispatched = false;
       /**
        * @param {(Error & { dispatched?: unknown }) | null} error
        * @param {unknown} [result]
@@ -317,7 +277,7 @@ export class MacOSNative {
             isRecord(error) && typeof error.message === "string" ? error.message : String(error);
           reject(
             Object.assign(new Error(detail), {
-              dispatched: typeof error.dispatched === "boolean" ? error.dispatched : dispatched,
+              dispatched: typeof error.dispatched === "boolean" ? error.dispatched : false,
             }),
           );
         } else {
@@ -326,10 +286,8 @@ export class MacOSNative {
       };
       /** @param {string} reason */
       const cancel = (reason) => {
-        pending.failure = new Error(
-          `Native ${method} ${reason}; ${dispatched ? "its edit outcome is unknown. Do not replay." : "no edit was dispatched."}`,
-        );
-        // Reject only after the owned process has exited; cancellation cannot undo an AX write.
+        pending.failure = new Error(`Native ${method} ${reason}.`);
+        // Reject only after the owned process has exited.
         this.stop().catch(() => null);
       };
       const aborted = () => cancel("aborted");
@@ -344,7 +302,6 @@ export class MacOSNative {
       };
       this.#pending.set(id, pending);
       signal?.addEventListener("abort", aborted, { once: true });
-      dispatched = method === "replaceSelectedText";
       child.stdin.write(`${JSON.stringify({ id, method, ...args })}\n`, (error) => {
         if (error !== null && error !== undefined && this.#pending.has(id)) {
           pending.failure = error;
@@ -418,26 +375,6 @@ export class MacOSNative {
     const result = await this.#request("inspectApp", { pid }, options);
     if (!isNativeAppState(result)) {
       throw Object.assign(new Error("Native helper returned an invalid app state."), {
-        dispatched: false,
-      });
-    }
-    return result;
-  }
-  /**
-   * @param {import("./macos-native.mjs").NativeTextRequest} args
-   * @param {NativeRequestOptions} [options]
-   * @returns {Promise<NativeTextResult>}
-   */
-  async replaceSelectedText(args, options) {
-    if (typeof args.text !== "string" || !args.text.isWellFormed()) {
-      throw Object.assign(
-        new Error("Text must be a well-formed Unicode string; no edit was dispatched."),
-        { dispatched: false },
-      );
-    }
-    const result = await this.#request("replaceSelectedText", args, options);
-    if (!isNativeTextResult(result)) {
-      throw Object.assign(new Error("Native helper returned an invalid text result."), {
         dispatched: false,
       });
     }

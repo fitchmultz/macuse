@@ -76,9 +76,27 @@ nodeTest(
       elements: [],
       observedAt: Date.now(),
     };
-    const f = fixture((request) =>
-      request.name === "js" ? success(request, { observations: [observation] }) : undefined,
-    );
+    let jsCalls = 0;
+    const f = fixture((request) => {
+      if (request.name !== "js") {
+        return;
+      }
+      jsCalls++;
+      return jsCalls === 3
+        ? success(request, {
+            actions: [
+              {
+                method: "press_key",
+                app: "App",
+                dispatched: true,
+                outcome: "unknown",
+                verification: "none",
+                error: "Native completion was not reported.",
+              },
+            ],
+          })
+        : success(request, { observations: [observation] });
+    });
     await f.runtime.execute({ code: "var app = mockApp" });
     await f.runtime.execute(mutating);
     assert.equal(f.connects(), 1);
@@ -98,14 +116,16 @@ nodeTest(
       assert.fail("App observation missing");
     }
     assert.equal(observed.text, "complete snapshot");
-    f.runtime.invalidateObservation("App");
+    // An uncertain action drops the app's observation here and in the guard's next run.
+    const uncertain = await f.runtime.execute(mutating);
+    assert.equal(uncertain.details.macuse.status, "unknown");
     assert.equal(f.runtime.getObservation("App"), undefined);
     await f.runtime.execute({ code: "read again" });
-    const thirdCall = f.calls[2];
-    if (thirdCall === undefined) {
-      assert.fail("third call missing");
+    const nextCall = f.calls[3];
+    if (nextCall === undefined) {
+      assert.fail("next call missing");
     }
-    assert.deepEqual(thirdCall.request._meta?.macuse?.invalidatedApps, ["App"]);
+    assert.deepEqual(nextCall.request._meta?.macuse?.invalidatedApps, ["App"]);
     await f.runtime.reset();
     assert.equal(f.runtime.getObservation("App"), undefined);
     assert.equal(f.runtime.status().kernelResets, 1);
@@ -114,38 +134,27 @@ nodeTest(
   },
 );
 
-nodeTest(
-  "host selected-text observations follow native canonical bindings and invalidate that same app",
-  async () => {
-    const observation = {
-      app: "/Applications/Test.app",
-      title: "fixture",
-      text: "full",
-      observedAt: 1,
-      elements: [],
-    };
-    const f = fixture((request) =>
-      request.name === "js"
-        ? success(request, { observations: [observation], resolvedApps: { App: observation.app } })
-        : undefined,
-    );
-    await f.runtime.execute({ code: "observe App" });
-    const observed = f.runtime.getObservation("App");
-    if (observed === undefined) {
-      assert.fail("App observation missing");
-    }
-    assert.equal(observed.app, observation.app);
-    f.runtime.invalidateObservation("App");
-    assert.equal(f.runtime.getObservation("App"), undefined);
-    await f.runtime.execute({ code: "observe again" });
-    const secondCall = f.calls[1];
-    if (secondCall === undefined) {
-      assert.fail("second call missing");
-    }
-    assert.deepEqual(secondCall.request._meta?.macuse?.invalidatedApps, [observation.app]);
-    await f.runtime.stop();
-  },
-);
+nodeTest("host observations follow native canonical app bindings", async () => {
+  const observation = {
+    app: "/Applications/Test.app",
+    title: "fixture",
+    text: "full",
+    observedAt: 1,
+    elements: [],
+  };
+  const f = fixture((request) =>
+    request.name === "js"
+      ? success(request, { observations: [observation], resolvedApps: { App: observation.app } })
+      : undefined,
+  );
+  await f.runtime.execute({ code: "observe App" });
+  const observed = f.runtime.getObservation("App");
+  if (observed === undefined) {
+    assert.fail("App observation missing");
+  }
+  assert.equal(observed.app, observation.app);
+  await f.runtime.stop();
+});
 
 nodeTest(
   "abort uses concurrent js_reset, awaits original settlement, and invalidates queued work",

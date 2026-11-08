@@ -80,8 +80,6 @@ const state = {
     title: "editor field",
     description: null,
     value: "old",
-    selectedTextSettable: true,
-    selectedTextError: 0,
   },
 };
 function fixture() {
@@ -100,10 +98,6 @@ function fixture() {
       };
     },
     getObservation: () => runtime.observation,
-    invalidateObservation: (identifier) => {
-      events.push(`invalidate:${identifier}`);
-      runtime.observation = undefined;
-    },
     reset: async () => {
       events.push("reset");
     },
@@ -128,13 +122,6 @@ function fixture() {
         inputAttribution: false,
         windowDetails: "targetAppsOnly",
       },
-    }),
-    replaceSelectedText: async () => ({
-      status: "applied",
-      verified: true,
-      mutationAttempted: true,
-      insertedUTF16Length: 4,
-      replacedUTF16Length: 0,
     }),
     stop: async () => {
       events.push("stop-native");
@@ -201,7 +188,6 @@ nodeTest(
       ["macuse", /** @type {Record<string, unknown>} */ (JSON.parse("[]"))],
       ["macuse", { code: 1 }],
       ["macuse", { code: "42", trackFocus: "false" }],
-      ["macuse_insert_text", {}],
       ["unknown", {}],
     ];
     for (const [name, input] of invalidInputs) {
@@ -479,170 +465,6 @@ nodeTest(
     assert.equal(exists.isError, true);
     assert.match(exists.content.map((p) => (p.type === "text" ? p.text : "")).join("\n"), /EEXIST/);
     assert.deepEqual(await readFile(join(dir, "@capture.jpg")), bytes);
-  },
-);
-
-nodeTest(
-  "selected insertion owns the same queue as code and invalidates its prior observation",
-  async () => {
-    const f = fixture();
-    /** @type {PromiseWithResolvers<void>} */
-    const editing = Promise.withResolvers();
-    /** @type {PromiseWithResolvers<void>} */
-    const edited = Promise.withResolvers();
-    f.native.replaceSelectedText = async () => {
-      editing.resolve();
-      await edited.promise;
-      return {
-        status: "applied",
-        mutationAttempted: true,
-        verified: true,
-        insertedUTF16Length: 4,
-        replacedUTF16Length: 0,
-      };
-    };
-    const edit = f.session.callTool("macuse_insert_text", {
-      app: "Test",
-      text: "café",
-      allowMutating: true,
-      safetyNote: "Only replace the fixture selection; no other effects.",
-    });
-    await editing.promise;
-    const next = f.session.callTool("macuse", { code: "42", trackFocus: false });
-    await Promise.resolve();
-    assert.deepEqual(f.events, ["code", "invalidate:Test"]);
-    edited.resolve();
-    assert.equal((await edit).details.macuse.outcome, "verified");
-    await next;
-    assert.deepEqual(f.events, ["code", "invalidate:Test", "code"]);
-    await f.session.stop();
-  },
-);
-
-nodeTest(
-  "insertion refresh rejects a reused record and cannot authorize a later insertion",
-  async () => {
-    const f = fixture();
-    /** @param {string} record */
-    const snapshot = (record) =>
-      parseAppState(
-        "Test",
-        `Window: "Fixture", App: Test.
-0 standard window Fixture
-	1 cell Value: ${record}
-		2 text field ID: editor, Value: old
-The focused UI element is 2 text field`,
-      );
-    f.runtime.observation = snapshot("draft.txt");
-    f.runtime.execute = async (input) => {
-      assert.equal(isRecord(input) ? input.code : undefined, 'await cua.getApp("Test")');
-      f.events.push("refresh");
-      f.runtime.observation = snapshot("important.txt");
-      return { ...result(), details: { macuse: { observations: [f.runtime.observation] } } };
-    };
-    f.native.replaceSelectedText = async () => assert.fail("must not dispatch");
-    const input = {
-      app: "Test",
-      text: "replacement",
-      allowMutating: true,
-      safetyNote: "Replace only the draft.txt record selection.",
-    };
-    const first = await f.session.callTool("macuse_insert_text", input);
-    assert.equal(first.details.macuse.dispatched, false);
-    assert.match(textOf(first.content[0]), /Focused field changed/);
-    assert.equal(f.runtime.getObservation("Test"), undefined);
-    const second = await f.session.callTool("macuse_insert_text", input);
-    assert.match(textOf(second.content[0]), /Observe the intended app/);
-    assert.deepEqual(f.events, ["refresh", "invalidate:Test"]);
-  },
-);
-
-nodeTest(
-  "insertion refresh retains native focus joining for snapshots without a Sky focused marker",
-  async () => {
-    const f = fixture();
-    f.runtime.execute = async () => {
-      const { focused: _omitted, ...rest } = observed;
-      f.runtime.observation = { ...rest, observedAt: Date.now() };
-      const refreshed = f.runtime.observation;
-      return {
-        ...result(),
-        details: { macuse: { observations: [refreshed] } },
-      };
-    };
-    const response = await f.session.callTool("macuse_insert_text", {
-      app: "Test",
-      text: "café",
-      allowMutating: true,
-      safetyNote: "Only replace the fixture selection; no other effects.",
-    });
-    assert.equal(response.details.macuse.outcome, "verified");
-    assert.equal(f.runtime.getObservation("Test"), undefined);
-  },
-);
-
-nodeTest(
-  "an interrupted insertion refresh preserves reset evidence and cancels queued code",
-  async () => {
-    const f = fixture();
-    /** @type {PromiseWithResolvers<void>} */
-    const started = Promise.withResolvers();
-    /** @type {PromiseWithResolvers<void>} */
-    const finish = Promise.withResolvers();
-    f.runtime.execute = async () => {
-      f.events.push("refresh");
-      started.resolve();
-      await finish.promise;
-      return {
-        content: [{ type: "text", text: "Snapshot timed out." }],
-        isError: true,
-        details: { macuse: { status: "unknown", kernelReset: true, interruption: "timeout" } },
-      };
-    };
-    f.native.replaceSelectedText = async () => assert.fail("must not dispatch");
-    const insertion = f.session.callTool("macuse_insert_text", {
-      app: "Test",
-      text: "café",
-      allowMutating: true,
-      safetyNote: "Only replace the fixture selection; no other effects.",
-    });
-    await started.promise;
-    const queued = f.session.callTool("macuse", { code: "must-not-run", trackFocus: false });
-    finish.resolve();
-    const response = await insertion;
-    assert.equal(response.isError, true);
-    assert.equal(response.details.macuse.dispatched, false);
-    assert.equal(response.details.macuse.kernelReset, true);
-    assert.equal(response.details.macuse.interruption, "timeout");
-    const refresh = response.details.macuse.refresh;
-    if (!isRecord(refresh)) {
-      assert.fail("missing refresh record");
-    }
-    assert.equal(refresh.status, "unknown");
-    assert.match(textOf(response.content[0]), /Snapshot timed out/);
-    assert.match(textOf((await queued).content[0]), /Cancelled before dispatch/);
-    assert.deepEqual(f.events, ["refresh", "invalidate:Test"]);
-  },
-);
-
-nodeTest(
-  "stale or failed insertion snapshots never reuse the prior cached observation",
-  async () => {
-    for (const failed of [false, true]) {
-      const f = fixture();
-      f.runtime.execute = async () => ({ ...result(), isError: failed });
-      f.native.replaceSelectedText = async () => assert.fail("must not dispatch");
-      const response = await f.session.callTool("macuse_insert_text", {
-        app: "Test",
-        text: "café",
-        allowMutating: true,
-        safetyNote: "Only replace the fixture selection; no other effects.",
-      });
-      assert.equal(response.isError, true);
-      assert.equal(response.details.macuse.dispatched, false);
-      assert.match(textOf(response.content[0]), failed ? /Observed/ : /fresh full app snapshot/);
-      assert.equal(f.runtime.getObservation("Test"), undefined);
-    }
   },
 );
 

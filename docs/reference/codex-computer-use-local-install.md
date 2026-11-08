@@ -25,7 +25,7 @@ The package supplies `extensions/macuse.ts` and `skills/macuse/SKILL.md`. After 
 
 Pi's `/reload` replaces extension code and disposes macuse's owned session; Pi's native rules decide which tools stay selected (official Pi 1.5.0 re-activates default-active extension tools on reload, while `fitchmultz/pi` preserves live deselections). Tools newly added to `defaultTools` are enabled on reload. Quit Pi and start a new process after dependency/native-runtime updates, or on older hosts whose code reload is unqualified. Restart CLI/MCP processes after changes too; a new process picks up native helper source changes through the source-hash cache.
 
-Pi starts with three entry tools: `macuse`, `macuse_insert_text`, and `macuse_reset`. The eight recording/history tools register with native `deferred` exposure: `tool_search` loads them, `codemode` calls them, and `defaultTools` or an explicit host tool policy can select them. Pi's declared selection survives resume, fork and compaction without keeping native runtime bindings alive. No host patches or image-sizing settings edits are required for Astra.
+Pi starts with two entry tools: `macuse` and `macuse_reset`. The eight recording/history tools register with native `deferred` exposure: `tool_search` loads them, `codemode` calls them, and `defaultTools` or an explicit host tool policy can select them. Pi's declared selection survives resume, fork and compaction without keeping native runtime bindings alive. No host patches or image-sizing settings edits are required for Astra.
 
 See [tool selection](usage.md#tool-selection) for the native selection rules.
 

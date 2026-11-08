@@ -15,7 +15,7 @@ _macuse checks the app and document before each action. The assistant receives a
 
 Use macOS, Pi 1.5.0 or later, and Node 24.21.0 or later. Set up ChatGPT Computer Use with its normal authentication and macOS permissions.
 
-Native focus checks and selected-text insertion also require Accessibility access and `xcrun swiftc`. See [local requirements](docs/reference/codex-computer-use-local-install.md) for setup details.
+Native focus checks also require Accessibility access and `xcrun swiftc`. See [local requirements](docs/reference/codex-computer-use-local-install.md) for setup details.
 
 ```bash
 pi install git:github.com/fitchmultz/macuse
@@ -42,13 +42,12 @@ The tool returns API documentation and app state. Bindings persist until reset o
 
 ## Tools
 
-| Tool                 | Purpose                                                         |
-| -------------------- | --------------------------------------------------------------- |
-| `macuse`             | Inspect apps and run JavaScript in a persistent session.        |
-| `macuse_insert_text` | Replace selected text without changes to the rest of the field. |
-| `macuse_reset`       | Clear bindings and observations; preserve app state.            |
+| Tool           | Purpose                                                  |
+| -------------- | -------------------------------------------------------- |
+| `macuse`       | Inspect apps and run JavaScript in a persistent session. |
+| `macuse_reset` | Clear bindings and observations; preserve app state.     |
 
-Pi starts with these three tools. The eight Record & Replay and Computer History tools register with deferred exposure: Pi's `tool_search` loads one on request, `codemode` scripts can call them directly, and `defaultTools` entries such as `+computer_history_status` select them at startup. Loading a tool starts no recording. Pi registers `tool_search` inactive; like Pi's own MCP extension, macuse activates a registered `tool_search` at session start (and after `/tree`) so the model can load the deferred tools. A host allowlist or exclusion that removes `tool_search`, or a branch that recorded removing it, keeps it off. MCP exposes all eleven tools directly. See [tool selection](docs/reference/usage.md#tool-selection).
+Pi starts with these two tools. The eight Record & Replay and Computer History tools register with deferred exposure: Pi's `tool_search` loads one on request, `codemode` scripts can call them directly, and `defaultTools` entries such as `+computer_history_status` select them at startup. Loading a tool starts no recording. Pi registers `tool_search` inactive; like Pi's own MCP extension, macuse activates a registered `tool_search` at session start (and after `/tree`) so the model can load the deferred tools. A host allowlist or exclusion that removes `tool_search`, or a branch that recorded removing it, keeps it off. MCP exposes all ten tools directly. See [tool selection](docs/reference/usage.md#tool-selection).
 
 ## App changes and limits
 
