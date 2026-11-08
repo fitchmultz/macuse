@@ -73,7 +73,6 @@ This live run used the pre-PR #72 development manifest/lockfile cohort. It quali
 Still unattempted by this gate:
 
 - general-app and Activity Monitor compatibility;
-- selected-range insertion;
 - visual correctness of screenshot content and pointer-coordinate actions;
 - keyboard, pointer, focus, and broader app-transition coverage;
 - independent Record & Replay and Computer History;

@@ -20,7 +20,7 @@ node tools/validate-macuse.mjs mcp
 | `read-only` | Live app inventory and state observations, without requested input actions. Reads can expose private content or open an app/window. |
 | `mutating`  | Controlled Activity Monitor actions, with the actual original selected tab captured and restored in `finally`.                      |
 | `focus`     | Controlled mutation plus native focus observations; coverage and attribution limits remain explicit.                                |
-| `mcp`       | Standard MCP transport, eleven-tool inventory, routing, and guard checks; inspect current help for its live probes.                 |
+| `mcp`       | Standard MCP transport, ten-tool inventory, routing, and guard checks; inspect current help for its live probes.                    |
 
 Use `--help` for current options and `--json` for machine-readable results. Offline compatibility checks do not certify macOS permissions, native runtime behavior, or every host. Latest stable official Pi and the maintained `fitchmultz/pi` both need qualification through their public APIs; the development baseline and supported floor are 1.5.0, and one host's result is not the other's evidence.
 

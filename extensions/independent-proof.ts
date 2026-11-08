@@ -58,7 +58,7 @@ export default function independentProof(pi: ExtensionAPI): void {
       promptGuidelines:
         tool.name === "macuse_independent_proof"
           ? [
-              'Use macuse_independent_proof only for explicitly requested disposable-fixture qualification. JavaScriptCore scripts and Promise expressions are supported, not top-level await or the vendor cua API. Guest code calls macuse.call("observe"|"screenshot"|"act", params). The operator pins the target outside guest code; no recording, selected-range, focus, or general-app parity is supported. Mutation flags are not user permission. Preserve native unknown/unverified evidence; observe after actions and never replay dispatched calls.',
+              'Use macuse_independent_proof only for explicitly requested disposable-fixture qualification. JavaScriptCore scripts and Promise expressions are supported, not top-level await or the vendor cua API. Guest code calls macuse.call("observe"|"screenshot"|"act", params). The operator pins the target outside guest code; no recording, focus, or general-app parity is supported. Mutation flags are not user permission. Preserve native unknown/unverified evidence; observe after actions and never replay dispatched calls.',
             ]
           : [
               "macuse_independent_proof_reset clears bindings and observations but cannot undo GUI effects or erase prior unknown evidence.",

@@ -41,8 +41,8 @@ var image = macuse.call("screenshot", {
 ```
 
 `act` takes `{app,observationId,elementToken,action,value?}`. Only `press` and
-intended whole-field `setValue` are implemented; this is not selected-range
-insertion or general keyboard/pointer parity. Mutation authorization and the
+intended whole-field `setValue` are implemented; this is not general
+keyboard/pointer parity. Mutation authorization and the
 safety note come only from the trusted run envelope. Extra capability fields,
 including guest authorization/expected-identity flags, are refused.
 All native mutations invalidate the observation; observe again before acting.
@@ -100,5 +100,5 @@ node --test tools/tests/independent-proof-session.test.mjs
 
 Actual fixture/transport qualification is separate. Hard memory isolation,
 deprecated Seatbelt availability, signed deployment/TCC support, broad app
-coverage, selected-text/keyboard/pointer parity, and recording/history are
+coverage, keyboard/pointer parity, and recording/history are
 still production gates.

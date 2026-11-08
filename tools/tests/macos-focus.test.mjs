@@ -54,7 +54,7 @@ nodeTest(
 );
 
 nodeTest(
-  "invalid app identity never reports zero windows or attempts a text edit",
+  "invalid app identity never reports zero windows",
   { skip: process.platform !== "darwin" },
   async () => {
     const native = new MacOSNative();
@@ -64,25 +64,6 @@ nodeTest(
       const app = await native.inspectApp(process.pid);
       assert.equal(app.windowsCount, null);
       assert.notEqual(app.windowsError, 0);
-      const result = await native.replaceSelectedText({
-        pid: process.pid,
-        expected: {},
-        text: "café 日本語 🧪\n",
-      });
-      assert.equal(result.status, "guard_failed");
-      assert.equal(result.mutationAttempted, false);
-      const unsupported = await native.replaceSelectedText({
-        pid: process.pid,
-        expected: {
-          windowToken: "absent",
-          windowTitle: null,
-          document: null,
-          elementToken: "absent",
-        },
-        text: "untouched",
-      });
-      assert.equal(unsupported.status, "unsupported");
-      assert.equal(unsupported.mutationAttempted, false);
     } finally {
       await native.stop();
     }

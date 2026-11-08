@@ -64,14 +64,6 @@
     "operation": "[\"macuse\", /** @type {Record<string, unknown>} */ (JSON.parse(\"[]\"))],"
   },
   {
-    "path": "tools/tests/native-input.test.mjs",
-    "rule": "no-unsafe-type-assertion",
-    "id": "QX-006",
-    "owner": "\"missing observation, permission flags and malformed Unicode fail before native access\"",
-    "conditions": [],
-    "operation": "/** @type {InsertTextInput} */ (/** @type {unknown} */ ({ ...input, expectedTitle: 123 })),"
-  },
-  {
     "path": "tools/tests/pi-lifecycle.test.mjs",
     "rule": "no-unsafe-type-assertion",
     "id": "QX-007",

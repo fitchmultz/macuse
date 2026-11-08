@@ -1,6 +1,6 @@
 ---
 name: macuse
-description: "Inspect, QA, or operate native macOS app UI with persistent Computer Use JavaScript, including selected-text insertion and Record & Replay or Computer History operations. Use browser tools for ordinary web pages."
+description: "Inspect, QA, or operate native macOS app UI with persistent Computer Use JavaScript, including Record & Replay or Computer History operations. Use browser tools for ordinary web pages."
 compatibility: macOS with the macuse Pi package or MCP server, installed ChatGPT Computer Use, existing authentication/permissions, and installed xcrun swiftc plus Accessibility access for native AX features.
 metadata:
   version: "0.6.1"
@@ -13,7 +13,7 @@ Inspect and operate native macOS apps with short adaptive JavaScript programs. P
 
 ## Bootstrap and routing
 
-Pi starts with three entry tools: `macuse`, `macuse_insert_text`, and `macuse_reset`. The eight recording/history tools are deferred: load one with `tool_search` or call it from `codemode`. Pi's native tool selection, `defaultTools`, allowlists, and exclusions remain binding; if an entry tool is deselected in a saved session, use the host's tool selector or a new session. The MCP server exposes all eleven tools directly.
+Pi starts with two entry tools: `macuse` and `macuse_reset`. The eight recording/history tools are deferred: load one with `tool_search` or call it from `codemode`. Pi's native tool selection, `defaultTools`, allowlists, and exclusions remain binding; if an entry tool is deselected in a saved session, use the host's tool selector or a new session. The MCP server exposes all ten tools directly.
 
 Start by calling `macuse` with one of:
 
@@ -53,22 +53,9 @@ Example call after binding and inspecting Activity Monitor, for an approved dism
 
 The guard refreshes full state before every action, validates inventory/arguments and document/target identity, and rebinds native indexes internally. Shared role/name controls can be resolved using uniquely matching context and descendants; snapshot evidence does not prove native object continuity. A changing title can retain the observation when the sole standard window's document and top-level page URLs match. Matching URLs do not prove native window continuity; inspect the intended window and target. Failed refresh or stale or indistinguishable identity blocks dispatch. Text input and keyboard chords check the focused field. An indexed click on a settable control or verified `setValue` can carry that target to the next keyboard action when fresh state confirms it is focused with unchanged value and descendants. After an indexed click on a non-settable control or an AX Press, `pressKey` can use an identified ancestor of the target when focus returns there in the same document. Standard Command shortcuts for Save, Close, New, Open, Print, Quit, Hide, and Minimize (including Shift/Option variants) tolerate changed field text while retaining document checks; formatting, link, and submission chords retain focused-field checks. `setValue` verifies the exact resolved field. It replaces the whole field; never use it as an unrequested substitute for insertion.
 
-## Unicode and selected text
+## Unicode text
 
-Use `macuse_insert_text` for text at the current caret/selection:
-
-```json
-{
-  "app": "TextEdit",
-  "text": "Hello — café",
-  "allowMutating": true,
-  "safetyNote": "TextEdit only: insert at the observed selection in the approved draft; do not save or send."
-}
-```
-
-First obtain a fresh same-app observation identifying the already-focused field. Optional `expectedTitle` and `expectedUrl` pin the intended window/document. The native helper checks identity/value/selection, replaces only `AXSelectedText`, preserves unselected text, and verifies exact readback. It posts no keys, writes no clipboard, and has no fallback/replay path. Unsupported controls/text fail instead of silently switching input methods. Observe again after insertion.
-
-Raw `app.typeText` is ASCII-only. For native paste, use `await app.paste(text)` or `await app.paste(text, {format:"md"})`; formats are `text` (default), `md`, and `html`. It supports Unicode and restores the previous clipboard. Paste shortcuts are supported. Observe the result; paste reports native completion rather than exact selected-text readback. Non-ASCII can also use native insertion or an explicitly intended full-field `setValue`. Do not transliterate, drop characters, or replace the entire draft merely to avoid an unsupported insertion.
+Raw `app.typeText` is ASCII-only. For Unicode at the current caret/selection, use native paste: `await app.paste(text)` or `await app.paste(text, {format:"md"})`; formats are `text` (default), `md`, and `html`. Paste temporarily uses the clipboard and restores its previous contents. Paste shortcuts are supported. Observe the result; paste reports native completion, not exact readback. An explicitly intended full-field `setValue` also accepts Unicode and verifies the field exactly. Do not transliterate, drop characters, or replace the entire draft to avoid paste. If the user rules out the clipboard, say that macuse has no clipboard-free selected-range insertion and ask how to proceed.
 
 ## Recording and history
 

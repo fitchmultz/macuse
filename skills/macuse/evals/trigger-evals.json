@@ -20,9 +20,9 @@
     "reason": "Native app state inspection through the installed cua API."
   },
   {
-    "query": "Insert Unicode at the current TextEdit selection with macuse_insert_text.",
+    "query": "Paste Unicode text at the current TextEdit selection with macuse.",
     "should_trigger": true,
-    "reason": "Guarded selected-range native text insertion."
+    "reason": "Native app text input at the selection."
   },
   {
     "query": "Use macuse to check Computer History settings without changing them.",

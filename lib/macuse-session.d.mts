@@ -5,7 +5,6 @@ import type {
   NativeObservation,
   NativeRequestOptions,
 } from "../tools/macos-native.mjs";
-import type { NativeTextBackend } from "./native-input.mjs";
 
 export type Content =
   | { type: "text"; text: string }
@@ -57,13 +56,12 @@ export type SessionRuntime = {
     },
   ) => Promise<SessionResult>;
   getObservation: (app: string) => AppObservation | undefined;
-  invalidateObservation: (app: string) => void;
   reset: () => Promise<unknown>;
   stop: () => Promise<void>;
   status: () => unknown;
 };
 /** Structural native seam MacuseSession drives; production uses MacOSNative. */
-export type SessionNative = NativeTextBackend & {
+export type SessionNative = {
   resolveApp: (identifier: string, options?: NativeRequestOptions) => Promise<NativeApplication>;
   inspectApp: (pid: number, options?: NativeRequestOptions) => Promise<NativeAppState>;
   beginObservation: (
@@ -71,6 +69,7 @@ export type SessionNative = NativeTextBackend & {
     options?: NativeRequestOptions,
   ) => Promise<{ id: string; before?: NativeObservation["before"] }>;
   endObservation: (id: string, options?: NativeRequestOptions) => Promise<NativeObservation>;
+  stop: () => Promise<void>;
 };
 /** Structural auxiliary seam MacuseSession drives; production uses AuxiliaryRuntime. */
 export type SessionAuxiliary = {

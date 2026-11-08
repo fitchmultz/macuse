@@ -132,13 +132,7 @@ nodeTest(
         "saveImagePath",
         "trackFocus",
       ]);
-      for (const name of ["macuse", "macuse_insert_text"]) {
-        const tool = f.tools.get(name);
-        if (tool === undefined) {
-          assert.fail(`missing tool: ${name}`);
-        }
-        assert.equal(tool.parameters.properties?.safetyNote?.minLength, 1);
-      }
+      assert.equal(macuseTool.parameters.properties?.safetyNote?.minLength, 1);
     };
     const verifyToolResultFlag = () => {
       const result = {
@@ -215,7 +209,7 @@ nodeTest("the always-on macos section is short and names the deferred tools", ()
     "allowMutating:true",
     'performSecondaryAction(index, "Press")',
     "returned screenshot pixels",
-    "macuse_insert_text",
+    "app.paste(text",
     "raw typeText is ASCII-only",
     "app.setValue replaces a whole field",
     "never replay dispatched or unknown-outcome mutations",

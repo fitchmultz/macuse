@@ -66,77 +66,16 @@ func inspect(_ pid: pid_t) -> [String: Any] {
         "windowsCount": windows?.count ?? null as Any, "windowsError": error.rawValue,
         "windows": windows?.map { windowInfo($0) } ?? null as Any, "focusedWindow": null, "focusedElement": null]
     if let (window, element) = focused(pid) {
-        var settable = DarwinBoolean(false)
-        let error = AXUIElementIsAttributeSettable(element, kAXSelectedTextAttribute as CFString, &settable)
         result["focusedWindow"] = windowInfo(window)
         result["focusedElement"] = ["token": token(element), "role": readAX(element, kAXRoleAttribute) as? String ?? null as Any,
             "identifier": readAX(element, kAXIdentifierAttribute) as? String ?? null as Any,
             "roleDescription": readAX(element, kAXRoleDescriptionAttribute) as? String ?? null as Any,
             "title": readAX(element, kAXTitleAttribute) as? String ?? null as Any,
             "description": readAX(element, kAXDescriptionAttribute) as? String ?? null as Any,
-            "value": readAX(element, kAXValueAttribute) as? String ?? null as Any,
-            "selectedTextSettable": error == .success && settable.boolValue, "selectedTextError": error.rawValue]
+            "value": readAX(element, kAXValueAttribute) as? String ?? null as Any]
     } else if let window = elementAX(app, kAXFocusedWindowAttribute) { result["focusedWindow"] = windowInfo(window) }
     return result
 }
-func textResult(_ status: String, _ reason: String, _ attempted: Bool = false) -> [String: Any] {
-    return ["status": status, "reason": reason, "mutationAttempted": attempted]
-}
-func replaceText(_ request: [String: Any], _ pid: pid_t) -> [String: Any] {
-    guard let text = request["text"] as? String, let expected = request["expected"] as? [String: Any],
-          let expectedWindow = expected["windowToken"] as? String, let expectedElement = expected["elementToken"] as? String,
-          expected.keys.contains("windowTitle"), expected.keys.contains("document") else {
-        return textResult("guard_failed", "Exact window, document and element identity are required")
-    }
-    guard AXIsProcessTrusted(), let (window, element) = focused(pid) else {
-        return textResult("unsupported", "No accessible already-focused text element in the target window")
-    }
-    let info = windowInfo(window)
-    guard token(window) == expectedWindow, token(element) == expectedElement,
-          NSDictionary(dictionary: ["title": info["title"]!, "document": info["document"]!]) ==
-          NSDictionary(dictionary: ["title": expected["windowTitle"]!, "document": expected["document"]!]) else {
-        return textResult("guard_failed", "Focused window, document or element changed")
-    }
-    var settable = DarwinBoolean(false)
-    guard AXUIElementIsAttributeSettable(element, kAXSelectedTextAttribute as CFString, &settable) == .success,
-          settable.boolValue else { return textResult("unsupported", "AXSelectedText is not settable") }
-    guard let original = readAX(element, kAXValueAttribute) as? String,
-          let selected = readAX(element, kAXSelectedTextAttribute) as? String,
-          let rawRange = readAX(element, kAXSelectedTextRangeAttribute), CFGetTypeID(rawRange) == AXValueGetTypeID() else {
-        return textResult("unsupported", "Cannot verify exact selection replacement")
-    }
-    if let expectedValue = expected["value"] as? String, !original.utf16.elementsEqual(expectedValue.utf16) {
-        return textResult("guard_failed", "Focused field value changed before insertion")
-    }
-    if let ranges = readAX(element, kAXSelectedTextRangesAttribute) as? [Any], ranges.count != 1 {
-        return textResult("unsupported", "Multiple selections are not supported")
-    }
-    var range = CFRange()
-    guard AXValueGetValue(rawRange as! AXValue, .cfRange, &range), range.location >= 0, range.length >= 0,
-          range.location <= (original as NSString).length, range.length <= (original as NSString).length - range.location else {
-        return textResult("unsupported", "Invalid selection range")
-    }
-    let nsRange = NSRange(location: range.location, length: range.length)
-    guard (original as NSString).substring(with: nsRange).utf16.elementsEqual(selected.utf16) else {
-        return textResult("unsupported", "Selection and value disagree")
-    }
-    let wanted = (original as NSString).replacingCharacters(in: nsRange, with: text)
-    // A second identity/value check narrows (but cannot eliminate) concurrent human edits; AX has no transaction API.
-    guard let (currentWindow, currentElement) = focused(pid), CFEqual(currentWindow, window), CFEqual(currentElement, element),
-          NSDictionary(dictionary: windowInfo(currentWindow)) == NSDictionary(dictionary: info),
-          let unchanged = readAX(element, kAXValueAttribute) as? String, unchanged.utf16.elementsEqual(original.utf16),
-          let currentRange = readAX(element, kAXSelectedTextRangeAttribute), CFEqual(currentRange, rawRange) else {
-        return textResult("guard_failed", "Target or selection changed before insertion")
-    }
-    let error = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFString)
-    guard error == .success else { return textResult("unverified", "AXSelectedText write returned \(error.rawValue); do not replay", true) }
-    guard let actual = readAX(element, kAXValueAttribute) as? String, actual.utf16.elementsEqual(wanted.utf16) else {
-        return textResult("unverified", "Exact text readback did not match; do not replay", true)
-    }
-    return ["status": "applied", "mutationAttempted": true, "verified": true,
-            "insertedUTF16Length": (text as NSString).length, "replacedUTF16Length": range.length]
-}
-
 struct Observation {
     let before: [String: Any]
     let targets: Set<pid_t>
@@ -209,9 +148,9 @@ func handle(_ request: [String: Any]) -> [String: Any] {
             observers.removeAll(); windowStatus.removeAll()
         }
         return result
-    case "inspectApp", "replaceSelectedText":
+    case "inspectApp":
         guard let pid = request["pid"] as? Int32, pid > 0 else { return ["error": "A positive target PID is required"] }
-        return request["method"] as? String == "inspectApp" ? inspect(pid) : replaceText(request, pid)
+        return inspect(pid)
     default: return ["error": "Unknown method"]
     }
 }

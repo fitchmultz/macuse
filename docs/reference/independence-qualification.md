@@ -30,7 +30,7 @@ Without `--live`, the runner does not access the desktop. The live command requi
 
 Fixture observation supplies the launcher's exact PID and canonical app path to the native service. Wrong-PID and wrong-path negative controls must be refused before AX content is read, not merely diagnosed after returning a tree.
 
-A separate real text control deliberately changes a sibling radio selection while handling its AX value write. That edit must remain attempted/unverified/unknown even when the field contains the requested text. The runner verifies the actual changed field and radio state, then restores both fields and the original radio selection from fresh known observations. This is not selected-range insertion proof or automatic replay of the uncertain write. Both helpers and the test app are disposed in `finally`.
+A separate real text control deliberately changes a sibling radio selection while handling its AX value write. That edit must remain attempted/unverified/unknown even when the field contains the requested text. The runner verifies the actual changed field and radio state, then restores both fields and the original radio selection from fresh known observations. This is not automatic replay of the uncertain write. Both helpers and the test app are disposed in `finally`.
 
 This is a native integration fixture, not a mock AX tree or screenshot. It demonstrates only the fixture slice, not compatibility with Activity Monitor or other real-world apps. When invoking the exported fixture qualifier without a second helper, the text/context checks remain explicitly unattempted.
 

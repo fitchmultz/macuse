@@ -94,5 +94,4 @@ Use a new worker process for each official/fork qualification. Close stdin to
 stop its session and dispose the scratch consumer. Native UI qualification still
 requires authorized fixture setup and cleanup; scripted provider calls alone do
 not demonstrate native behavior. Passing these transport slices does not qualify
-focus, selected-range insertion, arbitrary apps, system-engine pinning, or
-recording/history independence.
+focus, arbitrary apps, system-engine pinning, or recording/history independence.

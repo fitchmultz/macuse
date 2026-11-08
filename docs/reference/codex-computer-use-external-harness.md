@@ -2,7 +2,7 @@
 
 ## Current architecture: v0.5.0
 
-macuse uses the installed vendor `@oai/cua-repl` for persistent JavaScript app control. Pi, CLI, and MCP route through `MacuseSession` and share guards, native selected-text insertion, focus observations, and action evidence.
+macuse uses the installed vendor `@oai/cua-repl` for persistent JavaScript app control. Pi, CLI, and MCP route through `MacuseSession` and share guards, focus observations, and action evidence.
 
 ```text
 Pi extension / CLI / MCP
@@ -12,7 +12,7 @@ Pi extension / CLI / MCP
           +-- installed @oai/cua-repl (computer-only, normal sandbox)
           |       +-- trusted macuse guard service --> native Sky service
           |
-          +-- native AX helper (focus observations and selected-text insertion)
+          +-- native AX helper (focus observations)
           |
           +-- lazy auxiliary app-server --> event-stream / computer-history
 ```
@@ -25,14 +25,14 @@ The auxiliary app-server starts only for Record & Replay or Computer History. It
 
 | Surface      | Tools                                                                              |
 | ------------ | ---------------------------------------------------------------------------------- |
-| Pi defaults  | `macuse`, `macuse_insert_text`, `macuse_reset`                                     |
+| Pi defaults  | `macuse`, `macuse_reset`                                                           |
 | Pi deferred  | Three `event_stream_*` tools and five `computer_history_*` tools via `tool_search` |
-| Standard MCP | Eleven tools: code, insert, reset, and eight auxiliary tools                       |
-| CLI          | The same eleven tools through `call` or persistent JSONL `session`                 |
+| Standard MCP | Ten tools: code, reset, and eight auxiliary tools                                  |
+| CLI          | The same ten tools through `call` or persistent JSONL `session`                    |
 
 Bootstrap with `await cua.getState()` or `var app = await cua.getApp("Exact App")`. Documentation and initial state are emitted automatically. Bindings persist until reset or a session boundary. `app.getAXState()`, `app.getScreenshot()`, and `app.getAXStateAndScreenshot()` also auto-emit. Use normal JavaScript conditions, bounded loops, assertions, and `try/finally` instead of a separate workflow language; await every action and keep programs short enough to adapt to observed UI state.
 
-The guard requests full snapshots, validates current document/target identity before every action, and internally rebinds observed native indexes. It does not invent selectors or interpret diff text as a complete state. Full-field `setValue` requires exact target readback. Parent-native selected-text insertion preserves unselected text with no keyboard/clipboard fallback. See the [safety policy](codex-computer-use-safety-policy.md).
+The guard requests full snapshots, validates current document/target identity before every action, and internally rebinds observed native indexes. It does not invent selectors or interpret diff text as a complete state. Full-field `setValue` requires exact target readback. See the [safety policy](codex-computer-use-safety-policy.md).
 
 Timeout/abort interrupts JavaScript through `js_reset` and awaits settlement. A GUI effect may already have occurred; reset is never an undo or replay permission. Partial action evidence survives tool errors. Stopping/resetting drains owned work without killing global Computer Use helpers.
 
@@ -54,7 +54,6 @@ Screenshot coordinates refer to the native returned image, with no assumed Retin
 | Vendor launch/execution/reset  | `lib/cua-runtime.mjs`                                                 |
 | Trusted Sky dispatch guard     | `lib/cua-guard-service.mjs`                                           |
 | Full AX state parsing/identity | `lib/app-state.mjs`                                                   |
-| Selected-text insertion        | `lib/native-input.mjs`                                                |
 | Native focus/AX helper         | `tools/macos-native.mjs`, `tools/macos-native.swift`                  |
 | Recording/history transport    | `lib/auxiliary-runtime.mjs`                                           |
 | Astra screenshot hook          | `lib/pi-images.mjs`                                                   |
@@ -65,7 +64,7 @@ Screenshot coordinates refer to the native returned image, with no assumed Retin
 ## Breaking migration from 0.4.x
 
 - Replace the old individual GUI tools and `macuse_sequence` JSON workflow with `macuse` JavaScript against the emitted native API. Old selector aliases, wait/assertion pseudo-tools, and sequence arguments are removed.
-- Use `macuse_insert_text` for selected-range Unicode insertion. Raw `typeText` is ASCII-only; native `app.paste(text)` also supports Unicode, with optional `{format:"md"}` or `{format:"html"}` as the second argument. Do not substitute whole-field `setValue` for an insertion request.
+- Raw `typeText` is ASCII-only; native `app.paste(text)` inserts Unicode at the selection, with optional `{format:"md"}` or `{format:"html"}` as the second argument. Do not substitute whole-field `setValue` for an insertion request.
 - Replace `macuse_restart` with `macuse_reset` when bindings/observations need clearing. Reset does not restart global services.
 - Replace the old extension/module tree with `extensions/macuse.ts` and `lib/`. Replace the old GUI CLI/MCP bridges with `tools/macuse.mjs` and `tools/macuse-mcp.mjs`. There are no backwards-compatible aliases.
 - Regenerate MCP configuration: server `macuse`, environment variable `MACUSE_CWD`. See [MCP setup](cursor-mcp-setup.md).
