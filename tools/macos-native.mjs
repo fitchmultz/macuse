@@ -149,7 +149,7 @@ export function nativeWindowClosed(before, after) {
   );
 }
 
-/** @typedef {{ resolve: (result: unknown) => void, reject: (error: Error & { dispatched?: unknown }) => void, failure?: Error }} PendingCall */
+/** @typedef {{ resolve: (result: unknown) => void, reject: (error: Error) => void, failure?: Error }} PendingCall */
 /** One lazy child owned by the caller's session. Every request only reads native state. */
 export class MacOSNative {
   /** @type {import("node:child_process").ChildProcessByStdio<import("node:stream").Writable, import("node:stream").Readable, import("node:stream").Readable> | undefined} */
@@ -206,7 +206,7 @@ export class MacOSNative {
         child.once("close", (code, signal) => {
           fail(
             new Error(
-              `Native helper stopped (${signal ?? code ?? "unknown"})${stderr !== "" ? `: ${stderr}` : ""}. An outstanding edit may already have applied; do not replay.`,
+              `Native helper stopped (${signal ?? code ?? "unknown"})${stderr !== "" ? `: ${stderr}` : ""}.`,
             ),
             true,
           );
@@ -230,7 +230,7 @@ export class MacOSNative {
           }
           const result = message.result;
           if (isRecord(result) && typeof result.error === "string" && result.error !== "") {
-            pending.reject(Object.assign(new Error(result.error), { dispatched: false }));
+            pending.reject(new Error(result.error));
           } else {
             pending.resolve(result);
           }
@@ -258,14 +258,12 @@ export class MacOSNative {
       child = await this.#start();
       signal?.throwIfAborted();
     } catch (error) {
-      const detail =
-        isRecord(error) && typeof error.message === "string" ? error.message : String(error);
-      throw Object.assign(new Error(detail), { dispatched: false });
+      throw error instanceof Error ? error : new Error(String(error), { cause: error });
     }
     const id = ++this.#nextId;
     return new Promise((resolve, reject) => {
       /**
-       * @param {(Error & { dispatched?: unknown }) | null} error
+       * @param {Error | null} error
        * @param {unknown} [result]
        */
       const finish = (error, result) => {
@@ -273,13 +271,7 @@ export class MacOSNative {
         clearTimeout(timer);
         signal?.removeEventListener("abort", aborted);
         if (error !== null) {
-          const detail =
-            isRecord(error) && typeof error.message === "string" ? error.message : String(error);
-          reject(
-            Object.assign(new Error(detail), {
-              dispatched: typeof error.dispatched === "boolean" ? error.dispatched : false,
-            }),
-          );
+          reject(error);
         } else {
           resolve(result);
         }
@@ -318,9 +310,7 @@ export class MacOSNative {
   async snapshot(options) {
     const result = await this.#request("snapshot", {}, options);
     if (!isNativeSnapshot(result)) {
-      throw Object.assign(new Error("Native helper returned an invalid snapshot."), {
-        dispatched: false,
-      });
+      throw new Error("Native helper returned an invalid snapshot.");
     }
     return result;
   }
@@ -332,9 +322,7 @@ export class MacOSNative {
   async resolveApp(identifier, options) {
     const result = await this.#request("resolveApp", { identifier }, options);
     if (!isNativeApplication(result)) {
-      throw Object.assign(new Error("Native helper returned an invalid app identity."), {
-        dispatched: false,
-      });
+      throw new Error("Native helper returned an invalid app identity.");
     }
     return result;
   }
@@ -346,9 +334,7 @@ export class MacOSNative {
   async beginObservation(pids = [], options) {
     const result = await this.#request("beginObservation", { pids }, options);
     if (!isObservationHandle(result)) {
-      throw Object.assign(new Error("Native helper returned an invalid observation handle."), {
-        dispatched: false,
-      });
+      throw new Error("Native helper returned an invalid observation handle.");
     }
     return result;
   }
@@ -360,9 +346,7 @@ export class MacOSNative {
   async endObservation(id, options) {
     const result = await this.#request("endObservation", { observationId: id }, options);
     if (!isNativeObservation(result)) {
-      throw Object.assign(new Error("Native helper returned an invalid observation."), {
-        dispatched: false,
-      });
+      throw new Error("Native helper returned an invalid observation.");
     }
     return result;
   }
@@ -374,9 +358,7 @@ export class MacOSNative {
   async inspectApp(pid, options) {
     const result = await this.#request("inspectApp", { pid }, options);
     if (!isNativeAppState(result)) {
-      throw Object.assign(new Error("Native helper returned an invalid app state."), {
-        dispatched: false,
-      });
+      throw new Error("Native helper returned an invalid app state.");
     }
     return result;
   }
