@@ -112,7 +112,7 @@ const deferredToolNames: ReadonlySet<string> = new Set(
   tools.filter((spec) => !primaryTools.includes(spec)).map((spec) => spec.name),
 );
 
-/** Whether the agent can call the registered deferred tools: each is active, or an active tool_search or codemode reaches them. */
+/** Whether the agent can call every registered deferred tool: each is active, or an active tool_search or codemode reaches them. */
 const deferredToolsReachable = (pi: ExtensionAPI): boolean => {
   const registered = pi.getAllTools();
   const active = pi.getActiveTools();
@@ -260,7 +260,7 @@ export default function macuse(pi: ExtensionAPI): void {
     }
     warnedUnreachable = true;
     ctx.ui.notify(
-      "macuse recording and history tools are only reachable from the tool_search or codemode tool, but neither is active; they cannot be called.",
+      "macuse recording and history tools that are not selected directly are only reachable from the tool_search or codemode tool, but neither is active; they cannot be called.",
       "warning",
     );
   };

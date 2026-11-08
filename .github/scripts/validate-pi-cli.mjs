@@ -58,7 +58,7 @@ function isUnreachableWarning(event) {
     event.type === "extension_ui_request" &&
     event.method === "notify" &&
     typeof event.message === "string" &&
-    event.message.startsWith("macuse recording and history tools are only reachable")
+    event.message.startsWith("macuse recording and history tools that are not selected directly")
   );
 }
 
