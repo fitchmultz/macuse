@@ -82,6 +82,8 @@ function checkFormatter() {
   );
 }
 
+/** @type {[string, string, string[]]} */
+const piHostGate = ["pi-host", "node", ["tools/validate-pi-host.mjs"]];
 /** @type {Array<[string, string, string[]]>} */
 const requiredGates = [
   ["lint", "npm", ["run", "lint"]],
@@ -97,7 +99,8 @@ const requiredGates = [
   ["lock-freshness", "node", ["tools/check-lock-freshness.mjs"]],
   ["policy", "node", ["tools/check-engineering-policy.mjs"]],
   ["extension", "node", ["tools/validate-macuse.mjs", "extension"]],
-  ["pi-host", "node", ["tools/validate-pi-host.mjs"]],
+  // Mirrors compat-gates.mjs: the host probe drives the macuse Pi tool, which registers only on macOS.
+  ...(process.platform === "darwin" ? [piHostGate] : []),
   ["package", "npm", ["run", "pack:check"]],
   ["proof-help", "node", ["tools/qualify-independent-proof.mjs", "--help"]],
 ];

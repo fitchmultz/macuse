@@ -32,7 +32,7 @@ node tools/validate-pi-host.mjs
 node tools/validate-pi-host.mjs /absolute/path/to/pi-coding-agent
 ```
 
-`npm run check:compat` includes this probe alongside types, tests, offline extension checks, and dry-run packaging.
+On macOS, `npm run check:compat` includes this probe alongside types, tests, offline extension checks, and dry-run packaging. Other platforms skip it, because the Pi extension registers no tools there.
 
 For mutating/focus checks, no action should run unless Activity Monitor's original tab is known. Restore that exact tab and verify it after the test; never force CPU as cleanup. Do not terminate processes or modify unrelated Activity Monitor controls. A kernel reset may interrupt cleanup, so inspect the final result and restore only from known evidence. Raw-MCP diagnostics are kept separate from non-interruption checks.
 
