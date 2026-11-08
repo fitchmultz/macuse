@@ -70,6 +70,7 @@ const { DefaultResourceLoader } = await load("resource-loader.js");
 const { SettingsManager } = await load("settings-manager.js");
 const { SessionManager } = await load("session-manager.js");
 const { ModelRuntime } = await load("model-runtime.js");
+const { createToolSearchExtension } = await load("../extensions/tool-search/index.js");
 const aiPackage = findPackageJSON(
   "@earendil-works/pi-ai",
   pathToFileURL(join(root, "package.json")).href,
@@ -257,6 +258,15 @@ nodeTest(
     assert.deepEqual(f.errors, []);
   },
 );
+
+nodeTest("macuse activates the host tool_search so its deferred tools can be loaded", async (t) => {
+  const f = await fixture(t, { extensionFactories: [createToolSearchExtension()] });
+  assert.ok(f.session.getActiveToolNames().includes("tool_search"));
+  for (const name of auxiliary) {
+    assert.ok(!f.session.getActiveToolNames().includes(name), name);
+  }
+  assert.deepEqual(f.errors, []);
+});
 
 nodeTest(
   "native defaults can select auxiliary tools at startup without activating their siblings",

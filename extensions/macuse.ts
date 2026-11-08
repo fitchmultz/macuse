@@ -68,6 +68,20 @@ const registerOwnedTools = (pi: ExtensionAPI, runtime: MacuseRuntime): void => {
   }
 };
 
+/**
+ * Pi's own MCP extension activates tool_search when it registers deferred tools, since only
+ * tool_search declares them. Only a registered tool_search that reaches other tools qualifies.
+ */
+const activateToolSearch = (pi: ExtensionAPI): void => {
+  const active = pi.getActiveTools();
+  if (
+    !active.includes("tool_search") &&
+    pi.getAllTools().some((tool) => tool.name === "tool_search" && tool.reachesTools !== undefined)
+  ) {
+    pi.setActiveTools([...active, "tool_search"]);
+  }
+};
+
 const attachResultMarker = (pi: ExtensionAPI, owned: ReadonlySet<string>): void => {
   pi.on("tool_result", (event) => {
     if (!owned.has(event.toolName)) {
@@ -192,6 +206,7 @@ export default function macuse(pi: ExtensionAPI): void {
   });
 
   registerOwnedTools(pi, runtime);
+  pi.on("session_start", () => activateToolSearch(pi));
   attachResultMarker(pi, ownedToolNames);
   const images = attachImageHooks(pi, imageIndex);
   attachSessionLifecycle(pi, runtime, images);
