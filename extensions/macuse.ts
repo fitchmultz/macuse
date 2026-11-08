@@ -108,6 +108,25 @@ const activateToolSearch = (pi: ExtensionAPI, ctx: ExtensionContext): void => {
   }
 };
 
+const deferredToolNames: ReadonlySet<string> = new Set(
+  tools.filter((spec) => !primaryTools.includes(spec)).map((spec) => spec.name),
+);
+
+/** Whether the agent can call every registered deferred tool: each is active, or an active tool_search or codemode reaches them. */
+const deferredToolsReachable = (pi: ExtensionAPI): boolean => {
+  const registered = pi.getAllTools();
+  const active = pi.getActiveTools();
+  return (
+    registered.every((tool) => !deferredToolNames.has(tool.name) || active.includes(tool.name)) ||
+    registered.some(
+      (tool) =>
+        (tool.name === "tool_search" || tool.name === "codemode") &&
+        tool.reachesTools !== undefined &&
+        active.includes(tool.name),
+    )
+  );
+};
+
 const attachResultMarker = (pi: ExtensionAPI, owned: ReadonlySet<string>): void => {
   pi.on("tool_result", (event) => {
     if (!owned.has(event.toolName)) {
@@ -232,8 +251,21 @@ export default function macuse(pi: ExtensionAPI): void {
   });
 
   registerOwnedTools(pi, runtime);
-  pi.on("session_start", (_event, ctx) => activateToolSearch(pi, ctx));
-  pi.on("session_tree", (_event, ctx) => activateToolSearch(pi, ctx));
+  // Like Pi's own MCP extension, warn once when nothing can reach the deferred tools.
+  let warnedUnreachable = false;
+  const settleToolSearch = (ctx: ExtensionContext): void => {
+    activateToolSearch(pi, ctx);
+    if (warnedUnreachable || deferredToolsReachable(pi)) {
+      return;
+    }
+    warnedUnreachable = true;
+    ctx.ui.notify(
+      "macuse recording and history tools that are not selected directly are only reachable from the tool_search or codemode tool, but neither is active; they cannot be called.",
+      "warning",
+    );
+  };
+  pi.on("session_start", (_event, ctx) => settleToolSearch(ctx));
+  pi.on("session_tree", (_event, ctx) => settleToolSearch(ctx));
   attachResultMarker(pi, ownedToolNames);
   const images = attachImageHooks(pi, imageIndex);
   attachSessionLifecycle(pi, runtime, images);

@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Warn once when neither `tool_search` nor `codemode` is active, because deferred Record & Replay and Computer History tools that are not selected directly cannot be called then.
 - Remove `macuse_insert_text` and its native selected-text helper. Pi starts with `macuse` and `macuse_reset`; MCP and CLI expose ten tools. For Unicode at the selection, use `app.paste(text)`; for an intended whole-field replacement, use `app.setValue`.
 - Register the eight Record & Replay and Computer History tools with Pi's native `deferred` exposure, loaded through `tool_search`, `codemode`, or `defaultTools`. Remove the `macuse_tools` loader, the `macuse_enable` recovery tool, `/macuse-enable`, the initialization marker, macuse-owned tool selection, and the `pi:instruction-groups` collector; Pi now receives one short always-on `macos` prompt section. MCP and CLI keep exposing the recording/history tools directly.
 - Allow title changes when CUA's window and top-level document URLs remain unchanged.
