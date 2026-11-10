@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Say why an indexed action was refused. The single "Target identity or value changed" error is now one message per cause: an index that is not in the last observation; look-alike elements, with their count; a target that is gone, or whose descendants or surroundings changed; a disabled target; a changed name, value, or containing cell value. A changed name or value is shown, cut to 80 characters. Every message starts with `Target identity`. The guard refuses the same cases as before.
 - Register the Pi tools, commands, hooks, and `macos` prompt section only on macOS. macuse requires macOS, so on Linux or Android the tools could never run. macOS behavior is unchanged. The Linux CI job now asserts the empty Pi surface through the native SDK, and the macOS job keeps the registration, lifecycle, and host probes.
 - Warn once when neither `tool_search` nor `codemode` is active as a run starts, because deferred Record & Replay and Computer History tools that are not selected directly cannot be called then.
 - Remove `macuse_insert_text` and its native selected-text helper. Pi starts with `macuse` and `macuse_reset`; MCP and CLI expose ten tools. For Unicode at the selection, use `app.paste(text)`; for an intended whole-field replacement, use `app.setValue`.

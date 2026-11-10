@@ -43,3 +43,7 @@ export function findSameElement(
   element: AppElement,
   observation: AppObservation,
 ): AppElement | undefined;
+export function sameElementMismatch(
+  element: AppElement,
+  observation: AppObservation,
+): { cause: "absent" | "inside" | "around" } | { cause: "alike"; count: number };
