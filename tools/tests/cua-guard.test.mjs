@@ -486,17 +486,14 @@ nodeTest("primary AX Press remains usable when Sky lists only secondary actions"
 });
 
 nodeTest("preflight rejects document or field drift and ambiguous target identity", async () => {
-  for (const after of [
-    tree().replace("file:///tmp/fixture", "file:///tmp/other"),
-    tree({ value: "external edit" }),
-    tree({ duplicate: true }),
-  ]) {
+  for (const [after, error] of /** @type {[string, RegExp][]} */ ([
+    [tree().replace("file:///tmp/fixture", "file:///tmp/other"), /document changed/],
+    [tree({ value: "external edit" }), /changed its value/],
+    [tree({ duplicate: true }), /now matches 2 elements/],
+  ])) {
     const f = fixture({ states: [tree(), after] });
     await f.observe();
-    await assert.rejects(
-      f.guard(request("set_value", { element_index: 1, value: "new" })),
-      /changed/,
-    );
+    await assert.rejects(f.guard(request("set_value", { element_index: 1, value: "new" })), error);
     assert.equal(
       f.calls.some((c) => c.method === "set_value"),
       false,
@@ -765,17 +762,12 @@ nodeTest(
         before.replace("filters=fixture", "filters=other"),
         /document changed/,
       ],
-      [
-        "changed value",
-        before,
-        popupTree({ value: "external edit" }),
-        /Target identity or value changed/,
-      ],
+      ["changed value", before, popupTree({ value: "external edit" }), /changed its value/],
       [
         "duplicate target",
         before,
         `${before}\n\t\t\t\t\t12 text field (settable) Search in all items…, Value: old`,
-        /Target identity or value changed/,
+        /different surroundings/,
       ],
     ];
     for (const [name, observed, fresh, error] of cases) {
@@ -919,7 +911,7 @@ nodeTest(
           request("perform_secondary_action", { element_index: 2, action: "Press" }),
         );
         if (changed) {
-          await assert.rejects(action, /Target identity or value changed/);
+          await assert.rejects(action, /is now named "Stop Recording"/);
           assert.equal(f.actions()[0]?.dispatched, false);
           assert.equal(f.actions()[0]?.outcome, "not_dispatched");
         } else {
@@ -1092,19 +1084,19 @@ nodeTest(
         "set_value",
         { element_index: 2, value: "/tmp/new" },
         before.replace("Value: /tmp", "Value: /other"),
-        /Target identity or value changed/,
+        /changed its value/,
       ],
       [
         "set_value",
         { element_index: 2, value: "/tmp/new" },
         before.replace("ID: PathTextField", "ID: OtherField"),
-        /Target identity or value changed/,
+        /is not in the current state/,
       ],
       [
         "set_value",
         { element_index: 2, value: "/tmp/new" },
         before.replace("(settable)", "(disabled, settable)"),
-        /Target identity or value changed/,
+        /is disabled/,
       ],
       [
         "set_value",
@@ -1116,7 +1108,7 @@ nodeTest(
         "set_value",
         { element_index: 2, value: "/tmp/new" },
         before.replace("\t2 text field", "\t8 group Other record\n\t\t2 text field"),
-        /Target identity or value changed/,
+        /different surroundings/,
       ],
       [
         "press_key",
@@ -1176,7 +1168,7 @@ nodeTest("preflight detects an external edit after a metadata-looking field line
   await f.observe();
   await assert.rejects(
     f.guard(request("set_value", { element_index: 1, value: "replacement" })),
-    /Target identity or value changed/,
+    /changed its value/,
   );
   assert.equal(
     f.calls.some((call) => call.method === "set_value"),
@@ -1221,7 +1213,7 @@ nodeTest(
     await f.observe();
     await assert.rejects(
       f.guard(request("perform_secondary_action", { element_index: 2, action: "Press" })),
-      /changed/,
+      /different surroundings/,
     );
     assert.equal(
       f.calls.some((c) => c.method === "perform_secondary_action"),
@@ -1233,44 +1225,67 @@ nodeTest(
 
 /** @param {string} body */
 const fileState = (body) => `Window: "Files", App: App.\n0 standard window Files\n${body}`;
-for (const [scenario, index, body] of /** @type {[string, number, string][]} */ ([
-  ["an idless row changes", 2, "\t1 row draft.txt\n\t\t2 button Delete\n\t3 text ready"],
-  ["an unlabeled row's filename changes", 3, "\t1 row\n\t\t2 text draft.txt\n\t\t3 button Delete"],
+const surroundings = /different surroundings/;
+for (const [scenario, index, body, cause] of /** @type {[string, number, string, RegExp][]} */ ([
+  [
+    "an idless row changes",
+    2,
+    "\t1 row draft.txt\n\t\t2 button Delete\n\t3 text ready",
+    surroundings,
+  ],
+  [
+    "an unlabeled row's filename changes",
+    3,
+    "\t1 row\n\t\t2 text draft.txt\n\t\t3 button Delete",
+    surroundings,
+  ],
   [
     "a button ID is reused for another row",
     2,
     "\t1 row draft.txt\n\t\t2 button Delete, ID: delete",
+    surroundings,
   ],
   [
     "an unlabeled group's filename changes",
     3,
     "\t1 group\n\t\t2 text draft.txt\n\t\t3 button Delete, ID: delete",
+    surroundings,
   ],
   [
     "a group's Value changes items",
     2,
     "\t1 group Value: draft.txt\n\t\t2 button Delete, ID: delete",
+    surroundings,
   ],
-  ["a cell's Value changes items", 2, "\t1 cell Value: draft.txt\n\t\t2 button Delete, ID: delete"],
+  [
+    "a cell's Value changes items",
+    2,
+    "\t1 cell Value: draft.txt\n\t\t2 button Delete, ID: delete",
+    /is in a cell whose value changed/,
+  ],
   [
     "the filename is nested inside the button",
     2,
     "\t1 row\n\t\t2 button Delete, ID: delete\n\t\t\t3 text draft.txt",
+    /different descendants/,
   ],
   [
     "a row's filename layout changes",
     5,
     "\t1 row\n\t\t2 group\n\t\t\t3 text draft.txt\n\t\t4 group\n\t\t\t5 button Delete, ID: delete",
+    surroundings,
   ],
   [
     "a group's filename layout changes",
     5,
     "\t1 group\n\t\t2 group\n\t\t\t3 text draft.txt\n\t\t4 group\n\t\t\t5 button Delete, ID: delete",
+    surroundings,
   ],
   [
     "a scroll area's filename layout changes",
     5,
     "\t1 scroll area Library\n\t\t2 group\n\t\t\t3 text draft.txt\n\t\t4 group\n\t\t\t5 button Delete, ID: delete",
+    surroundings,
   ],
 ])) {
   nodeTest(`Delete cannot retarget when ${scenario}`, async () => {
@@ -1279,12 +1294,119 @@ for (const [scenario, index, body] of /** @type {[string, number, string][]} */ 
     await f.observe();
     await assert.rejects(
       f.guard(request("perform_secondary_action", { element_index: index, action: "Press" })),
-      /changed/,
+      cause,
     );
     assert.equal(
       f.calls.some((c) => c.method === "perform_secondary_action"),
       false,
     );
+  });
+}
+
+const observeAgain =
+  "Observe again and use an index from the new state; if the app keeps changing, observe and act in the same script.";
+const sharedValue = "x".repeat(100);
+for (const [
+  cause,
+  index,
+  before,
+  fresh,
+  message,
+] of /** @type {[string, number, string, string, string][]} */ ([
+  [
+    "an index that is not in the last observation",
+    9,
+    "\t1 button Save",
+    "\t1 button Save",
+    "Target identity not confirmed: index 9 is not in the last observation of this app. Use an index from that observation, or observe again.",
+  ],
+  [
+    "look-alike elements in the last observation",
+    2,
+    "\t1 row\n\t\t2 button Delete\n\t3 row\n\t\t4 button Delete\n\t5 row\n\t\t6 button Delete",
+    "\t1 row\n\t\t2 button Delete\n\t3 row\n\t\t4 button Delete\n\t5 row\n\t\t6 button Delete",
+    'Target identity not confirmed: index 2 (button "Delete") is one of 3 elements in the last observation with the same role, name or ID, descendants and surroundings. Observing again does not tell them apart. Act on a different element that is unique, or use the keyboard; otherwise click at screenshot coordinates with click([x, y]).',
+  ],
+  [
+    "a look-alike element that appeared since",
+    2,
+    "\t1 row\n\t\t2 button Delete",
+    "\t1 row\n\t\t2 button Delete\n\t3 row\n\t\t4 button Delete",
+    'Target identity not confirmed: index 2 (button "Delete") now matches 2 elements with the same role, name or ID, descendants and surroundings. Observing again does not tell them apart. Act on a different element that is unique, or use the keyboard; otherwise click at screenshot coordinates with click([x, y]).',
+  ],
+  [
+    "a target that is gone",
+    1,
+    "\t1 button Save",
+    "\t1 button Store",
+    `Target identity not confirmed: index 1 (button "Save") is not in the current state: no element has its role and name or ID. ${observeAgain}`,
+  ],
+  [
+    "changed descendants",
+    1,
+    "\t1 group Editor\n\t\t2 text draft",
+    "\t1 group Editor\n\t\t2 text final",
+    `Target identity not confirmed: index 1 (group "Editor") has different descendants than in the last observation. ${observeAgain}`,
+  ],
+  [
+    "changed surroundings",
+    2,
+    "\t1 group Editor\n\t\t2 button Save\n\t\t3 text ready",
+    "\t1 group Editor\n\t\t2 button Save\n\t\t3 text busy",
+    `Target identity not confirmed: index 2 (button "Save") has different surroundings than in the last observation: an ancestor changed, or another element under one of its ancestors. ${observeAgain}`,
+  ],
+  [
+    "a disabled target",
+    1,
+    "\t1 button Save",
+    "\t1 button (disabled) Save",
+    'Target identity confirmed, but index 1 (button "Save") is disabled. Observing again does not change that; it stays refused while disabled.',
+  ],
+  [
+    "a changed name",
+    1,
+    "\t1 button Play, ID: transport",
+    "\t1 button Pause, ID: transport",
+    `Target identity confirmed, but index 1 (button "Play") is now named "Pause". ${observeAgain}`,
+  ],
+  [
+    "a changed value",
+    1,
+    "\t1 text field (settable) ID: editor, Value: old",
+    "\t1 text field (settable) ID: editor, Value: new",
+    `Target identity confirmed, but index 1 (text field "editor") changed its value since the last observation, from "old" to "new". ${observeAgain}`,
+  ],
+  [
+    "a long value that changed late",
+    1,
+    `\t1 text field (settable) ID: editor, Value: ${sharedValue}old`,
+    `\t1 text field (settable) ID: editor, Value: ${sharedValue}new${"y".repeat(90)}`,
+    `Target identity confirmed, but index 1 (text field "editor") changed its value since the last observation, after its first 100 characters, from "old" to "new${"y".repeat(77)}…". ${observeAgain}`,
+  ],
+  [
+    "a value that appeared",
+    1,
+    "\t1 text field (settable) ID: editor",
+    "\t1 text field (settable) ID: editor, Value: typed",
+    `Target identity confirmed, but index 1 (text field "editor") changed its value since the last observation, from no value to "typed". ${observeAgain}`,
+  ],
+  [
+    "a changed value of the containing cell",
+    2,
+    "\t1 cell Value: draft.txt\n\t\t2 button Delete, ID: delete",
+    "\t1 cell Value: important.txt\n\t\t2 button Delete, ID: delete",
+    `Target identity confirmed, but index 2 (button "Delete") is in a cell whose value changed since the last observation. ${observeAgain}`,
+  ],
+])) {
+  nodeTest(`a refused indexed target names its cause: ${cause}`, async () => {
+    const f = fixture({ states: [fileState(before), fileState(fresh)] });
+    await f.observe();
+    await assert.rejects(f.guard(request("click", { element_index: index })), { message });
+    assert.equal(
+      f.calls.some((c) => c.method === "click"),
+      false,
+    );
+    assert.equal(f.actions()[0]?.error, message);
   });
 }
 
@@ -1715,7 +1837,7 @@ nodeTest(
     await stale.observe();
     await assert.rejects(
       stale.guard(request("set_value", { element_index: 42, value })),
-      /Target identity or value changed/,
+      /different descendants/,
     );
     assert.equal(
       stale.calls.some((call) => call.method === "set_value"),
