@@ -65,7 +65,7 @@ const mac = { skip: process.platform !== "darwin" };
  * The tool surfaces the fixture reads. `execute` models the trailing-optional
  * runtime signature the tests call.
  *
- * @typedef {{ name: string, exposure?: string, parameters: SchemaMock, executionMode?: string, constrainedSampling?: unknown, discovery?: boolean | undefined, promptGuidelines?: boolean | undefined, execute?: (command: string, input?: Record<string, unknown>) => Promise<{ details?: unknown }> }} RegisteredToolMock
+ * @typedef {{ name: string, exposure?: string, parameters: SchemaMock, executionMode?: string, constrainedSampling?: unknown, discovery?: boolean | undefined, promptGuidelines?: string[] | undefined, execute?: (command: string, input?: Record<string, unknown>) => Promise<{ details?: unknown }> }} RegisteredToolMock
  */
 /** @typedef {(event?: unknown, ctx?: unknown) => unknown} ExtensionHandlerMock */
 /**
@@ -196,7 +196,7 @@ nodeTest(
   },
 );
 
-nodeTest("each run adds the macos section; unreachable deferred tools warn once", mac, async () => {
+nodeTest("macuse runs add a macos section; unreachable deferred tools warn once", mac, async () => {
   const f = extensionFixture();
   /** @type {string[]} */
   const notices = [];
@@ -207,15 +207,21 @@ nodeTest("each run adds the macos section; unreachable deferred tools warn once"
       },
     },
   };
-  /** @param {{ systemPromptOptions: { sections: Record<string, string> } }} runEvent */
+  /** @typedef {{ selectedTools: string[], hiddenTools: string[], toolGuidelines: Record<string, string[]>, sections: Record<string, string> }} PromptOptionsMock */
+  /** @param {{ systemPromptOptions: PromptOptionsMock }} runEvent */
   const startRun = async (runEvent) => {
     for (const handler of f.handlerLists.get("before_agent_start") ?? []) {
       await handler(runEvent, ctx);
     }
   };
-  /** @type {{ systemPromptOptions: { sections: Record<string, string> } }} */
+  /** @type {{ systemPromptOptions: PromptOptionsMock }} */
   const event = {
-    systemPromptOptions: { sections: { existing: "Preserve other instructions." } },
+    systemPromptOptions: {
+      selectedTools: ["macuse"],
+      hiddenTools: [],
+      toolGuidelines: {},
+      sections: { existing: "Preserve other instructions." },
+    },
   };
   await startRun(event);
   const sections = event.systemPromptOptions.sections;
@@ -248,13 +254,18 @@ nodeTest("each run adds the macos section; unreachable deferred tools warn once"
     assert.ok(macos.includes(instruction), instruction);
   }
   assert.doesNotMatch(macos, /macuse_tools|macuse_enable|discover_tools/);
-  assert.ok(
-    [...f.tools.values()].every(
-      (tool) => tool.discovery !== true && tool.promptGuidelines !== true,
-    ),
-  );
+  assert.ok([...f.tools.values()].every((tool) => tool.discovery !== true));
+  // One text: the section is the macuse tool's own guideline.
+  assert.deepEqual(f.tools.get("macuse")?.promptGuidelines, [macos]);
   // No tool_search or codemode is registered, so nothing reaches the deferred tools.
-  await startRun({ systemPromptOptions: { sections: {} } });
+  await startRun({
+    systemPromptOptions: {
+      selectedTools: ["macuse"],
+      hiddenTools: [],
+      toolGuidelines: {},
+      sections: {},
+    },
+  });
   assert.deepEqual(
     notices.filter((message) => message.startsWith("macuse recording and history tools")),
     [

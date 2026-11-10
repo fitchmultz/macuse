@@ -25,7 +25,7 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
 
 const isMacuseDetailsMarker = (value: unknown): value is MacuseDetailsMarker => isRecord(value);
 
-/** Always-on orientation; the macuse skill and docs hold the detailed operating rules. */
+/** Orientation that travels with the macuse tool; the macuse skill and docs hold the detailed operating rules. */
 const MACOS_GUIDANCE = [
   'Use macuse for native macOS app UI; prefer purpose-built APIs or browser tools for ordinary web pages. Begin with cua.getState() or var app = await cua.getApp("Exact App") and read the emitted docs/state. Await every action and observe after it.',
   'Mutations need apps, allowMutating:true, a concrete safetyNote, and a prior observation. For AX Press call await app.performSecondaryAction(index, "Press") even when Sky omits primary Press; other actions must be listed. app.click(index) is pointer input in returned screenshot pixels. app.setValue replaces a whole field and must verify exactly; app.paste(text, {format:"text"|"md"|"html"}) inserts Unicode at the selection through native paste; raw typeText is ASCII-only.',
@@ -53,6 +53,7 @@ const registerOwnedTools = (pi: ExtensionAPI, runtime: MacuseRuntime): void => {
         ? {
             promptSnippet:
               "Inspect and operate native macOS applications with persistent JavaScript",
+            promptGuidelines: [MACOS_GUIDANCE],
           }
         : {}),
       async execute(...args) {
@@ -249,9 +250,15 @@ export default function macuse(pi: ExtensionAPI): void {
     status: () => session?.status(),
   };
 
+  // MACOS_GUIDANCE is the macuse tool's prompt guideline, so Pi shows it only where it shows the
+  // tool: as a rule once a run loads macuse, and with the tool in codemode listings and lookups.
+  // A run that starts with macuse declared gets the same text as the macos section instead.
   pi.on("before_agent_start", (event) => {
-    const sections = event.systemPromptOptions.sections;
-    sections.macos = MACOS_GUIDANCE;
+    const options = event.systemPromptOptions;
+    if (options.selectedTools.includes("macuse") && !options.hiddenTools.includes("macuse")) {
+      options.sections.macos = MACOS_GUIDANCE;
+      options.toolGuidelines.macuse = [];
+    }
   });
 
   registerOwnedTools(pi, runtime);
