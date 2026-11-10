@@ -1328,6 +1328,20 @@ for (const [
     'Target identity not confirmed: index 2 (button "Delete") is one of 3 elements in the last observation with the same role, name or ID, descendants and surroundings. Observing again does not tell them apart. Act on a different element that is unique, or use the keyboard; otherwise click at screenshot coordinates with click([x, y]).',
   ],
   [
+    "look-alike elements in the last observation, of which one is left",
+    2,
+    "\t1 row\n\t\t2 button Delete\n\t3 row\n\t\t4 button Delete\n\t5 row\n\t\t6 button Delete",
+    "\t1 row\n\t\t2 button Delete",
+    `Target identity not confirmed: index 2 (button "Delete") was one of 3 elements in the last observation with the same role, name or ID, descendants and surroundings, and the state has changed since. ${observeAgain}`,
+  ],
+  [
+    "look-alike elements in the last observation that are all gone",
+    2,
+    "\t1 row\n\t\t2 button Delete\n\t3 row\n\t\t4 button Delete",
+    "\t1 button Save",
+    `Target identity not confirmed: index 2 (button "Delete") was one of 2 elements in the last observation with the same role, name or ID, descendants and surroundings, and the state has changed since. ${observeAgain}`,
+  ],
+  [
     "a look-alike element that appeared since",
     2,
     "\t1 row\n\t\t2 button Delete",
