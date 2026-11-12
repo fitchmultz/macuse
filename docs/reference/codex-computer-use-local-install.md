@@ -9,7 +9,7 @@ macuse v0.6.1 is an experimental GitHub prerelease installed in Pi from Git, not
 - Existing vendor authentication and the macOS permissions required by the responsible launcher, including applicable Screen Recording, Accessibility, and Automation grants.
 - An installed Swift compiler (`xcrun swiftc`) for macuse's native AX helper. The helper compiles lazily, caches by source hash under `~/Library/Caches/macuse/native`, and needs Accessibility access for focus/window/text operations.
 - For Pi, latest stable official Pi or the maintained `fitchmultz/pi`. The supported floor and development baseline are 1.5.0; macuse uses shared public extension APIs and Pi runtime dependencies come from the host.
-- For CLI/MCP, Node 24.21.0 or later and installed repository dependencies.
+- For CLI/MCP, Node 24.22.3 (24.x) or 26.13.1 or later and installed repository dependencies.
 
 macuse does not install the vendor runtime/compiler, change user settings, grant permissions, or bypass authentication. Missing requirements should produce a concrete setup error, not a fallback input system.
 
