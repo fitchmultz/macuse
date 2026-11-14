@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { firstText } from "./macuse-utils.mjs";
 
 /**
@@ -175,7 +175,7 @@ export function screenshotEvidence(result, window) {
     width,
     height,
     bytes: bytes.length,
-    sha256: createHash("sha256").update(bytes).digest("hex"),
+    sha256: hash("sha256", bytes, "hex"),
     windowFrame: result.windowFrame,
     captureRect: result.captureRect,
     pointPixelScale: result.pointPixelScale,

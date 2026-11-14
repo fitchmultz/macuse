@@ -8,7 +8,7 @@ import {
   readFileSync,
   writeFileSync,
 } from "node:fs";
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -373,9 +373,7 @@ export function mousePosition() {
  * @returns {string}
  */
 export function sha256File(path) {
-  const hash = createHash("sha256");
-  hash.update(readFileSync(path));
-  return hash.digest("hex");
+  return hash("sha256", readFileSync(path), "hex");
 }
 
 /**

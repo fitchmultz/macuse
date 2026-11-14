@@ -8,7 +8,7 @@ macuse v0.6.1 is an experimental GitHub prerelease installed in Pi from Git, not
 - Access to the installed `@oai/cua-repl`, bundled Node/kernel, and native Sky service.
 - Existing vendor authentication and the macOS permissions required by the responsible launcher, including applicable Screen Recording, Accessibility, and Automation grants.
 - An installed Swift compiler (`xcrun swiftc`) for macuse's native AX helper. The helper compiles lazily, caches by source hash under `~/Library/Caches/macuse/native`, and needs Accessibility access for focus/window/text operations.
-- For Pi, latest stable official Pi or the maintained `fitchmultz/pi`. The supported floor and development baseline are 1.5.0; macuse uses shared public extension APIs and Pi runtime dependencies come from the host.
+- For Pi, latest stable official Pi or the maintained `fitchmultz/pi`. The supported floor and development baseline are 1.5.2; macuse uses shared public extension APIs and Pi runtime dependencies come from the host.
 - For CLI/MCP, Node 24.22.3 (24.x) or 26.13.1 or later and installed repository dependencies.
 
 macuse does not install the vendor runtime/compiler, change user settings, grant permissions, or bypass authentication. Missing requirements should produce a concrete setup error, not a fallback input system.
@@ -23,7 +23,7 @@ pi install git:github.com/fitchmultz/macuse
 
 The package supplies `extensions/macuse.ts` and `skills/macuse/SKILL.md`. After installing a local checkout's dependencies with the [source-install procedure](../../README.md#cli-and-mcp), load it with `pi install /absolute/path/to/macuse`. Pi registers that local path without installing or changing its dependencies; the checkout owner maintains them.
 
-Pi's `/reload` replaces extension code and disposes macuse's owned session; Pi's native rules decide which tools stay selected (official Pi 1.5.0 re-activates default-active extension tools on reload, while `fitchmultz/pi` preserves live deselections). Tools newly added to `defaultTools` are enabled on reload. Quit Pi and start a new process after dependency/native-runtime updates, or on older hosts whose code reload is unqualified. Restart CLI/MCP processes after changes too; a new process picks up native helper source changes through the source-hash cache.
+Pi's `/reload` replaces extension code and disposes macuse's owned session; Pi's native rules decide which tools stay selected (official Pi 1.5.2 re-activates default-active extension tools on reload, while `fitchmultz/pi` preserves live deselections). Tools newly added to `defaultTools` are enabled on reload. Quit Pi and start a new process after dependency/native-runtime updates, or on older hosts whose code reload is unqualified. Restart CLI/MCP processes after changes too; a new process picks up native helper source changes through the source-hash cache.
 
 Pi starts with two entry tools: `macuse` and `macuse_reset`. The eight recording/history tools register with native `deferred` exposure: `tool_search` loads them, `codemode` calls them, and `defaultTools` or an explicit host tool policy can select them. Pi's declared selection survives resume, fork and compaction without keeping native runtime bindings alive. No host patches or image-sizing settings edits are required for Astra.
 

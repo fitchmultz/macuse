@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { parse as parseYaml } from "yaml";
 import { compatGates } from "./compat-gates.mjs";
@@ -181,7 +181,7 @@ export function checkPolicyConfig() {
   const standard = readFileSync("docs/reference/engineering-standard.md");
   same(
     "Adopted standard digest",
-    createHash("sha256").update(standard).digest("hex"),
+    hash("sha256", standard, "hex"),
     "41b6d505b36007218ca56b7b3443fcbd96d994715da5a83aaca52b58af47d3d6",
   );
   checkLintConfig();

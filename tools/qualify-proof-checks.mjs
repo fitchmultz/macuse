@@ -9,7 +9,7 @@
 /** @typedef {import("./qualify-proof-transport.mjs").ExecutionRecord} ExecutionRecord */
 /** @typedef {import("./qualify-proof-transport.mjs").VisibleReport} VisibleReport */
 /** @typedef {import("./qualify-proof-transport.mjs").NativeEvidenceEntry} NativeEvidenceEntry */
-import { createHash } from "node:crypto";
+import { hash } from "node:crypto";
 import assert from "node:assert/strict";
 import { contextField, isRecord, ordinaryField } from "./qualify-proof-transport.mjs";
 
@@ -98,7 +98,7 @@ export function imageReceipts(result) {
       assert.fail("Missing image data for receipt");
     }
     const bytes = Buffer.from(block.data, "base64");
-    assert.equal(createHash("sha256").update(bytes).digest("hex"), receipt.sha256);
+    assert.equal(hash("sha256", bytes, "hex"), receipt.sha256);
     assert.equal(bytes.length, receipt.bytes);
     assert.equal(bytes.readUInt32BE(16), receipt.width);
     assert.equal(bytes.readUInt32BE(20), receipt.height);
