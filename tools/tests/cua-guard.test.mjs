@@ -1501,6 +1501,102 @@ nodeTest("scroll position changes outside the row do not block its Delete button
   assert.equal(f.actions()[0]?.outcome, "completed");
 });
 
+nodeTest(
+  "browser chrome memory updates and inner web page churn are isolated across unique page boundaries",
+  async () => {
+    /**
+     * @param {{ tabMemory: string, hoverCard?: boolean, rowTime: string, pageUrl?: string }} opts
+     */
+    const brave = ({
+      tabMemory,
+      hoverCard = false,
+      rowTime,
+      pageUrl = "https://dash.cloudflare.com/tokens",
+    }) => `Window: "API Tokens | Cloudflare - Brave", App: Brave Browser.
+0 standard window API Tokens | Cloudflare - Brave, URL: ${pageUrl}
+\t1 container
+\t\t2 container
+\t\t\t3 button Back
+\t\t\t4 container
+\t\t\t\t5 tab Work
+\t\t\t\t\t6 text Memory usage - ${tabMemory}
+${hoverCard ? `\t\t\t7 container\n\t\t\t\t8 text Memory usage - ${tabMemory}\n` : ""}\t\t10 container
+\t\t\t11 HTML content URL: ${pageUrl}
+\t\t\t\t12 table
+\t\t\t\t\t13 row
+\t\t\t\t\t\t14 cell
+\t\t\t\t\t\t\t15 text Mitch PI token
+\t\t\t\t\t\t16 cell
+\t\t\t\t\t\t\t17 menu button Actions
+\t\t\t\t\t18 row
+\t\t\t\t\t\t19 cell
+\t\t\t\t\t\t\t20 text Other token
+\t\t\t\t\t\t21 cell
+\t\t\t\t\t\t\t22 text ${rowTime}
+\t\t\t\t\t\t23 cell
+\t\t\t\t\t\t\t24 menu button Actions`;
+
+    const pageClick = fixture({
+      nativeApp: "Brave Browser",
+      states: [
+        brave({ tabMemory: "184 MB", hoverCard: false, rowTime: "1m ago" }),
+        brave({ tabMemory: "174 MB", hoverCard: true, rowTime: "2m ago" }),
+      ],
+    });
+    await pageClick.observe();
+    await pageClick.guard(
+      request("perform_secondary_action", { element_index: 17, action: "Press" }),
+    );
+    assert.equal(pageClick.actions()[0]?.outcome, "completed");
+
+    const chromeClick = fixture({
+      nativeApp: "Brave Browser",
+      states: [
+        brave({ tabMemory: "184 MB", rowTime: "1m ago" }),
+        brave({ tabMemory: "184 MB", rowTime: "2m ago" }),
+      ],
+    });
+    await chromeClick.observe();
+    await chromeClick.guard(
+      request("perform_secondary_action", { element_index: 3, action: "Press" }),
+    );
+    assert.equal(chromeClick.actions()[0]?.outcome, "completed");
+
+    const ownRowChanged = fixture({
+      nativeApp: "Brave Browser",
+      states: [
+        brave({ tabMemory: "184 MB", rowTime: "1m ago" }),
+        brave({ tabMemory: "184 MB", rowTime: "2m ago" }),
+      ],
+    });
+    await ownRowChanged.observe();
+    await assert.rejects(
+      ownRowChanged.guard(
+        request("perform_secondary_action", { element_index: 24, action: "Press" }),
+      ),
+      /different surroundings/,
+    );
+    assert.equal(ownRowChanged.actions()[0]?.dispatched, false);
+
+    const twoUnnamedPages = `Window: "Split", App: Brave Browser.
+0 standard window Split
+\t1 container
+\t\t2 HTML content
+\t\t\t3 button Save
+\t\t4 HTML content
+\t\t\t5 button Save`;
+    const ambiguous = fixture({
+      nativeApp: "Brave Browser",
+      states: [twoUnnamedPages, twoUnnamedPages.replace("5 button Save", "5 button Submit")],
+    });
+    await ambiguous.observe();
+    await assert.rejects(
+      ambiguous.guard(request("perform_secondary_action", { element_index: 3, action: "Press" })),
+      /different surroundings/,
+    );
+  },
+);
+
 nodeTest("keyboard input rejects focus drift before dispatch", async () => {
   const before = tree().replace(
     "\t3 button",

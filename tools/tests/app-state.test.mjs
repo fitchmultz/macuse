@@ -181,3 +181,24 @@ nodeTest("native tab hierarchy preserves unfamiliar roles, bare labels and separ
   );
   assert.equal(focusedElement(observed).index, "2");
 });
+
+nodeTest("popup menu containers parse child rows as menu items with full names", () => {
+  const observed = parseAppState(
+    "Brave Browser",
+    state(
+      "0 standard window Cloudflare\n\t1 HTML content URL: https://dash.cloudflare.com/\n\t\t2 menu button Actions\n\t\t\t3 menu\n\t\t\t\t4 View summary\n\t\t\t\t5 Delete\n\t\t\t\t6 Start with an Account policy (disabled)\n\t\t\t\t7 menu item Copy ID",
+    ),
+  );
+  const menu = elementAt(observed.elements, 3);
+  assert.equal(menu.role, "menu");
+  const items = observed.elements.slice(4);
+  assert.deepEqual(
+    items.map((item) => [item.role, item.name, item.disabled]),
+    [
+      ["menu item", "View summary", false],
+      ["menu item", "Delete", false],
+      ["menu item", "Start with an Account policy", true],
+      ["menu item", "Copy ID", false],
+    ],
+  );
+});
