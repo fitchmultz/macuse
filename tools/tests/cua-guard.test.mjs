@@ -1597,6 +1597,234 @@ ${hoverCard ? `\t\t\t7 container\n\t\t\t\t8 text Memory usage - ${tabMemory}\n` 
   },
 );
 
+nodeTest(
+  "sequential same-form mutations preserve target continuity while rejecting unrelated or external drift",
+  async () => {
+    /**
+     * @param {{ name?: string, notes?: string, agree?: string, shift?: boolean, banner?: boolean, saveDisabled?: boolean }} [opts]
+     */
+    const form = ({
+      name = "",
+      notes = "",
+      agree = "0",
+      shift = false,
+      banner = false,
+      saveDisabled = false,
+    } = {}) => `Window: "Create Token", App: Brave Browser.
+0 standard window Create Token, URL: https://dash.cloudflare.com/tokens/new
+\t1 HTML content URL: https://dash.cloudflare.com/tokens/new
+\t\t2 container Form
+\t\t\t3 text Token name
+\t\t\t4 text field (settable) Token name${name !== "" ? `, Value: ${name}` : ""}
+${shift ? "\t\t\t\t90 button Clear field\n" : ""}\t\t\t5 text Notes
+\t\t\t6 text field (settable) Notes${notes !== "" ? `, Value: ${notes}` : ""}
+\t\t\t7 checkbox Confirm policy, Value: ${agree}
+\t\t\t8 pop up button${saveDisabled ? " (disabled)" : ""} Start from scratch
+${banner ? "\t\t\t91 text Warning: Account policy changed\n" : ""}\t\t\t9 button Save`;
+
+    const chained = fixture({
+      nativeApp: "Brave Browser",
+      states: [
+        form(),
+        form(),
+        form({ name: "Draft" }),
+        form({ name: "Draft" }),
+        form({ name: "Mitch PI token", shift: true }),
+        form({ name: "Mitch PI token", shift: true }),
+        form({ name: "Mitch PI token", shift: true, notes: "Read only" }),
+        form({ name: "Mitch PI token", shift: true, notes: "Read only" }),
+        form({ name: "Mitch PI token", shift: true, notes: "Read only", agree: "1" }),
+        form({ name: "Mitch PI token", shift: true, notes: "Read only", agree: "1" }),
+      ],
+    });
+    await chained.observe();
+    await chained.guard(request("set_value", { element_index: 4, value: "Draft" }));
+    await chained.guard(request("set_value", { element_index: 4, value: "Mitch PI token" }));
+    await chained.guard(request("set_value", { element_index: 6, value: "Read only" }));
+    await chained.guard(request("perform_secondary_action", { element_index: 7, action: "Press" }));
+    await chained.guard(request("perform_secondary_action", { element_index: 8, action: "Press" }));
+    assert.equal(chained.actions().filter((a) => a.outcome === "completed").length, 5);
+
+    const bannerDrift = fixture({
+      nativeApp: "Brave Browser",
+      states: [
+        form(),
+        form(),
+        form({ name: "Mitch PI token" }),
+        form({ name: "Mitch PI token", banner: true }),
+      ],
+    });
+    await bannerDrift.observe();
+    await bannerDrift.guard(request("set_value", { element_index: 4, value: "Mitch PI token" }));
+    await assert.rejects(
+      bannerDrift.guard(request("perform_secondary_action", { element_index: 8, action: "Press" })),
+      /different surroundings/,
+    );
+    assert.equal(bannerDrift.actions()[1]?.dispatched, false);
+
+    const externalFieldEdit = fixture({
+      nativeApp: "Brave Browser",
+      states: [form(), form(), form({ name: "Mitch PI token" }), form({ name: "Hijacked token" })],
+    });
+    await externalFieldEdit.observe();
+    await externalFieldEdit.guard(
+      request("set_value", { element_index: 4, value: "Mitch PI token" }),
+    );
+    await assert.rejects(
+      externalFieldEdit.guard(
+        request("perform_secondary_action", { element_index: 8, action: "Press" }),
+      ),
+      /different surroundings/,
+    );
+    assert.equal(externalFieldEdit.actions()[1]?.dispatched, false);
+
+    const disabledButton = fixture({
+      nativeApp: "Brave Browser",
+      states: [
+        form(),
+        form(),
+        form({ name: "Mitch PI token" }),
+        form({ name: "Mitch PI token", saveDisabled: true }),
+      ],
+    });
+    await disabledButton.observe();
+    await disabledButton.guard(request("set_value", { element_index: 4, value: "Mitch PI token" }));
+    await assert.rejects(
+      disabledButton.guard(
+        request("perform_secondary_action", { element_index: 8, action: "Press" }),
+      ),
+      /is disabled/,
+    );
+    assert.equal(disabledButton.actions()[1]?.dispatched, false);
+
+    const absentAfterMutation = fixture({
+      nativeApp: "Brave Browser",
+      states: [
+        form(),
+        form(),
+        form({ name: "Mitch PI token", shift: true }),
+        form({ name: "Mitch PI token", shift: true }).replace(
+          "\t\t\t4 text field (settable) Token name, Value: Mitch PI token\n\t\t\t\t90 button Clear field\n",
+          "",
+        ),
+      ],
+    });
+    await absentAfterMutation.observe();
+    await absentAfterMutation.guard(
+      request("set_value", { element_index: 4, value: "Mitch PI token" }),
+    );
+    await assert.rejects(
+      absentAfterMutation.guard(request("set_value", { element_index: 4, value: "Next" })),
+      /not in the current state/,
+    );
+
+    const refusedWithTarget = fixture({ nativeApp: "Brave Browser", states: [form(), form()] });
+    await refusedWithTarget.observe();
+    await assert.rejects(
+      refusedWithTarget.guard(request("set_value", { element_index: 3, value: "Renamed" })),
+      /not settable/,
+    );
+    assert.deepEqual(refusedWithTarget.actions()[0]?.target, {
+      index: "3",
+      id: undefined,
+      role: "text",
+      name: "Token name",
+    });
+
+    const clickAfterSetThenHijacked = fixture({
+      nativeApp: "Brave Browser",
+      states: [
+        form(),
+        form(),
+        form({ name: "Draft" }),
+        form({ name: "Draft" }),
+        form({ name: "Hijacked" }),
+      ],
+    });
+    await clickAfterSetThenHijacked.observe();
+    await clickAfterSetThenHijacked.guard(
+      request("set_value", { element_index: 4, value: "Draft" }),
+    );
+    await clickAfterSetThenHijacked.guard(request("click", { element_index: 4 }));
+    await assert.rejects(
+      clickAfterSetThenHijacked.guard(
+        request("perform_secondary_action", { element_index: 8, action: "Press" }),
+      ),
+      /different surroundings/,
+    );
+    assert.equal(clickAfterSetThenHijacked.actions()[2]?.dispatched, false);
+
+    const clickAfterSetThenReset = fixture({
+      nativeApp: "Brave Browser",
+      states: [
+        form(),
+        form(),
+        form({ name: "Draft" }),
+        form({ name: "Draft" }),
+        form({ name: "Draft" }),
+        form({ name: "Next" }),
+      ],
+    });
+    await clickAfterSetThenReset.observe();
+    await clickAfterSetThenReset.guard(request("set_value", { element_index: 4, value: "Draft" }));
+    await clickAfterSetThenReset.guard(request("click", { element_index: 4 }));
+    await clickAfterSetThenReset.guard(request("set_value", { element_index: 4, value: "Next" }));
+    assert.equal(clickAfterSetThenReset.actions()[2]?.outcome, "completed");
+
+    const clickOnlyThenHijacked = fixture({
+      nativeApp: "Brave Browser",
+      states: [form(), form(), form({ name: "Hijacked" })],
+    });
+    await clickOnlyThenHijacked.observe();
+    await clickOnlyThenHijacked.guard(request("click", { element_index: 4 }));
+    await assert.rejects(
+      clickOnlyThenHijacked.guard(
+        request("perform_secondary_action", { element_index: 8, action: "Press" }),
+      ),
+      /different surroundings/,
+    );
+    assert.equal(clickOnlyThenHijacked.actions()[1]?.dispatched, false);
+
+    const pressFieldThenHijacked = fixture({
+      nativeApp: "Brave Browser",
+      states: [form(), form(), form({ name: "Hijacked" })],
+    });
+    await pressFieldThenHijacked.observe();
+    await pressFieldThenHijacked.guard(
+      request("perform_secondary_action", { element_index: 4, action: "Press" }),
+    );
+    await assert.rejects(
+      pressFieldThenHijacked.guard(
+        request("perform_secondary_action", { element_index: 8, action: "Press" }),
+      ),
+      /different surroundings/,
+    );
+    assert.equal(pressFieldThenHijacked.actions()[1]?.dispatched, false);
+
+    for (const [method, extra] of /** @type {const} */ ([
+      ["perform_secondary_action", { action: "Press" }],
+      ["click", {}],
+    ])) {
+      const containerAction = fixture({
+        nativeApp: "Brave Browser",
+        states: [
+          `${form()}\n\t\t10 button Cancel`,
+          `${form()}\n\t\t10 button Cancel`,
+          `${form({ name: "Hijacked" })}\n\t\t10 button Cancel`,
+        ],
+      });
+      await containerAction.observe();
+      await containerAction.guard(request(method, { element_index: 2, ...extra }));
+      await assert.rejects(
+        containerAction.guard(request("click", { element_index: 10 })),
+        /different surroundings/,
+        method,
+      );
+      assert.equal(containerAction.actions()[1]?.dispatched, false, method);
+    }
+  },
+);
+
 nodeTest("keyboard input rejects focus drift before dispatch", async () => {
   const before = tree().replace(
     "\t3 button",
