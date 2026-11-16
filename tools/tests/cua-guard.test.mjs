@@ -1822,6 +1822,45 @@ ${banner ? "\t\t\t91 text Warning: Account policy changed\n" : ""}\t\t\t9 button
       );
       assert.equal(containerAction.actions()[1]?.dispatched, false, method);
     }
+
+    const withStableId = form().replace(
+      "4 text field (settable) Token name",
+      "4 text field (settable) Token name, ID: token-name",
+    );
+    const idFieldRenamed = fixture({
+      nativeApp: "Brave Browser",
+      states: [
+        withStableId,
+        withStableId,
+        withStableId.replace(
+          "Token name, ID: token-name",
+          "Token name, ID: token-name, Value: Draft",
+        ),
+        withStableId.replace(
+          "Token name, ID: token-name",
+          "Evil name, ID: token-name, Value: Draft",
+        ),
+      ],
+    });
+    await idFieldRenamed.observe();
+    await idFieldRenamed.guard(request("set_value", { element_index: 4, value: "Draft" }));
+    await assert.rejects(
+      idFieldRenamed.guard(request("click", { element_index: 9 })),
+      /different surroundings/,
+    );
+    assert.equal(idFieldRenamed.actions()[1]?.dispatched, false);
+
+    const fieldChildAdded = fixture({
+      nativeApp: "Brave Browser",
+      states: [form(), form(), form({ name: "Draft" }), form({ name: "Draft", shift: true })],
+    });
+    await fieldChildAdded.observe();
+    await fieldChildAdded.guard(request("set_value", { element_index: 4, value: "Draft" }));
+    await assert.rejects(
+      fieldChildAdded.guard(request("click", { element_index: 9 })),
+      /different surroundings/,
+    );
+    assert.equal(fieldChildAdded.actions()[1]?.dispatched, false);
   },
 );
 
