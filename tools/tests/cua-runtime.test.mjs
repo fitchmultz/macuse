@@ -4,6 +4,12 @@ import { mkdtemp, mkdir, writeFile, chmod, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CuaRuntime, resolveLaunch, appApproval, imageMetadata } from "../../lib/cua-runtime.mjs";
+import {
+  MACUSE_API_DOC,
+  SUPPRESS_STATE_END,
+  SUPPRESS_STATE_START,
+  installCuaBanner,
+} from "../../lib/cua-banner.mjs";
 
 /** @typedef {import("../../lib/cua-runtime.mjs").CuaToolRequest} CuaToolRequest */
 /** @typedef {import("../../lib/cua-runtime.mjs").CuaCallToolOptions} CuaCallToolOptions */
@@ -545,6 +551,8 @@ for (const packaged of [false, true]) {
         assert.equal(config.env.CODEX_CLI_PATH, codex);
         assert.match(config.env.MACUSE_SKY_SERVICE_URL, /native-service\.js$/);
         assert.equal(config.env.NODE_REPL_TRUSTED_CODE_PATHS.split(":").length, 2);
+        assert.match(config.env.NODE_REPL_JS_BANNER ?? "", /cua-banner\.mjs/);
+        assert.match(config.env.NODE_REPL_JS_BANNER ?? "", /installCuaBanner/);
         const trustedServices = /** @type {unknown} */ (
           JSON.parse(config.env.NODE_REPL_TRUSTED_SERVICES)
         );
@@ -802,5 +810,122 @@ nodeTest(
     assert.doesNotMatch(uncertainText, /from this failed run/);
     assert.doesNotMatch(uncertainText, /2 View summary/);
     await uncertain.runtime.stop();
+  },
+);
+
+nodeTest("installCuaBanner adds silent getApp, distinct state IDs, and waitFor", async () => {
+  /** @type {{ text: string, itemId: string | undefined }[]} */
+  const writes = [];
+  const stateLog = [
+    'Window: "Loading", App: Demo.\n0 static text Loading...',
+    'Window: "Tokens", App: Demo.\n0 button API Tokens',
+  ];
+  let pollIndex = 0;
+  /** @type {{ cua?: { getApp: (name: string, opts?: unknown) => Promise<{ getAXState: (opts?: unknown) => Promise<string>, waitFor: (predicate: unknown, opts?: unknown) => Promise<string> }> } }} */
+  const fakeRoot = {};
+  await installCuaBanner({
+    globalObject: fakeRoot,
+    repl: {
+      write(/** @type {string} */ text, /** @type {string | undefined} */ itemId) {
+        writes.push({ text, itemId });
+      },
+    },
+    loadVendor: async () => {
+      fakeRoot.cua = {
+        async getApp(/** @type {string} */ name) {
+          const initial = `Window: "Init", App: ${name}.`;
+          writes.push({ text: initial, itemId: "cua.state" });
+          return {
+            async getAXState(/** @type {unknown} */ opts) {
+              const fullRequested = isRecord(opts) && opts.disableDiffing === true;
+              const next = fullRequested
+                ? (stateLog[Math.min(pollIndex++, stateLog.length - 1)] ?? "")
+                : "There has been no change in the accessibility tree.";
+              if (!isRecord(opts) || opts.emit !== false) {
+                writes.push({ text: next, itemId: "cua.state" });
+              }
+              return next;
+            },
+            async waitFor() {
+              return "";
+            },
+          };
+        },
+      };
+    },
+  });
+  const cua = fakeRoot.cua;
+  assert.ok(cua !== undefined);
+  const app = await cua.getApp("Demo", { emit: false });
+  assert.equal(writes.length, 3);
+  assert.equal(writes.at(0)?.text, SUPPRESS_STATE_START);
+  assert.equal(writes.at(2)?.text, SUPPRESS_STATE_END);
+  const matched = await app.waitFor((/** @type {string} */ s) => s.includes("API Tokens"), {
+    timeoutMs: 200,
+    intervalMs: 5,
+  });
+  assert.match(matched, /API Tokens/);
+  // waitFor polled silently (no extra write for "Loading...") and emitted once with distinct itemId.
+  assert.equal(writes.length, 4);
+  assert.equal(writes.at(3)?.itemId, "cua.state.1");
+  assert.equal(writes.at(3)?.text, matched);
+  await app.getAXState();
+  assert.equal(writes.at(4)?.itemId, "cua.state.2");
+  await assert.rejects(
+    () =>
+      app.waitFor((/** @type {string} */ s) => s.includes("Missing"), {
+        timeoutMs: 15,
+        intervalMs: 5,
+      }),
+    /waitFor timed out after 15ms/,
+  );
+  await assert.rejects(() => app.waitFor(123), TypeError);
+  await assert.rejects(() => app.waitFor(() => true, { timeoutMs: 0 }), RangeError);
+});
+
+nodeTest(
+  "runtime replaces vendor docs once per session, strips suppressed getApp state, and deduplicates state blocks",
+  async () => {
+    const vendorDoc =
+      "## Computer Use\n\nControl native apps and browsers on the user's computer.\ncua_repl\n";
+    const treeA = 'Window: "Dashboard", App: Brave Browser.\n0 button View Tokens';
+    const treeB = 'Window: "API Tokens", App: Brave Browser.\n0 button Create Token';
+    let turn = 0;
+    const f = fixture((request) => {
+      if (request.name !== "js") {
+        return;
+      }
+      turn++;
+      if (turn === 1) {
+        return {
+          ...success(request),
+          content: [
+            { type: "text", text: vendorDoc },
+            { type: "text", text: treeA },
+            { type: "text", text: treeA },
+            { type: "text", text: "console log ok" },
+          ],
+        };
+      }
+      return {
+        ...success(request),
+        content: [
+          { type: "text", text: vendorDoc },
+          { type: "text", text: `${SUPPRESS_STATE_START}${treeA}${SUPPRESS_STATE_END}${treeB}` },
+        ],
+      };
+    });
+    const first = await f.runtime.execute({ code: "first call" });
+    assert.deepEqual(
+      first.content.map((c) => (c.type === "text" ? c.text : "")),
+      [MACUSE_API_DOC, treeA, "console log ok"],
+    );
+    await f.runtime.reset();
+    const afterReset = await f.runtime.execute({ code: "after reset" });
+    assert.deepEqual(
+      afterReset.content.map((c) => (c.type === "text" ? c.text : "")),
+      [treeB],
+    );
+    await f.runtime.stop();
   },
 );
