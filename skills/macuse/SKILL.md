@@ -27,9 +27,9 @@ Start by calling `macuse` with one of:
 
 Replace `Exact App` with the intended name, bundle ID, or path from the app inventory. Keep that identifier in `apps`; the guard recognizes the native-resolved app path returned by the service without fuzzy aliases. The runtime emits documentation and first state. Read them before acting. Bindings persist between calls until reset or a session boundary; use `var` for bindings you may need to assign again.
 
-`app.getAXState()`, `app.getScreenshot()`, and `app.getAXStateAndScreenshot()` auto-emit. Do not print or emit the same result again. Native state is full, even if vendor documentation describes optional diff behavior. Use task-relevant JavaScript summaries when output is large; guards retain the full state.
+Pass `{ emit: false }` (`await cua.getApp("Exact App", { emit: false })`) when rebinding an already-observed app or when ending the script with `await app.getAXState()`, or reuse persistent `var` bindings (`if (typeof app === "undefined") ...`). `cua.getApp()`, `app.getAXState()`, `app.getScreenshot()`, `app.getAXStateAndScreenshot()`, and `app.waitFor()` auto-emit by default; do not print or emit the same result again. Native state is always full (no diff mode). Use task-relevant JavaScript summaries when output is large; guards retain the full state.
 
-Only the computer surface and guarded Sky service are enabled in the normal vendor sandbox. Vendor documentation may mention broader features: do not use browser/audio surfaces, arbitrary imports/modules, or another evaluator. Primary GUI calls do not use app-server.
+Only the computer surface and guarded Sky service are enabled in the normal vendor sandbox; do not use browser/audio surfaces, arbitrary imports/modules, or another evaluator. Primary GUI calls do not use app-server.
 
 ## Action loop
 
@@ -37,7 +37,7 @@ Only the computer surface and guarded Sky service are enabled in the normal vend
 2. For a mutation, pass `apps` matching the identifiers used by the code, `allowMutating:true`, and a concrete nonempty `safetyNote` naming the target, intended effect, and stop boundary. These gates do not create user permission; use the user's request or standing authorization for covered actions without repeat approval.
 3. Derive native element indexes from the latest observation. Use the actual API signatures, such as `app.performSecondaryAction(index, "Press")`, `app.setValue(index, value)`, `app.selectText(index, text)`, or `app.scroll(index, "down", 1)`. Primary accessibility `Press` is permitted even when Sky omits it from the secondary-action list; that omission does not require a pointer click. Other secondary action names must be listed on the element. There is no extra selector API.
 4. Await every action. Prefer accessibility actions, intended full-field replacement, keys, and element-targeted scroll. Pointer clicks/drags and coordinate scroll use the same scoped mutation authorization. On macOS, `app.click(target, {key, durationMs})` holds a key chord and controls mouse-down duration; `app.pressKey(key, {durationMs})` controls key duration. The native binding accepts integer durations from 0 to 30,000 milliseconds. Coordinates use returned screenshot pixels; do not invent Retina/OS-point scaling.
-5. Observe after the action before deciding what comes next. `getAXState()` and screenshot methods already wait for capture; do not add blind sleeps. Verify the requested result, not merely a successful native return.
+5. Observe after the action before deciding what comes next. Use `await app.waitFor((state) => ..., { timeoutMs, intervalMs, emit })` to wait for async UI transitions or SPA navigation without flooding context: it polls `getAXState({ emit: false })` silently and emits the matched state once. Verify the requested result, not merely a successful native return.
 6. Stop when the user's requested result is present. Report a concrete blocker when it cannot be verified.
 
 Example call after binding and inspecting Activity Monitor, for an approved dismissal:
