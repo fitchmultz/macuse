@@ -697,3 +697,63 @@ for (const mode of [
     assert.equal(mutations, ["unknown", "missing-coverage"].includes(mode) ? 0 : 2);
   });
 }
+
+nodeTest(
+  "focus summary surfaces native Accessibility window-tracking errors and truncation",
+  async () => {
+    const cases = /** @type {const} */ ([
+      [{ 1351: 0 }, [], false, /0 activation\/window transition\(s\)\./, undefined],
+      [
+        { 1351: -25211 },
+        [],
+        false,
+        /0 activation\/window transition\(s\); window tracking unavailable \(pid 1351: AX API disabled \(Accessibility permission missing\)\)/,
+        { 1351: -25211 },
+      ],
+      [
+        { 100: 0, 1351: -25204 },
+        [
+          {
+            kind: "activation",
+            at: 1,
+            app: { bundleId: "com.example.App", name: "App", pid: 100, path: null },
+          },
+          {
+            kind: "focused_window",
+            at: 2,
+            pid: 100,
+            window: { token: "w1", title: "Doc", document: null },
+          },
+        ],
+        true,
+        /2 activation\/window transition\(s\); window tracking unavailable for pid 1351: AX cannot complete \(truncated\)/,
+        { 1351: -25204 },
+      ],
+    ]);
+    for (const [focusedWindow, transitions, truncated, pattern, expectedErrors] of cases) {
+      const f = fixture();
+      f.native.endObservation = async () => ({
+        before: { frontmost: null, focusedWindow: null },
+        after: { frontmost: null, focusedWindow: null },
+        transitions: [...transitions],
+        coverage: {
+          applicationActivation: true,
+          focusedWindow,
+          truncated,
+          inputAttribution: false,
+          windowDetails: "targetAppsOnly",
+        },
+      });
+      const response = await f.session.callTool("macuse", { code: "42" });
+      assert.equal(response.isError, false);
+      const focusText = response.content.map(textOf).join("\n");
+      assert.match(focusText, pattern);
+      const focus = response.details.macuse.focus;
+      if (!isRecord(focus)) {
+        assert.fail("missing focus details");
+      }
+      assert.deepEqual(focus.focusedWindowErrors, expectedErrors);
+      await f.session.stop();
+    }
+  },
+);
