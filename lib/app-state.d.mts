@@ -30,6 +30,17 @@ export interface AppObservation {
   observedAt: number;
 }
 export function parseAppState(app: string, text: string): AppObservation;
+export function parseMaskedContexts(
+  text: string,
+  maskedSlots: ReadonlyMap<number, number>,
+): { context: string; rowContext?: string }[];
+export function sameElementIdentity(expected: AppElement, candidate: AppElement): boolean;
+export function selectContextualCandidate<
+  C extends { context?: string | undefined; rowContext?: string | undefined },
+>(
+  expected: { context?: string | undefined; rowContext?: string | undefined },
+  candidates: readonly C[],
+): C | undefined;
 export function sameDocument(before: AppObservation, after: AppObservation): boolean;
 export function findUniqueElement(
   element: AppElement,
