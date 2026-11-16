@@ -128,6 +128,7 @@ export interface LaunchEnv {
   NODE_REPL_NODE_MODULE_DIRS: string;
   NODE_REPL_TRUSTED_CODE_PATHS: string;
   NODE_REPL_TRUSTED_SERVICES: string;
+  NODE_REPL_JS_BANNER: string;
   MACUSE_SKY_SERVICE_URL: string;
 }
 export function imageMetadata(data: string): { mimeType?: string; width?: number; height?: number };

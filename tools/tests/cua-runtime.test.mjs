@@ -3,11 +3,13 @@ import nodeTest from "node:test";
 import { mkdtemp, mkdir, writeFile, chmod, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { setTimeout as delay } from "node:timers/promises";
 import { CuaRuntime, resolveLaunch, appApproval, imageMetadata } from "../../lib/cua-runtime.mjs";
 import {
   MACUSE_API_DOC,
   SUPPRESS_STATE_END,
   SUPPRESS_STATE_START,
+  VENDOR_DOC_SENTINEL,
   installCuaBanner,
 } from "../../lib/cua-banner.mjs";
 
@@ -551,8 +553,8 @@ for (const packaged of [false, true]) {
         assert.equal(config.env.CODEX_CLI_PATH, codex);
         assert.match(config.env.MACUSE_SKY_SERVICE_URL, /native-service\.js$/);
         assert.equal(config.env.NODE_REPL_TRUSTED_CODE_PATHS.split(":").length, 2);
-        assert.match(config.env.NODE_REPL_JS_BANNER ?? "", /cua-banner\.mjs/);
-        assert.match(config.env.NODE_REPL_JS_BANNER ?? "", /installCuaBanner/);
+        assert.match(config.env.NODE_REPL_JS_BANNER, /cua-banner\.mjs/);
+        assert.match(config.env.NODE_REPL_JS_BANNER, /installCuaBanner/);
         const trustedServices = /** @type {unknown} */ (
           JSON.parse(config.env.NODE_REPL_TRUSTED_SERVICES)
         );
@@ -857,20 +859,22 @@ nodeTest("installCuaBanner adds silent getApp, distinct state IDs, and waitFor",
   const cua = fakeRoot.cua;
   assert.ok(cua !== undefined);
   const app = await cua.getApp("Demo", { emit: false });
-  assert.equal(writes.length, 3);
-  assert.equal(writes.at(0)?.text, SUPPRESS_STATE_START);
-  assert.equal(writes.at(2)?.text, SUPPRESS_STATE_END);
+  assert.equal(writes.at(0)?.itemId, "cua.core");
+  assert.equal(writes.at(0)?.text, VENDOR_DOC_SENTINEL);
+  assert.equal(writes.length, 4);
+  assert.equal(writes.at(1)?.text, SUPPRESS_STATE_START);
+  assert.equal(writes.at(3)?.text, SUPPRESS_STATE_END);
   const matched = await app.waitFor((/** @type {string} */ s) => s.includes("API Tokens"), {
     timeoutMs: 200,
     intervalMs: 5,
   });
   assert.match(matched, /API Tokens/);
   // waitFor polled silently (no extra write for "Loading...") and emitted once with distinct itemId.
-  assert.equal(writes.length, 4);
-  assert.equal(writes.at(3)?.itemId, "cua.state.1");
-  assert.equal(writes.at(3)?.text, matched);
+  assert.equal(writes.length, 5);
+  assert.equal(writes.at(4)?.itemId, "cua.state.1");
+  assert.equal(writes.at(4)?.text, matched);
   await app.getAXState();
-  assert.equal(writes.at(4)?.itemId, "cua.state.2");
+  assert.equal(writes.at(5)?.itemId, "cua.state.2");
   await assert.rejects(
     () =>
       app.waitFor((/** @type {string} */ s) => s.includes("Missing"), {
@@ -881,13 +885,56 @@ nodeTest("installCuaBanner adds silent getApp, distinct state IDs, and waitFor",
   );
   await assert.rejects(() => app.waitFor(123), TypeError);
   await assert.rejects(() => app.waitFor(() => true, { timeoutMs: 0 }), RangeError);
+
+  // Overlapping suppressed and non-suppressed getApp calls serialize cleanly without cross-stripping.
+  /** @type {{ text: string, itemId: string | undefined }[]} */
+  const overlapWrites = [];
+  /** @type {{ cua?: { getApp: (name: string, opts?: unknown) => Promise<unknown> } }} */
+  const overlapRoot = {};
+  await installCuaBanner({
+    globalObject: overlapRoot,
+    repl: {
+      write(/** @type {string} */ text, /** @type {string | undefined} */ itemId) {
+        overlapWrites.push({ text, itemId });
+      },
+    },
+    loadVendor: async () => {
+      overlapRoot.cua = {
+        async getApp(/** @type {string} */ name) {
+          await delay(name === "SlowA" ? 15 : 1);
+          overlapWrites.push({ text: `Window: "${name}", App: ${name}.`, itemId: "cua.state" });
+          return {};
+        },
+      };
+    },
+  });
+  const overlapCua = overlapRoot.cua;
+  assert.ok(overlapCua !== undefined);
+  await Promise.all([overlapCua.getApp("SlowA", { emit: false }), overlapCua.getApp("FastB")]);
+  const combinedState = overlapWrites
+    .filter((w) => w.itemId === "cua.state")
+    .map((w) => w.text)
+    .join("");
+  const overlapRuntime = fixture((request) =>
+    request.name === "js"
+      ? { ...success(request), content: [{ type: "text", text: combinedState }] }
+      : undefined,
+  );
+  const overlapNormalized = await overlapRuntime.runtime.execute({ code: "overlap" });
+  assert.deepEqual(
+    overlapNormalized.content.map((c) => (c.type === "text" ? c.text : "")),
+    ['Window: "FastB", App: FastB.'],
+  );
+  await overlapRuntime.runtime.stop();
 });
 
 nodeTest(
   "runtime replaces vendor docs once per session, strips suppressed getApp state, and deduplicates state blocks",
   async () => {
+    // Excerpt matching installed @oai/cua@0.2.6 (note curly apostrophe) plus banner sentinel.
     const vendorDoc =
-      "## Computer Use\n\nControl native apps and browsers on the user's computer.\ncua_repl\n";
+      "## Computer Use\n\nControl native apps and browsers on the user’s computer by reading or operating UI.\n\n- Use `cua_repl` (JavaScript) for all UI actions.\n" +
+      VENDOR_DOC_SENTINEL;
     const treeA = 'Window: "Dashboard", App: Brave Browser.\n0 button View Tokens';
     const treeB = 'Window: "API Tokens", App: Brave Browser.\n0 button Create Token';
     let turn = 0;
