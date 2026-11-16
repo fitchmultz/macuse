@@ -602,3 +602,205 @@ nodeTest(
     await f.runtime.stop();
   },
 );
+
+nodeTest(
+  "pre-execution syntax and import errors do not reset the kernel or invalidate observations",
+  async () => {
+    const observation = {
+      app: "App",
+      title: "fixture",
+      url: null,
+      text: "existing snapshot",
+      elements: [],
+      observedAt: Date.now(),
+    };
+    let callCount = 0;
+    const f = fixture((request) => {
+      if (request.name !== "js") {
+        return;
+      }
+      callCount++;
+      if (callCount === 1) {
+        return success(request, { observations: [observation] });
+      }
+      if (callCount <= 3) {
+        const code = callCount === 2 ? "syntax_error" : "import_error";
+        const snippet =
+          code === "syntax_error" ? 'Expected ";" but found "timeoutMs"' : `pre-exec ${code}`;
+        return {
+          isError: true,
+          content: [{ type: "text", text: snippet }],
+          _meta: { "codex/telemetry": { error_code: code } },
+        };
+      }
+      return success(request);
+    });
+    await f.runtime.execute({ code: "var app = await cua.getApp('App')" });
+    for (const code of ["return 1;", 'import foo from "nope";']) {
+      const failed = await f.runtime.execute({ ...mutating, code });
+      assert.equal(failed.isError, true);
+      assert.equal(failed.details.macuse.status, "failed");
+      assert.equal(failed.details.macuse.kernelReset, false);
+      assert.notEqual(f.runtime.getObservation("App"), undefined);
+    }
+    await f.runtime.execute({ code: "check follow-up" });
+    assert.deepEqual(f.calls.at(-1)?.request._meta?.macuse?.invalidatedApps, []);
+    assert.equal(
+      f.calls.some((c) => c.request.name === "js_reset"),
+      false,
+    );
+    await f.runtime.stop();
+  },
+);
+
+nodeTest(
+  "timeout watchdog waits past native reset delivery and surfaces timeout if fallback fires",
+  async () => {
+    /** @type {string[]} */
+    const events = [];
+    const slowNative = fixture(
+      (request) =>
+        new Promise((resolve) => {
+          if (request.name !== "js") {
+            events.push(request.name);
+            resolve({ content: [] });
+            return;
+          }
+          setTimeout(() => {
+            events.push("native_result");
+            resolve({
+              isError: true,
+              content: [{ type: "text", text: "js execution timed out; kernel reset" }],
+            });
+          }, 300);
+        }),
+    );
+    const nativeWon = await slowNative.runtime.execute({ code: "wait", timeoutMs: 50 });
+    assert.equal(nativeWon.details.macuse.status, "unknown");
+    assert.deepEqual(events, ["native_result", "js_reset"]);
+    const firstBlock = nativeWon.content[0];
+    assert.match(firstBlock?.type === "text" ? firstBlock.text : "", /timed out/);
+    await slowNative.runtime.stop();
+
+    /** @type {((value: unknown) => void) | undefined} */
+    let release;
+    const hungNative = fixture((request) => {
+      if (request.name === "js_reset") {
+        release?.({ isError: true, content: [{ type: "text", text: "js execution reset" }] });
+        return { content: [] };
+      }
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    });
+    const fallbackWon = await hungNative.runtime.execute({ code: "hang", timeoutMs: 10 });
+    assert.equal(fallbackWon.details.macuse.status, "unknown");
+    assert.equal(fallbackWon.details.macuse.interruption, "timeout");
+    assert.ok(
+      fallbackWon.content.some(
+        (c) => c.type === "text" && /Execution timed out after 10ms; kernel reset\./.test(c.text),
+      ),
+    );
+    await hungNative.runtime.stop();
+  },
+);
+
+nodeTest(
+  "failed mid-script runs emit the latest guard observation when absent from visible output",
+  async () => {
+    const f = fixture((request) => {
+      if (request.name !== "js") {
+        return;
+      }
+      const staleSnapshot = {
+        app: "Finder",
+        title: "Desktop",
+        url: null,
+        text: 'Window: "Desktop", App: Finder.\n0 list stale',
+        elements: [],
+        observedAt: Date.now() - 60_000,
+      };
+      const freshSnapshot = {
+        app: "Brave Browser",
+        title: "Cloudflare",
+        url: "https://dash.cloudflare.com/",
+        text: 'Window: "Cloudflare", App: Brave Browser.\n0 standard window Cloudflare\n\t1 menu\n\t\t2 View summary',
+        elements: [],
+        observedAt: Date.now(),
+      };
+      const res = success(request, {
+        observations: [staleSnapshot, freshSnapshot],
+        actions: [
+          {
+            id: 1,
+            method: "perform_secondary_action",
+            app: "Brave Browser",
+            dispatched: false,
+            outcome: "not_dispatched",
+            verification: "none",
+            error: "Target identity not confirmed: index 99",
+          },
+        ],
+      });
+      return {
+        ...res,
+        content: [
+          {
+            type: "text",
+            text: 'Window: "New Tab", App: Brave Browser.\n0 standard window New Tab',
+          },
+        ],
+      };
+    });
+    const failed = await f.runtime.execute(mutating);
+    assert.equal(failed.isError, true);
+    const text = failed.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+    assert.match(text, /Latest observed Brave Browser state from this failed run:/);
+    assert.match(text, /2 View summary/);
+    assert.doesNotMatch(text, /0 list stale/);
+    const lastBlock = failed.content.at(-1);
+    assert.match(
+      lastBlock?.type === "text" ? lastBlock.text : "",
+      /Target identity not confirmed: index 99/,
+    );
+    await f.runtime.stop();
+
+    const uncertain = fixture((request) => {
+      if (request.name !== "js") {
+        return;
+      }
+      const res = success(request, {
+        observations: [
+          {
+            app: "Brave Browser",
+            title: "Cloudflare",
+            url: "https://dash.cloudflare.com/",
+            text: 'Window: "Cloudflare", App: Brave Browser.\n0 standard window Cloudflare\n\t2 View summary',
+            elements: [],
+            observedAt: Date.now(),
+          },
+        ],
+        actions: [
+          {
+            id: 1,
+            method: "perform_secondary_action",
+            app: "Brave Browser",
+            dispatched: true,
+            outcome: "unknown",
+            verification: "none",
+            error: "Native completion was not reported.",
+          },
+        ],
+      });
+      return { ...res, content: [] };
+    });
+    const uncertainResult = await uncertain.runtime.execute(mutating);
+    assert.equal(uncertainResult.details.macuse.status, "unknown");
+    const uncertainText = uncertainResult.content
+      .map((c) => (c.type === "text" ? c.text : ""))
+      .join("\n");
+    assert.doesNotMatch(uncertainText, /from this failed run/);
+    assert.doesNotMatch(uncertainText, /2 View summary/);
+    await uncertain.runtime.stop();
+  },
+);
