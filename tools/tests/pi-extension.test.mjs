@@ -364,7 +364,11 @@ const output = [
 nodeTest(
   "Astra restores only matching retained macuse images and removes only its obsolete resize note",
   () => {
-    for (const api of ["openai-responses", "openai-codex-responses"]) {
+    const models = ["gpt-6-astra", "gpt-6.2-astra"].flatMap((id) =>
+      ["openai-responses", "openai-codex-responses"].map((api) => ({ id, api })),
+    );
+    for (const model of models) {
+      const { api } = model;
       for (const type of ["function_call_output", "custom_tool_call_output"]) {
         const payload = {
           input: [
@@ -372,7 +376,6 @@ nodeTest(
             { type, call_id: "foreign", output },
           ],
         };
-        const model = { id: "gpt-6-astra", api };
         const restored = restoreMacuseImages(
           payload,
           new Map([["call_one", entry.message]]),

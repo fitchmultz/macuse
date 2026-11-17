@@ -123,7 +123,7 @@ const responsesModel = openaiProvider()
   .getModels()
   .find((model) => model.input.includes("image"));
 assert.ok(responsesModel !== undefined, "Installed host has no Responses image model");
-const model = { ...responsesModel, id: "gpt-6-astra" };
+const model = { ...responsesModel, id: "gpt-6.2-astra" };
 const scratch = await mkdtemp(join(tmpdir(), "macuse-host-"));
 /** @type {PiSession | undefined} */
 let session;

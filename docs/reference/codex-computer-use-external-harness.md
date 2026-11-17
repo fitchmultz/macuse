@@ -42,7 +42,7 @@ App observation methods emit text/images directly. Guards retain full state, and
 
 `saveImagePath` on `macuse` saves the first emitted screenshot to that exact path, resolving relative paths against the session working directory and expanding `~`. It never overwrites an existing file. The result reports `savedImage` evidence: path, byte count, SHA-256, actual MIME type, and available dimensions. Call a single screenshot observation when the intended saved frame matters.
 
-Screenshot coordinates refer to the native returned image, with no assumed Retina/OS-point conversion. For GPT-6-Astra, `auto` already means original resolution. The Pi `before_provider_request` hook restores original macuse image bytes only when Pi resized a matching retained tool output. It respects filtering/compaction and does not change other models or unrelated images. Both official Pi and `fitchmultz/pi` use shared public APIs; no host patches or current settings edits are required.
+Screenshot coordinates refer to the native returned image, with no assumed Retina/OS-point conversion. For GPT-6 Astra and GPT-6.2 Astra, `auto` already means original resolution. The Pi `before_provider_request` hook restores original macuse image bytes only when Pi resized a matching retained tool output. It respects filtering/compaction and does not change other models or unrelated images. Both official Pi and `fitchmultz/pi` use shared public APIs; no host patches or current settings edits are required.
 
 ## Source map
 
