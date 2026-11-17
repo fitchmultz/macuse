@@ -173,6 +173,8 @@ func handle(_ request: [String: Any]) -> [String: Any] {
     }
 }
 func connectSocket(_ path: String) -> Int32 {
+    let pidUrl = URL(fileURLWithPath: path).deletingLastPathComponent().appendingPathComponent("p")
+    try? "\(ProcessInfo.processInfo.processIdentifier)".write(to: pidUrl, atomically: true, encoding: .utf8)
     let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else { exit(1) }
     var addr = sockaddr_un()

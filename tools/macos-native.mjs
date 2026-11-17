@@ -66,6 +66,8 @@ const isAccessibilityStatus = (value) =>
   (value.bundleId === null || typeof value.bundleId === "string");
 
 const source = fileURLToPath(new URL("./macos-native.swift", import.meta.url));
+const NATIVE_TIMEOUT_MS = 15_000;
+const NATIVE_STOP_GRACE_MS = 1_000;
 /** @type {Promise<{ appPath: string, bundleId: string, signingMode: string }> | undefined} */
 let compiled;
 
@@ -146,7 +148,10 @@ export class MacOSNative {
           }
           this.#terminateQuietly();
         };
-        const session = await launchHelperSession(bundle.appPath, fail);
+        const session = await launchHelperSession(bundle.appPath, fail, {
+          startTimeoutMs: NATIVE_TIMEOUT_MS,
+          stopGraceMs: NATIVE_STOP_GRACE_MS,
+        });
         holder.current = session;
         this.#wireMessages(session);
         this.#session = session;
@@ -226,7 +231,7 @@ export class MacOSNative {
         this.#terminateQuietly();
       };
       const aborted = () => cancel("aborted");
-      const timer = setTimeout(() => cancel("timed out"), 15_000);
+      const timer = setTimeout(() => cancel("timed out"), NATIVE_TIMEOUT_MS);
       /** @type {PendingCall} */
       const pending = {
         resolve: (result) => finish(null, result),
