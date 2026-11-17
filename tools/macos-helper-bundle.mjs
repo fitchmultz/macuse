@@ -1,17 +1,18 @@
-import { spawn, spawnSync } from "node:child_process";
-import { createHash, randomBytes } from "node:crypto";
+import { execFile, spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { once } from "node:events";
 import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
+import { Socket, createServer } from "node:net";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 export const HELPER_BUNDLE_ID = "com.fitchmultz.macuse.helper";
 export const HELPER_NAME = "Macuse Helper";
 export const HELPER_EXECUTABLE = "MacuseHelper";
-const LOCK_STALE_MS = 120_000;
-const STARTUP_TIMEOUT_MS = 15_000;
+const execFileAsync = promisify(execFile);
 
-/** @typedef {{ socket: import("node:net").Socket, helperPid: number, bundleId: string | null, accessibilityTrusted: boolean, close: () => Promise<void> }} HelperSession */
+/** @typedef {{ socket: import("node:net").Socket, close: () => Promise<void> }} HelperSession */
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
 const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
@@ -31,7 +32,6 @@ export function discoverSigningIdentity() {
   }
   const result = spawnSync("/usr/bin/security", ["find-identity", "-v", "-p", "codesigning"], {
     encoding: "utf8",
-    timeout: 5000,
   });
   if (result.status !== 0 || typeof result.stdout !== "string") {
     return { identity: "-", mode: "adhoc" };
@@ -62,39 +62,6 @@ function parseSigningIdentities(output) {
     }
   }
   return list;
-}
-
-/**
- * @param {string} lockDir
- * @returns {Promise<() => Promise<void>>}
- */
-async function acquireBuildLock(lockDir) {
-  const deadline = Date.now() + LOCK_STALE_MS;
-  for (;;) {
-    try {
-      await mkdir(lockDir, { mode: 0o700 });
-      return async () => {
-        await rm(lockDir, { recursive: true, force: true });
-      };
-    } catch (error) {
-      const code =
-        typeof error === "object" && error !== null && "code" in error ? error.code : undefined;
-      if (code !== "EEXIST") {
-        throw error;
-      }
-      const stats = await stat(lockDir).catch(() => null);
-      if (stats !== null && Date.now() - stats.mtimeMs > LOCK_STALE_MS) {
-        await rm(lockDir, { recursive: true, force: true });
-        continue;
-      }
-      if (Date.now() >= deadline) {
-        throw new Error(`Timed out waiting for helper build lock: ${lockDir}`, { cause: error });
-      }
-      await new Promise((resolve) => {
-        setTimeout(resolve, 100);
-      });
-    }
-  }
 }
 
 /**
@@ -139,30 +106,6 @@ function infoPlist(version) {
 </dict>
 </plist>
 `;
-}
-
-/**
- * @param {string} command
- * @param {string[]} args
- * @param {string} label
- * @returns {Promise<void>}
- */
-function execTool(command, args, label) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ["ignore", "ignore", "pipe"] });
-    let stderr = "";
-    child.stderr.on("data", (/** @type {Buffer} */ chunk) => {
-      stderr = (stderr + chunk.toString()).slice(-8000);
-    });
-    child.once("error", reject);
-    child.once("exit", (code) => {
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(`${label} failed (exit ${String(code)}): ${stderr.trim()}`));
-      }
-    });
-  });
 }
 
 /**
@@ -211,24 +154,16 @@ export async function ensureHelperBundle(sourcePath, version) {
   if (await buildCurrent(stampPath, appPath, buildHash)) {
     return { appPath, bundleId: HELPER_BUNDLE_ID, signingMode: signing.mode };
   }
-  const release = await acquireBuildLock(join(supportDir, ".helper-build.lock"));
-  try {
-    if (await buildCurrent(stampPath, appPath, buildHash)) {
-      return { appPath, bundleId: HELPER_BUNDLE_ID, signingMode: signing.mode };
-    }
-    await buildStagedBundle({
-      sourcePath,
-      version,
-      supportDir,
-      appPath,
-      stampPath,
-      signing,
-      buildHash,
-    });
-    return { appPath, bundleId: HELPER_BUNDLE_ID, signingMode: signing.mode };
-  } finally {
-    await release();
-  }
+  await buildStagedBundle({
+    sourcePath,
+    version,
+    supportDir,
+    appPath,
+    stampPath,
+    signing,
+    buildHash,
+  });
+  return { appPath, bundleId: HELPER_BUNDLE_ID, signingMode: signing.mode };
 }
 
 /**
@@ -236,18 +171,19 @@ export async function ensureHelperBundle(sourcePath, version) {
  * @returns {Promise<void>}
  */
 async function buildStagedBundle(spec) {
-  const staged = join(spec.supportDir, `MacuseHelper.${process.pid}.tmp.app`);
-  await rm(staged, { recursive: true, force: true });
+  const stagedDir = await mkdtemp(join(spec.supportDir, "MacuseHelper.build-"));
+  const staged = join(stagedDir, "MacuseHelper.app");
   try {
     await mkdir(join(staged, "Contents", "MacOS"), { recursive: true, mode: 0o755 });
     await writeFile(join(staged, "Contents", "Info.plist"), infoPlist(spec.version), {
       mode: 0o644,
     });
-    await execTool(
-      "/usr/bin/xcrun",
-      ["swiftc", spec.sourcePath, "-o", join(staged, "Contents", "MacOS", HELPER_EXECUTABLE)],
-      "Native helper compilation",
-    );
+    await execFileAsync("/usr/bin/xcrun", [
+      "swiftc",
+      spec.sourcePath,
+      "-o",
+      join(staged, "Contents", "MacOS", HELPER_EXECUTABLE),
+    ]);
     const signArgs = [
       "--force",
       "--sign",
@@ -257,7 +193,7 @@ async function buildStagedBundle(spec) {
       HELPER_BUNDLE_ID,
       staged,
     ];
-    await execTool("/usr/bin/codesign", signArgs, "Native helper code signing");
+    await execFileAsync("/usr/bin/codesign", signArgs);
     await rm(spec.appPath, { recursive: true, force: true });
     await rename(staged, spec.appPath);
     await writeFile(
@@ -270,131 +206,20 @@ async function buildStagedBundle(spec) {
       { mode: 0o600 },
     );
   } finally {
-    await rm(staged, { recursive: true, force: true });
+    await rm(stagedDir, { recursive: true, force: true });
   }
 }
 
 /**
- * Create a short `0700` socket directory so macOS `sun_path` (104 bytes) never overflows.
- * @returns {Promise<{ dir: string, sockPath: string, token: string }>}
+ * Create a `0700` socket directory keeping `sun_path` within macOS's 104-byte `sockaddr_un` limit.
+ * @returns {Promise<{ dir: string, sockPath: string }>}
  */
 async function createSocketDir() {
   const systemTmp = tmpdir();
   const base = Buffer.byteLength(systemTmp) <= 70 ? systemTmp : "/tmp";
   const dir = await mkdtemp(join(base, "mu-"));
   await chmod(dir, 0o700);
-  const token = randomBytes(16).toString("hex");
-  await writeFile(join(dir, "t"), token, { mode: 0o600 });
-  return { dir, sockPath: join(dir, "s.sock"), token };
-}
-
-/**
- * @param {string} sockPath
- * @returns {Promise<{ server: import("node:net").Server, waitForSocket: () => Promise<import("node:net").Socket> }>}
- */
-async function startSocketServer(sockPath) {
-  const server = createServer();
-  /** @type {(socket: import("node:net").Socket) => void} */
-  let onConnection = () => {
-    /* replaced immediately by promise executor */
-  };
-  /** @type {Promise<import("node:net").Socket>} */
-  const nextSocket = new Promise((resolve) => {
-    onConnection = resolve;
-  });
-  server.once("connection", (socket) => {
-    server.close();
-    onConnection(socket);
-  });
-  /** @type {Promise<void>} */
-  const listening = new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(sockPath, () => {
-      server.removeListener("error", reject);
-      resolve();
-    });
-  });
-  await listening;
-  await chmod(sockPath, 0o600);
-  return { server, waitForSocket: () => nextSocket };
-}
-
-/**
- * @param {string} line
- * @param {string} expectedToken
- * @returns {{ pid: number, bundleId: string | null, accessibilityTrusted: boolean }}
- */
-function parseHandshakeLine(line, expectedToken) {
-  const parsed = /** @type {unknown} */ (JSON.parse(line));
-  const hello = isRecord(parsed) && isRecord(parsed.hello) ? parsed.hello : undefined;
-  if (hello === undefined || hello.token !== expectedToken || typeof hello.pid !== "number") {
-    throw new Error("Native helper handshake failed authentication.");
-  }
-  return {
-    pid: hello.pid,
-    bundleId: typeof hello.bundleId === "string" ? hello.bundleId : null,
-    accessibilityTrusted: hello.accessibilityTrusted === true,
-  };
-}
-
-/**
- * Read the first newline-delimited handshake JSON from the connecting helper.
- * @param {import("node:net").Socket} socket
- * @param {string} expectedToken
- * @returns {Promise<{ pid: number, bundleId: string | null, accessibilityTrusted: boolean }>}
- */
-function readHandshake(socket, expectedToken) {
-  return new Promise((resolve, reject) => {
-    let buffer = "";
-    const cleanup = () => {
-      socket.off("data", onData);
-      socket.off("error", onError);
-      socket.off("close", onClose);
-    };
-    const fail = (/** @type {Error} */ error) => {
-      cleanup();
-      reject(error);
-    };
-    const onError = (/** @type {Error} */ error) => fail(error);
-    const onClose = () => fail(new Error("Native helper closed before handshake."));
-    const onData = (/** @type {Buffer} */ chunk) => {
-      buffer += chunk.toString("utf8");
-      const newline = buffer.indexOf("\n");
-      if (newline === -1) {
-        if (buffer.length > 16_384) {
-          fail(new Error("Native helper handshake exceeded size limit."));
-        }
-        return;
-      }
-      cleanup();
-      const firstLine = buffer.slice(0, newline);
-      const rest = buffer.slice(newline + 1);
-      if (rest.length > 0) {
-        socket.unshift(Buffer.from(rest, "utf8"));
-      }
-      try {
-        resolve(parseHandshakeLine(firstLine, expectedToken));
-      } catch (error) {
-        reject(error instanceof Error ? error : new Error(String(error), { cause: error }));
-      }
-    };
-    socket.on("data", onData);
-    socket.once("error", onError);
-    socket.once("close", onClose);
-  });
-}
-
-/**
- * @param {number} pid
- * @returns {boolean}
- */
-function pidAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
+  return { dir, sockPath: join(dir, "s.sock") };
 }
 
 /**
@@ -402,11 +227,23 @@ function pidAlive(pid) {
  * attributes Accessibility to `com.fitchmultz.macuse.helper` rather than each host app.
  * @param {string} appPath
  * @param {(error: Error, closed?: boolean) => void} onDisconnect
+ * @param {{ signal?: AbortSignal | undefined }} [options]
  * @returns {Promise<HelperSession>}
  */
-export async function launchHelperSession(appPath, onDisconnect) {
-  const { dir, sockPath, token } = await createSocketDir();
-  const { server, waitForSocket } = await startSocketServer(sockPath);
+export async function launchHelperSession(appPath, onDisconnect, options = {}) {
+  const { dir, sockPath } = await createSocketDir();
+  const server = createServer();
+  /** @type {import("node:net").Socket | undefined} */
+  let socket;
+  const listening = once(server, "listening");
+  server.listen(sockPath);
+  await listening;
+  await chmod(sockPath, 0o600);
+
+  const startupAbort = new AbortController();
+  const signal = options.signal
+    ? AbortSignal.any([options.signal, startupAbort.signal])
+    : startupAbort.signal;
   const openChild = spawn(
     "/usr/bin/open",
     ["-g", "-n", "-W", appPath, "--args", "--connect", sockPath],
@@ -414,73 +251,57 @@ export async function launchHelperSession(appPath, onDisconnect) {
   );
   let openStderr = "";
   openChild.stderr.on("data", (/** @type {Buffer} */ chunk) => {
-    openStderr = (openStderr + chunk.toString()).slice(-4000);
+    openStderr += chunk.toString();
   });
+  const onOpenError = (/** @type {Error} */ error) => startupAbort.abort(error);
+  const onOpenExit = (
+    /** @type {number | null} */ code,
+    /** @type {NodeJS.Signals | null} */ sig,
+  ) => {
+    const detail = openStderr.trim();
+    startupAbort.abort(
+      new Error(
+        `LaunchServices failed to open MacuseHelper.app (${sig ?? code ?? "unknown"})${detail !== "" ? `: ${detail}` : ""}.`,
+      ),
+    );
+  };
+  openChild.once("error", onOpenError);
+  openChild.once("exit", onOpenExit);
+
   try {
-    const { socket, hello } = await awaitLaunchHandshake({
-      openChild,
-      waitForSocket,
-      token,
-      getStderr: () => openStderr,
-    });
-    return makeHelperSession({ socket, openChild, dir, hello, onDisconnect });
+    const connected = await once(server, "connection", { signal });
+    const candidate = /** @type {unknown} */ (connected[0]);
+    if (!(candidate instanceof Socket)) {
+      throw new Error("Native helper server did not yield a socket.");
+    }
+    socket = candidate;
+    server.close();
+    openChild.off("error", onOpenError);
+    openChild.off("exit", onOpenExit);
+    return makeHelperSession({ socket, openChild, dir, getStderr: () => openStderr, onDisconnect });
   } catch (error) {
     server.close();
+    socket?.destroy();
     openChild.kill("SIGKILL");
     await rm(dir, { recursive: true, force: true });
-    throw error;
+    const abortReason = /** @type {unknown} */ (
+      startupAbort.signal.aborted ? startupAbort.signal.reason : undefined
+    );
+    if (abortReason instanceof Error) {
+      throw abortReason;
+    }
+    if (error instanceof Error) {
+      throw error;
+    }
+    throw new Error(String(error), { cause: error });
   }
 }
 
 /**
- * @param {{ openChild: import("node:child_process").ChildProcess, waitForSocket: () => Promise<import("node:net").Socket>, token: string, getStderr: () => string }} spec
- * @returns {Promise<{ socket: import("node:net").Socket, hello: { pid: number, bundleId: string | null, accessibilityTrusted: boolean } }>}
- */
-async function awaitLaunchHandshake(spec) {
-  /** @type {import("node:net").Socket | undefined} */
-  let socket;
-  /** @type {ReturnType<typeof setTimeout> | undefined} */
-  let timer;
-  try {
-    /** @type {Promise<never>} */
-    const abortOpen = new Promise((_resolve, reject) => {
-      spec.openChild.once("error", reject);
-      spec.openChild.once("exit", (code, signal) => {
-        const detail = spec.getStderr().trim();
-        reject(
-          new Error(
-            `LaunchServices failed to open MacuseHelper.app (${signal ?? code ?? "unknown"})${detail !== "" ? `: ${detail}` : ""}.`,
-          ),
-        );
-      });
-    });
-    /** @type {Promise<never>} */
-    const timeout = new Promise((_resolve, reject) => {
-      timer = setTimeout(
-        () => reject(new Error("Timed out waiting for MacuseHelper.app to connect.")),
-        STARTUP_TIMEOUT_MS,
-      );
-    });
-    socket = await Promise.race([spec.waitForSocket(), abortOpen, timeout]);
-    const hello = await Promise.race([readHandshake(socket, spec.token), abortOpen, timeout]);
-    return { socket, hello };
-  } catch (error) {
-    socket?.destroy();
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-/**
- * @param {{ socket: import("node:net").Socket, openChild: import("node:child_process").ChildProcess, dir: string, hello: { pid: number, bundleId: string | null, accessibilityTrusted: boolean }, onDisconnect: (error: Error, closed?: boolean) => void }} spec
+ * @param {{ socket: import("node:net").Socket, openChild: import("node:child_process").ChildProcess, dir: string, getStderr: () => string, onDisconnect: (error: Error, closed?: boolean) => void }} spec
  * @returns {HelperSession}
  */
 function makeHelperSession(spec) {
-  let openStderr = "";
-  spec.openChild.stderr?.on("data", (/** @type {Buffer} */ chunk) => {
-    openStderr = (openStderr + chunk.toString()).slice(-4000);
-  });
   let closing = false;
   spec.socket.once("error", (error) => {
     if (!closing) {
@@ -489,48 +310,22 @@ function makeHelperSession(spec) {
   });
   spec.socket.once("close", () => {
     if (!closing) {
+      const detail = spec.getStderr().trim();
       spec.onDisconnect(
-        new Error(
-          `Native helper stopped${openStderr.trim() !== "" ? `: ${openStderr.trim()}` : ""}.`,
-        ),
+        new Error(`Native helper stopped${detail !== "" ? `: ${detail}` : ""}.`),
         true,
       );
     }
   });
   const close = async () => {
     closing = true;
-    /** @type {Promise<void>} */
-    const exited = new Promise((resolve) => {
-      if (spec.openChild.exitCode !== null || spec.openChild.signalCode !== null) {
-        resolve();
-        return;
-      }
-      const killTimer = setTimeout(() => {
-        if (pidAlive(spec.hello.pid)) {
-          try {
-            process.kill(spec.hello.pid, "SIGKILL");
-          } catch {
-            /* Already gone. */
-          }
-        }
-        spec.openChild.kill("SIGKILL");
-        resolve();
-      }, 1000);
-      spec.openChild.once("close", () => {
-        clearTimeout(killTimer);
-        resolve();
-      });
-    });
+    const exited = once(spec.openChild, "close").catch(() => null);
     spec.socket.end();
     spec.socket.destroy();
-    await exited;
+    if (spec.openChild.exitCode === null && spec.openChild.signalCode === null) {
+      await exited;
+    }
     await rm(spec.dir, { recursive: true, force: true });
   };
-  return {
-    socket: spec.socket,
-    helperPid: spec.hello.pid,
-    bundleId: spec.hello.bundleId,
-    accessibilityTrusted: spec.hello.accessibilityTrusted,
-    close,
-  };
+  return { socket: spec.socket, close };
 }

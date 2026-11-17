@@ -172,9 +172,7 @@ func handle(_ request: [String: Any]) -> [String: Any] {
     default: return ["error": "Unknown method"]
     }
 }
-func connectSocket(_ path: String) -> (Int32, String) {
-    let tokenUrl = URL(fileURLWithPath: path).deletingLastPathComponent().appendingPathComponent("t")
-    let token = ((try? String(contentsOf: tokenUrl, encoding: .utf8)) ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+func connectSocket(_ path: String) -> Int32 {
     let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else { exit(1) }
     var addr = sockaddr_un()
@@ -192,26 +190,16 @@ func connectSocket(_ path: String) -> (Int32, String) {
         $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, len) }
     }
     guard rc == 0 else { Darwin.close(fd); exit(1) }
-    return (fd, token)
+    return fd
 }
 signal(SIGPIPE, SIG_IGN)
 let args = CommandLine.arguments
 var readFd = STDIN_FILENO
 var writeFd = STDOUT_FILENO
 if let idx = args.firstIndex(of: "--connect"), idx + 1 < args.count {
-    let (fd, authToken) = connectSocket(args[idx + 1])
+    let fd = connectSocket(args[idx + 1])
     readFd = fd
     writeFd = fd
-    let hello: [String: Any] = ["hello": [
-        "token": authToken,
-        "pid": ProcessInfo.processInfo.processIdentifier,
-        "bundleId": Bundle.main.bundleIdentifier ?? null as Any,
-        "accessibilityTrusted": AXIsProcessTrusted(),
-    ]]
-    if let data = try? JSONSerialization.data(withJSONObject: hello, options: [.sortedKeys]) {
-        var payload = data; payload.append(10)
-        _ = payload.withUnsafeBytes { raw in Darwin.write(writeFd, raw.baseAddress, payload.count) }
-    }
 }
 func writeAll(_ data: Data) {
     var sent = 0
