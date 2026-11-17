@@ -42,12 +42,20 @@ export type NativeAppState = {
     value: string | null;
   } | null;
 };
+export type AccessibilityStatus = {
+  accessibilityTrusted: boolean;
+  prompted: boolean;
+  bundleId: string | null;
+};
 export function nativeWindowClosed(
   before: { title: string | null; url: string | null; nativeWindowIdentity: boolean },
   after: NativeAppState | null,
 ): boolean;
 export type NativeRequestOptions = { signal?: AbortSignal | undefined };
 export class MacOSNative {
+  ensureAccessibility(
+    options?: NativeRequestOptions & { prompt?: boolean | undefined },
+  ): Promise<AccessibilityStatus>;
   snapshot(options?: NativeRequestOptions): Promise<NativeSnapshot>;
   resolveApp(identifier: string, options?: NativeRequestOptions): Promise<NativeApplication>;
   beginObservation(

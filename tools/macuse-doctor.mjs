@@ -40,8 +40,50 @@ function commandCheck(name, command, args, options = {}) {
   };
 }
 
-// Read-only: no permission request, activation, or settings changes.
-export function nativeRequirementChecks() {
+// Read-only by default; pass { prompt: true } (via `--prompt`) to request macOS Accessibility access.
+/**
+ * @param {boolean} prompt
+ */
+function probeNativeAccessibilityTrust(prompt) {
+  const probe = `import { MacOSNative } from ${JSON.stringify(new URL("./macos-native.mjs", import.meta.url).href)};
+const native = new MacOSNative();
+try {
+  ${prompt ? "await native.ensureAccessibility({ prompt: true });" : ""}
+  const state = await native.inspectApp(process.pid);
+  console.log(JSON.stringify({ accessibilityTrusted: state.accessibilityTrusted }));
+} finally { await native.stop(); }`;
+  const trust = commandCheck(
+    "Native helper Accessibility trust",
+    process.execPath,
+    ["--input-type=module", "-e", probe],
+    { timeoutMs: 60000 },
+  );
+  if (!trust.result.ok) {
+    return {
+      ...trust.check,
+      summary: `Native helper unavailable; Accessibility trust unknown: ${trust.check.summary}`,
+    };
+  }
+  let trusted;
+  try {
+    const report = parseJsonOutput("native helper trust", trust.result.stdout);
+    if (typeof report === "object" && report !== null && "accessibilityTrusted" in report) {
+      trusted = report.accessibilityTrusted;
+    }
+  } catch {
+    /* Unknown remains unknown. */
+  }
+  return {
+    ...trust.check,
+    status: trusted === true ? "pass" : "fail",
+    summary: trustSummary(trusted, prompt),
+  };
+}
+
+/**
+ * @param {{ prompt?: boolean | undefined }} [options]
+ */
+export function nativeRequirementChecks({ prompt = false } = {}) {
   if (process.platform !== "darwin") {
     return [
       {
@@ -75,55 +117,28 @@ export function nativeRequirementChecks() {
       },
     ];
   }
-  const probe = `import { MacOSNative } from ${JSON.stringify(new URL("./macos-native.mjs", import.meta.url).href)};
-const native = new MacOSNative();
-try { const state = await native.inspectApp(process.pid); console.log(JSON.stringify({ accessibilityTrusted: state.accessibilityTrusted })); }
-finally { await native.stop(); }`;
-  const trust = commandCheck(
-    "Native helper Accessibility trust",
-    process.execPath,
-    ["--input-type=module", "-e", probe],
-    { timeoutMs: 60000 },
-  );
-  if (!trust.result.ok) {
-    checks.push({
-      ...trust.check,
-      summary: `Native helper unavailable; Accessibility trust unknown: ${trust.check.summary}`,
-    });
-  } else {
-    let trusted;
-    try {
-      const report = parseJsonOutput("native helper trust", trust.result.stdout);
-      if (typeof report === "object" && report !== null && "accessibilityTrusted" in report) {
-        trusted = report.accessibilityTrusted;
-      }
-    } catch {
-      /* Unknown remains unknown. */
-    }
-    checks.push({
-      ...trust.check,
-      status: trusted === true ? "pass" : "fail",
-      summary: trustSummary(trusted),
-    });
-  }
+  checks.push(probeNativeAccessibilityTrust(prompt));
   return checks;
 }
 
 /**
  * @param {unknown} trusted
+ * @param {boolean} [prompted]
  * @returns {string}
  */
-function trustSummary(trusted) {
+function trustSummary(trusted, prompted = false) {
   if (trusted === true) {
-    return "accessibilityTrusted=true under this launcher. Other Pi/CLI/MCP hosts may have different grants.";
+    return "accessibilityTrusted=true for Macuse Helper (com.fitchmultz.macuse.helper). Covers all Pi/CLI/MCP hosts.";
   }
   if (trusted === false) {
-    return "accessibilityTrusted=false: AX inspection/insertion unavailable. No permission prompt was requested.";
+    return prompted
+      ? "accessibilityTrusted=false for Macuse Helper (com.fitchmultz.macuse.helper). System prompt requested; approve it once in System Settings > Privacy & Security > Accessibility."
+      : "accessibilityTrusted=false for Macuse Helper (com.fitchmultz.macuse.helper): AX inspection/insertion unavailable. Run `node tools/macuse-doctor.mjs --prompt` or use `macuse` interactively to trigger the OS prompt.";
   }
   return "Native helper trust is unknown.";
 }
 
-/** @typedef {{ out?: string | undefined, json?: boolean | undefined, full?: boolean | undefined, app: string, "tool-timeout-ms": string, help?: boolean | undefined }} DoctorValues */
+/** @typedef {{ out?: string | undefined, json?: boolean | undefined, full?: boolean | undefined, prompt?: boolean | undefined, app: string, "tool-timeout-ms": string, help?: boolean | undefined }} DoctorValues */
 
 /**
  * @returns {DoctorValues | { help: true }}
@@ -134,6 +149,7 @@ function parseDoctorArgs() {
       out: { type: "string" },
       json: { type: "boolean" },
       full: { type: "boolean" },
+      prompt: { type: "boolean" },
       app: { type: "string", default: "Activity Monitor" },
       "tool-timeout-ms": { type: "string", default: "90000" },
       help: { type: "boolean", short: "h" },
@@ -248,11 +264,11 @@ async function main() {
   const values = parseDoctorArgs();
   if (values.help === true) {
     console.log(
-      `macuse doctor ${VERSION}\n\n--out <dir> --json --app <name> --tool-timeout-ms <ms>\nDefault checks are read-only. --full also switches/restores Activity Monitor tabs and checks the MCP wrapper.\nNo installs, privacy changes, recording starts, or permission prompts.`,
+      `macuse doctor ${VERSION}\n\n--out <dir> --json --prompt --full --app <name> --tool-timeout-ms <ms>\nDefault checks are read-only. --prompt triggers the macOS Accessibility prompt if Macuse Helper is not yet trusted.\n--full also switches/restores Activity Monitor tabs and checks the MCP wrapper.\nNo installs, privacy changes, or recording starts.`,
     );
     return;
   }
-  const checks = nativeRequirementChecks();
+  const checks = nativeRequirementChecks({ prompt: values.prompt === true });
   const runtime = runDoctorChecks(values, checks);
   reportDoctor(values, runtime, checks);
 }

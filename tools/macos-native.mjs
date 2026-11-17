@@ -1,17 +1,17 @@
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { access, mkdir, readFile, rename, rm } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
+import { VERSION } from "./macuse-utils.mjs";
+import { ensureHelperBundle, launchHelperSession } from "./macos-helper-bundle.mjs";
 
 /** @typedef {import("./macos-native.mjs").NativeApplication} NativeApplication */
 /** @typedef {import("./macos-native.mjs").NativeWindow} NativeWindow */
 /** @typedef {import("./macos-native.mjs").NativeSnapshot} NativeSnapshot */
 /** @typedef {import("./macos-native.mjs").NativeObservation} NativeObservation */
 /** @typedef {import("./macos-native.mjs").NativeAppState} NativeAppState */
+/** @typedef {import("./macos-native.mjs").AccessibilityStatus} AccessibilityStatus */
 /** @typedef {import("./macos-native.mjs").NativeRequestOptions} NativeRequestOptions */
+/** @typedef {import("./macos-helper-bundle.mjs").HelperSession} HelperSession */
+
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
 const isRecord = (value) => typeof value === "object" && value !== null && !Array.isArray(value);
 /** @param {unknown} value @returns {value is NativeApplication} */
@@ -58,62 +58,21 @@ const isNativeAppState = (value) =>
   hasNativeWindowsState(value) &&
   (value.focusedWindow === null || isNativeWindow(value.focusedWindow)) &&
   (value.focusedElement === null || isRecord(value.focusedElement));
+/** @param {unknown} value @returns {value is AccessibilityStatus} */
+const isAccessibilityStatus = (value) =>
+  isRecord(value) &&
+  typeof value.accessibilityTrusted === "boolean" &&
+  typeof value.prompted === "boolean" &&
+  (value.bundleId === null || typeof value.bundleId === "string");
+
 const source = fileURLToPath(new URL("./macos-native.swift", import.meta.url));
-/** @type {Promise<string> | undefined} */
+const NATIVE_TIMEOUT_MS = 15_000;
+const NATIVE_STOP_GRACE_MS = 1_000;
+/** @type {Promise<{ appPath: string, bundleId: string, signingMode: string }> | undefined} */
 let compiled;
-async function executable() {
-  if (process.platform !== "darwin") {
-    throw new Error("Native Accessibility requires macOS");
-  }
-  if (!compiled) {
-    compiled = (async () => {
-      const hash = createHash("sha256")
-        .update(await readFile(source))
-        .update(process.arch)
-        .digest("hex")
-        .slice(0, 20);
-      const directory = join(homedir(), "Library", "Caches", "macuse", "native");
-      await mkdir(directory, { recursive: true, mode: 0o700 });
-      const binary = join(directory, `macos-native-${hash}`);
-      try {
-        await access(binary);
-        return binary;
-      } catch {
-        /* Compile once per source revision. */
-      }
-      const temporary = `${binary}.${process.pid}.tmp`;
-      try {
-        /** @type {Promise<void>} */
-        const compilation = new Promise((resolve, reject) => {
-          const compiler = spawn("/usr/bin/xcrun", ["swiftc", source, "-o", temporary], {
-            stdio: ["ignore", "ignore", "pipe"],
-          });
-          let stderr = "";
-          compiler.stderr.on("data", (chunk) => {
-            if (!Buffer.isBuffer(chunk)) {
-              return;
-            }
-            stderr = (stderr + chunk.toString()).slice(-8000);
-          });
-          compiler.once("error", reject);
-          compiler.once("exit", (code) =>
-            code === 0
-              ? resolve()
-              : reject(
-                  new Error(
-                    `Native helper compilation failed: ${stderr}. Ensure xcrun swiftc is available from your Xcode or Command Line Tools installation.`,
-                  ),
-                ),
-          );
-        });
-        await compilation;
-        await rename(temporary, binary);
-      } finally {
-        await rm(temporary, { force: true });
-      }
-      return binary;
-    })();
-  }
+
+async function helperBundle() {
+  compiled ??= ensureHelperBundle(source, VERSION);
   try {
     return await compiled;
   } catch (error) {
@@ -150,11 +109,11 @@ export function nativeWindowClosed(before, after) {
 }
 
 /** @typedef {{ resolve: (result: unknown) => void, reject: (error: Error) => void, failure?: Error }} PendingCall */
-/** One lazy child owned by the caller's session. Every request only reads native state. */
+/** One lazy helper session owned by the caller. Launches `MacuseHelper.app` via LaunchServices. */
 export class MacOSNative {
-  /** @type {import("node:child_process").ChildProcessByStdio<import("node:stream").Writable, import("node:stream").Readable, import("node:stream").Readable> | undefined} */
-  #child;
-  /** @type {Promise<import("node:child_process").ChildProcessByStdio<import("node:stream").Writable, import("node:stream").Readable, import("node:stream").Readable>> | undefined} */
+  /** @type {HelperSession | undefined} */
+  #session;
+  /** @type {Promise<HelperSession> | undefined} */
   #starting;
   /** @type {Promise<void> | undefined} */
   #stopping;
@@ -162,86 +121,76 @@ export class MacOSNative {
   #pending = new Map();
   #nextId = 0;
 
+  /** @returns {void} */
+  #terminateQuietly() {
+    this.stop().catch(() => null);
+  }
+
   async #start() {
     if (this.#stopping) {
       await this.#stopping;
     }
-    if (this.#child) {
-      return this.#child;
+    if (this.#session) {
+      return this.#session;
     }
     if (!this.#starting) {
       this.#starting = (async () => {
-        const child = spawn(await executable(), [], { stdio: ["pipe", "pipe", "pipe"] });
-        let stderr = "";
-        child.stderr.on("data", (chunk) => {
-          if (!Buffer.isBuffer(chunk)) {
+        const bundle = await helperBundle();
+        /** @type {{ current: HelperSession | undefined }} */
+        const holder = { current: undefined };
+        /** @param {Error} error */
+        const fail = (error) => {
+          if (holder.current === undefined || this.#session !== holder.current) {
             return;
           }
-          stderr = (stderr + chunk.toString()).slice(-4000);
-        });
-        const terminateQuietly = () => {
-          this.stop().catch(() => null);
-        };
-        /**
-         * @param {Error} error
-         * @param {boolean} [closed]
-         */
-        const fail = (error, closed = false) => {
-          if (this.#child !== child) {
-            return;
-          }
-          if (!closed && child.pid !== undefined) {
-            for (const pending of this.#pending.values()) {
-              pending.failure ??= error;
-            }
-            terminateQuietly();
-            return;
-          }
-          this.#child = undefined;
           for (const pending of this.#pending.values()) {
-            pending.reject(pending.failure ?? error);
+            pending.failure ??= error;
           }
+          this.#terminateQuietly();
         };
-        child.once("error", fail);
-        child.once("close", (code, signal) => {
-          fail(
-            new Error(
-              `Native helper stopped (${signal ?? code ?? "unknown"})${stderr !== "" ? `: ${stderr}` : ""}.`,
-            ),
-            true,
-          );
+        const session = await launchHelperSession(bundle.appPath, fail, {
+          startTimeoutMs: NATIVE_TIMEOUT_MS,
+          stopGraceMs: NATIVE_STOP_GRACE_MS,
         });
-        child.stdin.on("error", fail);
-        createInterface({ input: child.stdout }).on("line", (line) => {
-          /** @type {unknown} */
-          let message;
-          try {
-            message = JSON.parse(line);
-          } catch {
-            return;
-          }
-          if (!isRecord(message)) {
-            return;
-          }
-          const messageId = message.id;
-          const pending = typeof messageId === "number" ? this.#pending.get(messageId) : undefined;
-          if (pending === undefined || pending.failure !== undefined) {
-            return;
-          }
-          const result = message.result;
-          if (isRecord(result) && typeof result.error === "string" && result.error !== "") {
-            pending.reject(new Error(result.error));
-          } else {
-            pending.resolve(result);
-          }
-        });
-        this.#child = child;
-        return child;
+        holder.current = session;
+        this.#wireMessages(session);
+        this.#session = session;
+        return session;
       })().finally(() => {
         this.#starting = undefined;
       });
     }
     return this.#starting;
+  }
+
+  /**
+   * @param {HelperSession} session
+   * @returns {void}
+   */
+  #wireMessages(session) {
+    createInterface({ input: session.socket }).on("line", (line) => {
+      /** @type {unknown} */
+      let message;
+      try {
+        message = JSON.parse(line);
+      } catch {
+        return;
+      }
+      if (!isRecord(message)) {
+        return;
+      }
+      const messageId = message.id;
+      const pending = typeof messageId === "number" ? this.#pending.get(messageId) : undefined;
+      if (pending === undefined || pending.failure !== undefined) {
+        return;
+      }
+      const result = message.result;
+      if (isRecord(result) && typeof result.error === "string" && result.error !== "") {
+        pending.reject(new Error(result.error));
+      } else {
+        pending.resolve(result);
+      }
+    });
   }
 
   /**
@@ -251,11 +200,11 @@ export class MacOSNative {
    * @returns {Promise<unknown>}
    */
   async #request(method, args = {}, { signal } = {}) {
-    /** @type {import("node:child_process").ChildProcessByStdio<import("node:stream").Writable, import("node:stream").Readable, import("node:stream").Readable> | undefined} */
-    let child;
+    /** @type {HelperSession | undefined} */
+    let session;
     try {
       signal?.throwIfAborted();
-      child = await this.#start();
+      session = await this.#start();
       signal?.throwIfAborted();
     } catch (error) {
       throw error instanceof Error ? error : new Error(String(error), { cause: error });
@@ -279,14 +228,10 @@ export class MacOSNative {
       /** @param {string} reason */
       const cancel = (reason) => {
         pending.failure = new Error(`Native ${method} ${reason}.`);
-        // Reject only after the owned process has exited.
-        this.stop().catch(() => null);
+        this.#terminateQuietly();
       };
       const aborted = () => cancel("aborted");
-      const timer = setTimeout(() => cancel("timed out"), 15_000);
-      const terminateQuietly = () => {
-        this.stop().catch(() => null);
-      };
+      const timer = setTimeout(() => cancel("timed out"), NATIVE_TIMEOUT_MS);
       /** @type {PendingCall} */
       const pending = {
         resolve: (result) => finish(null, result),
@@ -294,13 +239,25 @@ export class MacOSNative {
       };
       this.#pending.set(id, pending);
       signal?.addEventListener("abort", aborted, { once: true });
-      child.stdin.write(`${JSON.stringify({ id, method, ...args })}\n`, (error) => {
+      session.socket.write(`${JSON.stringify({ id, method, ...args })}\n`, (error) => {
         if (error !== null && error !== undefined && this.#pending.has(id)) {
           pending.failure = error;
-          terminateQuietly();
+          this.#terminateQuietly();
         }
       });
     });
+  }
+
+  /**
+   * @param {NativeRequestOptions & { prompt?: boolean | undefined }} [options]
+   * @returns {Promise<AccessibilityStatus>}
+   */
+  async ensureAccessibility({ prompt = false, signal } = {}) {
+    const result = await this.#request("requestAccessibility", { prompt }, { signal });
+    if (!isAccessibilityStatus(result)) {
+      throw new Error("Native helper returned an invalid accessibility status.");
+    }
+    return result;
   }
 
   /**
@@ -371,22 +328,29 @@ export class MacOSNative {
     if (this.#stopping !== undefined) {
       return this.#stopping;
     }
-    const child = this.#child;
-    if (child === undefined) {
+    const session = this.#session;
+    if (session === undefined) {
       return;
     }
-    /** @type {Promise<void>} */
-    const exited = new Promise((resolve) => {
-      const timer = setTimeout(() => child.kill("SIGKILL"), 1000);
-      child.once("close", () => {
-        clearTimeout(timer);
-        resolve();
-      });
-      child.kill();
-    });
-    this.#stopping = exited.finally(() => {
+    this.#session = undefined;
+    const failure = new Error("Native helper stopped.");
+    const pendingList = [...this.#pending.values()];
+    this.#stopping = this.#closeSession(session, pendingList, failure).finally(() => {
       this.#stopping = undefined;
     });
     return this.#stopping;
+  }
+
+  /**
+   * @param {HelperSession} session
+   * @param {PendingCall[]} pendingList
+   * @param {Error} failure
+   * @returns {Promise<void>}
+   */
+  async #closeSession(session, pendingList, failure) {
+    await session.close();
+    for (const pending of pendingList) {
+      pending.reject(pending.failure ?? failure);
+    }
   }
 }

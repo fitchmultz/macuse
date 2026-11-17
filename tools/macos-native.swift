@@ -1,9 +1,12 @@
 import AppKit
 import ApplicationServices
+import Darwin
 import Foundation
 
 // Public AX/NSWorkspace APIs only. Never activates apps, writes the clipboard, or posts input events.
 let null = NSNull()
+var promptedAccessibility = false
+
 func readAX(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
     var value: CFTypeRef?
     return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
@@ -75,6 +78,19 @@ func inspect(_ pid: pid_t) -> [String: Any] {
             "value": readAX(element, kAXValueAttribute) as? String ?? null as Any]
     } else if let window = elementAX(app, kAXFocusedWindowAttribute) { result["focusedWindow"] = windowInfo(window) }
     return result
+}
+func requestAccessibility(prompt: Bool) -> [String: Any] {
+    if AXIsProcessTrusted() {
+        return ["accessibilityTrusted": true, "prompted": false, "bundleId": Bundle.main.bundleIdentifier ?? null as Any]
+    }
+    var didPrompt = false
+    if prompt && !promptedAccessibility {
+        promptedAccessibility = true
+        didPrompt = true
+        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+    }
+    return ["accessibilityTrusted": AXIsProcessTrusted(), "prompted": didPrompt, "bundleId": Bundle.main.bundleIdentifier ?? null as Any]
 }
 struct Observation {
     let before: [String: Any]
@@ -151,19 +167,81 @@ func handle(_ request: [String: Any]) -> [String: Any] {
     case "inspectApp":
         guard let pid = request["pid"] as? Int32, pid > 0 else { return ["error": "A positive target PID is required"] }
         return inspect(pid)
+    case "requestAccessibility":
+        return requestAccessibility(prompt: (request["prompt"] as? Bool) ?? false)
     default: return ["error": "Unknown method"]
+    }
+}
+func connectSocket(_ path: String) -> Int32 {
+    let pidUrl = URL(fileURLWithPath: path).deletingLastPathComponent().appendingPathComponent("p")
+    try? "\(ProcessInfo.processInfo.processIdentifier)".write(to: pidUrl, atomically: true, encoding: .utf8)
+    let fd = Darwin.socket(AF_UNIX, SOCK_STREAM, 0)
+    guard fd >= 0 else { exit(1) }
+    var addr = sockaddr_un()
+    addr.sun_family = sa_family_t(AF_UNIX)
+    let sunLen = MemoryLayout.size(ofValue: addr.sun_path)
+    path.withCString { cstr in
+        withUnsafeMutableBytes(of: &addr.sun_path) { raw in
+            if let dst = raw.baseAddress?.assumingMemoryBound(to: CChar.self) {
+                strncpy(dst, cstr, sunLen - 1)
+            }
+        }
+    }
+    let len = socklen_t(MemoryLayout<sockaddr_un>.size)
+    let rc = withUnsafePointer(to: &addr) {
+        $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { Darwin.connect(fd, $0, len) }
+    }
+    guard rc == 0 else { Darwin.close(fd); exit(1) }
+    return fd
+}
+signal(SIGPIPE, SIG_IGN)
+let args = CommandLine.arguments
+var readFd = STDIN_FILENO
+var writeFd = STDOUT_FILENO
+if let idx = args.firstIndex(of: "--connect"), idx + 1 < args.count {
+    let fd = connectSocket(args[idx + 1])
+    readFd = fd
+    writeFd = fd
+}
+func writeAll(_ data: Data) {
+    var sent = 0
+    while sent < data.count {
+        let written = data.withUnsafeBytes { raw in
+            Darwin.write(writeFd, raw.baseAddress?.advanced(by: sent), data.count - sent)
+        }
+        if written <= 0 {
+            if errno == EINTR || errno == EAGAIN { continue }
+            exit(0)
+        }
+        sent += written
     }
 }
 func emit(_ value: [String: Any]) {
     if let data = try? JSONSerialization.data(withJSONObject: value, options: [.sortedKeys]) {
-        FileHandle.standardOutput.write(data); FileHandle.standardOutput.write(Data([10]))
+        var line = data
+        line.append(10)
+        writeAll(line)
     }
 }
-// Blocking stdin stays off the run loop so native notifications remain live between requests.
+// Blocking socket/stdin reads stay off the run loop so native notifications remain live between requests.
 DispatchQueue.global().async {
-    while let line = readLine() {
-        guard let data = line.data(using: .utf8), let request = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { continue }
-        DispatchQueue.main.async { emit(["id": request["id"] ?? null, "result": handle(request)]) }
+    var buffer = Data()
+    var chunk = [UInt8](repeating: 0, count: 4096)
+    while true {
+        let count = Darwin.read(readFd, &chunk, chunk.count)
+        if count == 0 { break }
+        if count < 0 {
+            if errno == EINTR || errno == EAGAIN { continue }
+            break
+        }
+        buffer.append(contentsOf: chunk[0..<count])
+        while let nl = buffer.firstIndex(of: 10) {
+            let lineData = Data(buffer[..<nl])
+            buffer.removeSubrange(...nl)
+            if lineData.isEmpty { continue }
+            guard let request = (try? JSONSerialization.jsonObject(with: lineData)) as? [String: Any] else { continue }
+            DispatchQueue.main.async { emit(["id": request["id"] ?? null, "result": handle(request)]) }
+        }
     }
     DispatchQueue.main.async { exit(0) }
 }

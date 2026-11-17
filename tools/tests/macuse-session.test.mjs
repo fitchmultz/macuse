@@ -148,6 +148,47 @@ function fixture() {
 }
 
 nodeTest(
+  "interactive sessions request Accessibility once when untrusted and stop checking once trusted",
+  async () => {
+    const f = fixture();
+    let trusted = false;
+    /** @type {Array<boolean | undefined>} */
+    const promptArgs = [];
+    f.native.ensureAccessibility = async (options) => {
+      promptArgs.push(options?.prompt);
+      return {
+        accessibilityTrusted: trusted,
+        prompted: options?.prompt === true && !trusted,
+        bundleId: "com.fitchmultz.macuse.helper",
+      };
+    };
+    const session = new MacuseSession({
+      runtime: f.runtime,
+      native: f.native,
+      auxiliary: f.auxiliary,
+      promptPermissions: true,
+    });
+    const first = await session.callTool("macuse", { code: "1" });
+    assert.match(
+      first.content.map(textOf).join("\n"),
+      /Accessibility prompt opened for Macuse Helper/,
+    );
+    const second = await session.callTool("macuse", { code: "2" });
+    assert.match(
+      second.content.map(textOf).join("\n"),
+      /Accessibility permission for Macuse Helper is not enabled/,
+    );
+    trusted = true;
+    const third = await session.callTool("macuse", { code: "3" });
+    assert.doesNotMatch(third.content.map(textOf).join("\n"), /Accessibility permission/);
+    const fourth = await session.callTool("macuse", { code: "4" });
+    assert.doesNotMatch(fourth.content.map(textOf).join("\n"), /Accessibility permission/);
+    assert.deepEqual(promptArgs, [true, false, false]);
+    await session.stop();
+  },
+);
+
+nodeTest(
   "a rejected code run settles its focus observation and preserves the failure",
   async () => {
     const f = fixture();

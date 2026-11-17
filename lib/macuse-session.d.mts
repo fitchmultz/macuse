@@ -1,5 +1,6 @@
 import type { AppObservation } from "./app-state.mjs";
 import type {
+  AccessibilityStatus,
   NativeApplication,
   NativeAppState,
   NativeObservation,
@@ -62,6 +63,9 @@ export type SessionRuntime = {
 };
 /** Structural native seam MacuseSession drives; production uses MacOSNative. */
 export type SessionNative = {
+  ensureAccessibility?: (
+    options?: NativeRequestOptions & { prompt?: boolean | undefined },
+  ) => Promise<AccessibilityStatus>;
   resolveApp: (identifier: string, options?: NativeRequestOptions) => Promise<NativeApplication>;
   inspectApp: (pid: number, options?: NativeRequestOptions) => Promise<NativeAppState>;
   beginObservation: (
@@ -96,6 +100,7 @@ export class MacuseSession {
     runtime?: SessionRuntime | undefined;
     native?: SessionNative | undefined;
     auxiliary?: SessionAuxiliary | undefined;
+    promptPermissions?: boolean | undefined;
   });
   callTool(
     tool: string,

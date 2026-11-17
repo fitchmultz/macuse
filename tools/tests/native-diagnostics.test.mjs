@@ -106,3 +106,25 @@ nodeTest(
     assert.equal(at(linuxChecks, 0).status, "fail");
   },
 );
+
+nodeTest(
+  "doctor prompts once when requested explicitly and keeps the read-only probe clean by default",
+  () => {
+    const fDefault = doctorRunner([
+      { ok: true, stdout: "/usr/bin/swiftc" },
+      { ok: true, stdout: JSON.stringify({ accessibilityTrusted: false }) },
+    ]);
+    const defaultChecks = nativeRequirementChecks();
+    assert.equal(at(defaultChecks, 1).status, "fail");
+    assert.doesNotMatch(at(at(fDefault.calls, 1).args, 2), /ensureAccessibility/);
+
+    const fPrompt = doctorRunner([
+      { ok: true, stdout: "/usr/bin/swiftc" },
+      { ok: true, stdout: JSON.stringify({ accessibilityTrusted: false }) },
+    ]);
+    const promptChecks = nativeRequirementChecks({ prompt: true });
+    assert.equal(at(promptChecks, 1).status, "fail");
+    assert.match(at(promptChecks, 1).summary, /System prompt requested/);
+    assert.match(at(at(fPrompt.calls, 1).args, 2), /ensureAccessibility\(\{ prompt: true \}\)/);
+  },
+);

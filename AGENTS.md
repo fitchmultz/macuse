@@ -11,7 +11,7 @@ Follow [docs/reference/engineering-standard.md](docs/reference/engineering-stand
 - Pi entrypoint: `extensions/macuse.ts`
 - Public schemas/session: `lib/tools.mjs`, `lib/macuse-session.mjs`
 - Native runtime/guard/state: `lib/cua-runtime.mjs`, `lib/cua-guard-service.mjs`, `lib/app-state.mjs`
-- Native focus helper: `tools/macos-native.mjs`, `tools/macos-native.swift`
+- Native focus helper: `tools/macos-native.mjs`, `tools/macos-native.swift`, `tools/macos-helper-bundle.mjs`
 - Recording/history transport: `lib/auxiliary-runtime.mjs`
 - Pi screenshot hook: `lib/pi-images.mjs`
 - CLI/MCP/config: `tools/macuse.mjs`, `tools/macuse-mcp.mjs`, `tools/macuse-config.mjs`
@@ -40,7 +40,7 @@ Follow [docs/reference/engineering-standard.md](docs/reference/engineering-stand
 - Raw `typeText` is ASCII-only. Native `app.paste(text, {format:"text"})` supports Unicode, Markdown (`md`), and HTML (`html`), restoring the previous clipboard. Paste shortcuts are supported.
 - Preserve partial action evidence and Pi's error flag. Never replay dispatched/unknown-outcome mutations. Timeout/abort interrupts JavaScript through `js_reset` and waits for settlement; it cannot undo or prove UI cancellation. Reset clears bindings/observations, not GUI state.
 - Record & Replay start and Computer History resume require exact intent, `allowRecording:true`, and a non-empty safety note. Settings changes require exact approval, `allowPrivacyChange:true`, and the complete `observation` from a fresh settings read with unchanged fields preserved. Stop/pause need no allow flag. Status/settings can expose private activity metadata.
-- Native AX features need Accessibility permission and installed `xcrun swiftc`; compilation is lazy and source-hash cached. Complete authorized tooling/setup and use supported permission flows with grants sufficient for the requested capability; hand off OS prompts or authentication requiring the user. AppleEvents errors (`-609`, `-1712`, `-1743`) warrant responsible-launcher/TCC diagnosis; preserve the actual error, not an empty-app result. Do not recommend TCC database edits as a permission bypass.
+- Native AX features need Accessibility permission and installed `xcrun swiftc`; `MacuseHelper.app` (`com.fitchmultz.macuse.helper`) compiles lazily, signs with a local signing identity when available (else ad-hoc), and launches through LaunchServices so one Accessibility approval covers Pi, CLI, and MCP hosts. Interactive `macuse` calls trigger the OS Accessibility prompt at most once when needed (`macuse-doctor.mjs --prompt` or `macuse-repair.mjs --apply --prompt-permissions` also surface it). Complete authorized tooling/setup and use supported permission flows with grants sufficient for the requested capability; hand off OS prompts or authentication requiring the user. AppleEvents errors (`-609`, `-1712`, `-1743`) warrant responsible-launcher/TCC diagnosis; preserve the actual error, not an empty-app result. Do not recommend TCC database edits as a permission bypass.
 
 ## Validation
 
