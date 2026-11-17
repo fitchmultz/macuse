@@ -4,9 +4,8 @@ import { DEFAULT_COMPUTER_USE_APP, runCommand } from "./macuse-utils.mjs";
 
 export const REGISTRY_DIR = "/tmp/macuse-appserver";
 export const SERVICE_PATH = `${DEFAULT_COMPUTER_USE_APP}/Contents/MacOS/SkyComputerUseService`;
-export const CLIENT_PATH = `${DEFAULT_COMPUTER_USE_APP}/Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient`;
 
-/** @typedef {{ help: boolean, apply: boolean, restartAppserver: boolean, restartService: boolean, unlockEnv: string | null, repairTcc: boolean, responsible: string, restartTccd: boolean, sudoPasswordEnv: string | null, out: string | null, json: boolean }} RepairOptions */
+/** @typedef {{ help: boolean, apply: boolean, restartAppserver: boolean, restartService: boolean, unlockEnv: string | null, promptPermissions: boolean, out: string | null, json: boolean }} RepairOptions */
 
 /** @typedef {{ status: string, name: string, summary: string, details: unknown }} RepairAction */
 /** @typedef {{ ok: boolean, generatedAt: string, apply: boolean, options: Record<string, unknown>, actions: RepairAction[] }} RepairReport */

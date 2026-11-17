@@ -1,22 +1,22 @@
 #!/usr/bin/env node
 import { dirname, resolve } from "node:path";
 import { REPO_ROOT, VERSION, ensureDir, writeJsonFile } from "./macuse-utils.mjs";
-import { reapRegistry } from "./macuse-repair-process.mjs";
+import { MacOSNative } from "./macos-native.mjs";
+import { add, reapRegistry } from "./macuse-repair-process.mjs";
 import {
   stopComputerUseService,
   stopMacuseAppservers,
   unlockConsole,
   wakeAndStopScreensaver,
 } from "./macuse-repair-steps.mjs";
-import { SERVICE_BUNDLE_ID, repairTcc, restartTccd } from "./macuse-repair-tcc.mjs";
 
 /** @typedef {import("./macuse-repair-process.mjs").RepairOptions} RepairOptions */
 /** @typedef {import("./macuse-repair-process.mjs").RepairReport} RepairReport */
 
 function help() {
   process.stdout
-    .write(`macuse repair ${VERSION}\n\nUsage:\n  node tools/macuse-repair.mjs [options]\n\nDefault mode is dry-run. Pass --apply to make safe local repairs.\n\nOptions:\n  --apply                         Perform safe repairs: wake display, stop screensaver, reap stale registry files.\n  --restart-appserver             With --apply, stop macuse-owned codex app-server processes from registry records.\n  --restart-service               With --apply, stop global SkyComputerUseService and SkyComputerUseClient mcp helpers.\n  --unlock-with-env <VAR>         With --apply, unlock the console using a password stored in environment variable VAR.\n                                  Uses a temporary local Swift HID-event helper; the password is not placed in argv.\n  --repair-tcc                    With --apply, add user TCC AppleEvents grants for the responsible launcher to control ${SERVICE_BUNDLE_ID}.\n  --responsible <path|auto>       Responsible launcher for --repair-tcc. Default auto. SSH sessions map to /usr/libexec/sshd-keygen-wrapper.\n  --restart-tccd                  With --apply and --sudo-password-env, restart tccd after TCC repair.\n  --sudo-password-env <VAR>       Environment variable containing sudo password for --restart-tccd.\n  --out <path>                    Write machine-readable report JSON.\n  --json                          Print JSON instead of Markdown.\n  -h, --help                      Show this help.\n\nExamples:\n  node tools/macuse-repair.mjs\n  node tools/macuse-repair.mjs --apply\n  node tools/macuse-repair.mjs --apply --restart-appserver
-  node tools/macuse-repair.mjs --apply --restart-service\n  node tools/macuse-repair.mjs --apply --unlock-with-env MACUSE_UNLOCK_PASSWORD\n  node tools/macuse-repair.mjs --apply --repair-tcc --responsible auto --restart-tccd --sudo-password-env MACUSE_SUDO_PASSWORD\n\nSafety:\n  --repair-tcc edits only the current user's TCC database and writes a timestamped backup first.\n  --restart-appserver stops macuse-owned app-server records only. --restart-service is separate and broader.\n  No sends, deletes, purchases, installs, or account/security/privacy UI changes are performed.\n`);
+    .write(`macuse repair ${VERSION}\n\nUsage:\n  node tools/macuse-repair.mjs [options]\n\nDefault mode is dry-run. Pass --apply to make safe local repairs.\n\nOptions:\n  --apply                         Perform safe repairs: wake display, stop screensaver, reap stale registry files.\n  --restart-appserver             With --apply, stop macuse-owned codex app-server processes from registry records.\n  --restart-service               With --apply, stop global SkyComputerUseService and SkyComputerUseClient mcp helpers.\n  --unlock-with-env <VAR>         With --apply, unlock the console using a password stored in environment variable VAR.\n                                  Uses a temporary local Swift HID-event helper; the password is not placed in argv.\n  --prompt-permissions            With --apply, check Accessibility for Macuse Helper and trigger the macOS prompt if needed.\n  --out <path>                    Write machine-readable report JSON.\n  --json                          Print JSON instead of Markdown.\n  -h, --help                      Show this help.\n\nExamples:\n  node tools/macuse-repair.mjs\n  node tools/macuse-repair.mjs --apply\n  node tools/macuse-repair.mjs --apply --restart-appserver
+  node tools/macuse-repair.mjs --apply --restart-service\n  node tools/macuse-repair.mjs --apply --unlock-with-env MACUSE_UNLOCK_PASSWORD\n  node tools/macuse-repair.mjs --apply --prompt-permissions\n\nSafety:\n  --prompt-permissions uses macOS's native Accessibility prompt for Macuse Helper; it never edits TCC databases.\n  --restart-appserver stops macuse-owned app-server records only. --restart-service is separate and broader.\n  No sends, deletes, purchases, installs, or unrequested privacy changes are performed.\n`);
 }
 
 /**
@@ -33,11 +33,8 @@ function repairFlag(token) {
   if (token === "--restart-service") {
     return { restartService: true };
   }
-  if (token === "--repair-tcc") {
-    return { repairTcc: true };
-  }
-  if (token === "--restart-tccd") {
-    return { restartTccd: true };
+  if (token === "--prompt-permissions") {
+    return { promptPermissions: true };
   }
   if (token === "--json") {
     return { json: true };
@@ -53,12 +50,6 @@ function repairFlag(token) {
 function repairValue(token, next) {
   if (token === "--unlock-with-env") {
     return { unlockEnv: next() };
-  }
-  if (token === "--responsible") {
-    return { responsible: next() };
-  }
-  if (token === "--sudo-password-env") {
-    return { sudoPasswordEnv: next() };
   }
   if (token === "--out") {
     return { out: resolve(next()) };
@@ -78,10 +69,7 @@ function parse(argv) {
     restartAppserver: false,
     restartService: false,
     unlockEnv: null,
-    repairTcc: false,
-    responsible: "auto",
-    restartTccd: false,
-    sudoPasswordEnv: null,
+    promptPermissions: false,
     out: null,
     json: false,
   };
@@ -140,14 +128,65 @@ function reportOptions(opts) {
     restartAppserver: opts.restartAppserver,
     restartService: opts.restartService,
     unlockEnv: opts.unlockEnv !== null && opts.unlockEnv !== "" ? opts.unlockEnv : null,
-    repairTcc: opts.repairTcc,
-    responsible: opts.responsible,
-    restartTccd: opts.restartTccd,
-    sudoPasswordEnv:
-      opts.sudoPasswordEnv !== null && opts.sudoPasswordEnv !== "" ? opts.sudoPasswordEnv : null,
+    promptPermissions: opts.promptPermissions,
     out: opts.out,
     json: opts.json,
   };
+}
+
+/**
+ * @param {{ accessibilityTrusted: boolean, prompted: boolean }} status
+ * @returns {string}
+ */
+function accessibilityRepairSummary(status) {
+  if (status.accessibilityTrusted) {
+    return "Accessibility is already enabled for Macuse Helper.";
+  }
+  if (status.prompted) {
+    return "Accessibility prompt opened for Macuse Helper; approve once in System Settings > Privacy & Security > Accessibility.";
+  }
+  return "Accessibility is still off for Macuse Helper.";
+}
+
+/**
+ * @param {RepairReport} report
+ * @param {boolean} apply
+ * @param {boolean} requested
+ * @returns {Promise<void>}
+ */
+async function promptAccessibilityRepair(report, apply, requested) {
+  if (!requested) {
+    return;
+  }
+  if (!apply) {
+    add(report, {
+      status: "would-fix",
+      name: "prompt_permissions",
+      summary:
+        "would check Accessibility for Macuse Helper and open the macOS prompt if not yet granted",
+      details: { bundleId: "com.fitchmultz.macuse.helper" },
+    });
+    return;
+  }
+  const native = new MacOSNative();
+  try {
+    const status = await native.ensureAccessibility({ prompt: true });
+    add(report, {
+      status: status.accessibilityTrusted || status.prompted ? "fixed" : "warn",
+      name: "prompt_permissions",
+      summary: accessibilityRepairSummary(status),
+      details: status,
+    });
+  } catch (error) {
+    add(report, {
+      status: "fail",
+      name: "prompt_permissions",
+      summary: error instanceof Error ? error.message : String(error),
+      details: null,
+    });
+  } finally {
+    await native.stop();
+  }
 }
 
 async function main() {
@@ -173,8 +212,7 @@ async function main() {
     stopComputerUseService(report, opts.apply);
   }
   unlockConsole(report, opts.apply, opts.unlockEnv);
-  repairTcc(report, opts.apply, opts);
-  restartTccd(report, opts.apply, opts);
+  await promptAccessibilityRepair(report, opts.apply, opts.promptPermissions);
   report.ok = report.actions.every((action) => action.status !== "fail");
   if (opts.out !== null) {
     ensureDir(dirname(opts.out));

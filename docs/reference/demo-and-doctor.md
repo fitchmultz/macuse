@@ -77,7 +77,7 @@ separately.
 node tools/macuse-doctor.mjs --out .scratch/doctor
 ```
 
-The default audit is read-only. It checks local prerequisites, runtime/configuration health, and app observation, and writes `doctor.md` and `doctor.json`. Run under the same launcher as the failing Pi/MCP session when possible: Accessibility and Automation grants are host-specific.
+The default audit is read-only. It checks local prerequisites, runtime/configuration health, and app observation, and writes `doctor.md` and `doctor.json`. Accessibility belongs to the signed `Macuse Helper` bundle (`com.fitchmultz.macuse.helper`) across terminals and hosts; pass `--prompt` when you want doctor to open the macOS Accessibility prompt if it is not yet trusted. Run under the same launcher as the failing Pi/MCP session when diagnosing ChatGPT Automation or Screen Recording grants, which remain host-specific.
 
 Only request the full audit when controlled UI changes are authorized:
 
@@ -124,6 +124,6 @@ Use `node tools/macuse.mjs session` for multiple calls sharing JavaScript bindin
 - **Timeout/unknown action:** inspect partial evidence and fresh app state after settlement. Do not replay the mutation. A reset cannot prove UI cancellation.
 - **Stale bindings:** `macuse_reset({})` or Pi `/macuse-reset` clears owned JavaScript/observations. `/macuse-stop` stops the session's processes without killing global Computer Use helpers. Neither undoes application effects.
 
-The retained `tools/macuse-repair.mjs` is dry-run by default. Its apply paths can wake/unlock the console, stop processes, or alter privacy state; a generic setup request does not authorize all of those effects. Do not use TCC database editing as a permission bypass. Inspect the requested effects and use only repairs covered by exact user authorization; an existing request covering those effects counts without another approval round.
+The retained `tools/macuse-repair.mjs` is dry-run by default. Pass `--apply --prompt-permissions` to trigger the native macOS Accessibility prompt for `Macuse Helper` if needed, without editing TCC databases. Its other apply paths can wake/unlock the console or stop processes; a generic setup request does not authorize all of those effects. Inspect the requested effects and use only repairs covered by exact user authorization; an existing request covering those effects counts without another approval round.
 
 `tools/probe-codex-computer-use-mcp.mjs` remains for non-mutating raw-MCP discovery and denial diagnostics. Since ChatGPT `26.1111.21308`, `SkyComputerUseService` rejects unsigned parent executables (`-10000`) on service-backed calls (`apps`, `deny`, `state`), so run those probes under ChatGPT's signed `cua_node/bin/node` while `discover` and `logs` still run under standard Node. Historical raw MCP calls could hang or affect focus, so their results are not authoritative for the native v0.5.0 GUI path. See [historical findings](codex-computer-use-external-harness.md#historical-findings).
