@@ -340,6 +340,48 @@ The focused UI element is 29 outline`;
 });
 
 nodeTest(
+  "select_text on a settable field sets and supersedes the focus anchor for paste when that field stays focused",
+  async () => {
+    const before = `Window: "Notes", App: Notes.
+0 standard window Notes, Secondary Actions: Raise
+	1 text field (settable) Value: hello world
+	20 text field (settable) ID: other, Value: other
+	28 scroll area
+		29 outline List
+The focused UI element is 29 outline`;
+    const cases = /** @type {[number, number, string, boolean][]} */ ([
+      [1, 1, "1 text field", true],
+      [1, 1, "20 text field", false],
+      [1, 20, "20 text field", true],
+      [1, 20, "1 text field", false],
+    ]);
+    for (const [clickIndex, selectIndex, focus, succeeds] of cases) {
+      const focused = before.replace(
+        "The focused UI element is 29 outline",
+        `The focused UI element is ${focus}`,
+      );
+      const f = fixture({ nativeApp: "Notes", states: [before, before, focused, focused] });
+      await f.observe();
+      await f.guard(request("click", { element_index: clickIndex }));
+      await f.guard(
+        request("select_text", {
+          element_index: selectIndex,
+          text: selectIndex === 1 ? "world" : "other",
+        }),
+      );
+      const paste = f.guard(request("paste", { text: "café", format: "text" }));
+      if (succeeds) {
+        await paste;
+        assert.equal(f.actions()[2]?.outcome, "completed");
+      } else {
+        await assert.rejects(paste, /Focused field/);
+        assert.equal(f.actions()[2]?.dispatched, false);
+      }
+    }
+  },
+);
+
+nodeTest(
   "a click that leaves the previously observed field focused does not block input",
   async () => {
     // Reduced from System Settings after clicking its settable content scroll bar.

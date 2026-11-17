@@ -1,13 +1,5 @@
 import { spawnSync } from "node:child_process";
-import {
-  accessSync,
-  constants,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
+import { accessSync, constants, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { hash } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
@@ -32,31 +24,9 @@ export const VERSION = (() => {
   }
   throw new Error(`macuse: could not read version from ${resolve(REPO_ROOT, "package.json")}`);
 })();
-export const DEFAULT_CHATGPT_RESOURCES = "/Applications/ChatGPT.app/Contents/Resources";
-const DEFAULT_BUNDLED_PLUGIN_ROOT = resolve(
-  DEFAULT_CHATGPT_RESOURCES,
-  "plugins/openai-bundled/plugins",
-);
-export const DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR = resolve(
-  DEFAULT_BUNDLED_PLUGIN_ROOT,
-  "computer-use",
-);
-const DEFAULT_BUNDLED_RECORD_AND_REPLAY_PLUGIN_DIR = resolve(
-  DEFAULT_BUNDLED_PLUGIN_ROOT,
-  "record-and-replay",
-);
-const DEFAULT_BUNDLED_COMPUTER_HISTORY_PLUGIN_DIR = resolve(
-  DEFAULT_BUNDLED_PLUGIN_ROOT,
-  "computer-history",
-);
 const envCodexHome = process.env.CODEX_HOME;
 export const DEFAULT_CODEX_HOME =
   envCodexHome !== undefined && envCodexHome !== "" ? envCodexHome : resolve(homedir(), ".codex");
-// Plugin no longer embeds the app; use the installed client under $CODEX_HOME/computer-use.
-export const DEFAULT_COMPUTER_USE_PLUGIN_ROOT = resolve(
-  DEFAULT_CODEX_HOME,
-  "plugins/cache/openai-bundled/computer-use",
-);
 export const DEFAULT_COMPUTER_USE_APP = resolve(
   DEFAULT_CODEX_HOME,
   "computer-use/Codex Computer Use.app",
@@ -66,118 +36,6 @@ export const DEFAULT_BUNDLED_COMPUTER_USE_CLIENT = resolve(
   "Contents/SharedSupport/SkyComputerUseClient.app/Contents/MacOS/SkyComputerUseClient",
 );
 export const DEFAULT_COMPUTER_USE_CLIENT_CWD = dirname(DEFAULT_BUNDLED_COMPUTER_USE_CLIENT);
-export const DEFAULT_COMPUTER_USE_PLUGIN_DIR = discoverComputerUsePluginDir();
-export const MCP_SERVERS = Object.freeze({
-  "computer-use": {
-    pluginDir: DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR,
-    args: ["mcp"],
-    tools: [
-      "click",
-      "drag",
-      "get_app_state",
-      "list_apps",
-      "perform_secondary_action",
-      "press_key",
-      "scroll",
-      "select_text",
-      "set_value",
-      "type_text",
-    ],
-  },
-  "event-stream": {
-    pluginDir: DEFAULT_BUNDLED_RECORD_AND_REPLAY_PLUGIN_DIR,
-    args: ["event-stream", "mcp"],
-    tools: ["event_stream_start", "event_stream_status", "event_stream_stop"],
-  },
-  "computer-history": {
-    pluginDir: DEFAULT_BUNDLED_COMPUTER_HISTORY_PLUGIN_DIR,
-    args: ["computer-history", "mcp"],
-    tools: [
-      "computer_history_get_settings",
-      "computer_history_pause",
-      "computer_history_resume",
-      "computer_history_status",
-      "computer_history_update_settings",
-    ],
-  },
-});
-export const COMPUTER_USE_TOOL_NAMES = MCP_SERVERS["computer-use"].tools;
-
-/**
- * @param {string} a
- * @param {string} b
- * @returns {number}
- */
-function compareVersionLike(a, b) {
-  const aa = a
-    .split(/[^0-9]+/)
-    .filter(Boolean)
-    .map(Number);
-  const bb = b
-    .split(/[^0-9]+/)
-    .filter(Boolean)
-    .map(Number);
-  for (let i = 0; i < Math.max(aa.length, bb.length); i += 1) {
-    const delta = (aa[i] ?? 0) - (bb[i] ?? 0);
-    if (delta !== 0) {
-      return delta;
-    }
-  }
-  return a.localeCompare(b);
-}
-
-/** @type {("computer-use" | "event-stream" | "computer-history")[]} */
-const serverNames = ["computer-use", "event-stream", "computer-history"];
-
-/**
- * @param {string} tool
- * @returns {"computer-use" | "event-stream" | "computer-history"}
- */
-export function mcpServerForTool(tool) {
-  for (const name of serverNames) {
-    if (MCP_SERVERS[name].tools.includes(tool)) {
-      return name;
-    }
-  }
-  throw new Error(`Unsupported upstream Computer Use tool: ${tool}`);
-}
-
-export function mcpServerConfigs() {
-  return Object.fromEntries(
-    Object.entries(MCP_SERVERS).map(([name, server]) => [
-      name,
-      {
-        command: resolve(server.pluginDir, "bin/computer-use-client-launcher"),
-        args: server.args,
-        cwd: server.pluginDir,
-        env_vars: ["CODEX_HOME"],
-        enabled: true,
-      },
-    ]),
-  );
-}
-
-/**
- * @param {string} [root]
- * @param {{ fallback?: boolean }} [opts]
- * @returns {string | null}
- */
-export function discoverComputerUsePluginDir(root = DEFAULT_COMPUTER_USE_PLUGIN_ROOT, opts = {}) {
-  try {
-    const entries = readdirSync(root, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort(compareVersionLike)
-      .reverse();
-    const found = entries.find((entry) => existsSync(resolve(root, entry, ".mcp.json")));
-    if (found !== undefined) {
-      return resolve(root, found);
-    }
-  } catch {
-    // Fall back to latest path observed when this helper was updated.
-  }
-  return opts.fallback === false ? null : DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR;
-}
 
 /**
  * @param {Date} [date]
