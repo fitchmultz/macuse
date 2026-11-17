@@ -2,41 +2,10 @@ export const TOOLS_DIR: string;
 export const REPO_ROOT: string;
 export const VERSION: string;
 export const DEFAULT_CHATGPT_RESOURCES: string;
-export const DEFAULT_BUNDLED_COMPUTER_USE_PLUGIN_DIR: string;
 export const DEFAULT_CODEX_HOME: string;
-export const DEFAULT_COMPUTER_USE_PLUGIN_ROOT: string;
 export const DEFAULT_COMPUTER_USE_APP: string;
 export const DEFAULT_BUNDLED_COMPUTER_USE_CLIENT: string;
 export const DEFAULT_COMPUTER_USE_CLIENT_CWD: string;
-export const DEFAULT_COMPUTER_USE_PLUGIN_DIR: string | null;
-
-export interface McpServerSpec {
-  pluginDir: string;
-  args: string[];
-  tools: string[];
-}
-export const MCP_SERVERS: Readonly<
-  Record<"computer-use" | "event-stream" | "computer-history", McpServerSpec>
->;
-export const COMPUTER_USE_TOOL_NAMES: string[];
-
-export function mcpServerForTool(
-  tool: string,
-): "computer-use" | "event-stream" | "computer-history";
-export function mcpServerConfigs(): Record<
-  string,
-  {
-    command: string;
-    args: string[];
-    cwd: string;
-    env_vars: string[];
-    enabled: boolean;
-  }
->;
-export function discoverComputerUsePluginDir(
-  root?: string,
-  opts?: { fallback?: boolean | undefined },
-): string | null;
 export function nowIsoForPath(date?: Date): string;
 export function ensureDir(path: string): void;
 export function writeJsonFile(path: string, value: unknown): void;

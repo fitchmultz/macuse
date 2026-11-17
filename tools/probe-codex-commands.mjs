@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join, resolve as resolvePath } from "node:path";
 import { JsonRpcStdioClient, validateInstall } from "./probe-codex-client.mjs";
 import { createElicitationHandler } from "./probe-codex-elicitation.mjs";
 import {
@@ -14,12 +16,14 @@ import {
   DEFAULT_CWD,
   EventLogger,
   EXIT,
+  JsonRpcResponseError,
   MissingInstallError,
   ProbeError,
   TimeoutError,
   ToolResultError,
   isRecord,
 } from "./probe-codex-core.mjs";
+import { vendorResources } from "../lib/vendor-installation.mjs";
 
 /** @typedef {import("./probe-codex-core.mjs").ExitInfo} ExitInfo */
 /** @typedef {import("./probe-codex-core.mjs").ProbeOptions} ProbeOptions */
@@ -83,6 +87,45 @@ export async function runDiscover(options) {
 }
 
 /**
+ * Detect SkyComputerUseService's -10000 parent-signature rejection without
+ * leaking arbitrary tool text into diagnostics.
+ * @param {unknown} result
+ * @returns {boolean}
+ */
+function hasUnauthenticatedSenderError(result) {
+  if (!isRecord(result) || result.isError !== true || !Array.isArray(result.content)) {
+    return false;
+  }
+  return result.content.some(
+    (block) =>
+      isRecord(block) &&
+      block.type === "text" &&
+      typeof block.text === "string" &&
+      /(?:-10000\b|Sender process is not authenticated)/i.test(block.text),
+  );
+}
+
+/**
+ * @param {string} toolName
+ * @param {unknown} toolResult
+ * @returns {void}
+ */
+function throwIfToolError(toolName, toolResult) {
+  const failed = isRecord(toolResult) && Boolean(toolResult.isError);
+  if (!failed) {
+    return;
+  }
+  const summary = summarizeToolResult(toolResult);
+  const unauthenticatedSender = hasUnauthenticatedSenderError(toolResult);
+  throw new ToolResultError(
+    unauthenticatedSender
+      ? `${toolName} failed: SkyComputerUseService rejected the unsigned parent executable (-10000)`
+      : `${toolName} returned an MCP tool error`,
+    unauthenticatedSender ? { ...summary, unauthenticatedSender: true } : summary,
+  );
+}
+
+/**
  * @param {ProbeOptions} options
  * @returns {Promise<number>}
  */
@@ -99,14 +142,7 @@ export async function runApps(options) {
     return { toolResult, stats: client.stats };
   });
 
-  const failed = isRecord(result.toolResult) && Boolean(result.toolResult.isError);
-  if (failed) {
-    throw new ToolResultError(
-      "list_apps returned an MCP tool error",
-      summarizeToolResult(result.toolResult),
-    );
-  }
-
+  throwIfToolError("list_apps", result.toolResult);
   return EXIT.OK;
 }
 
@@ -139,18 +175,14 @@ export async function runState(options) {
       {
         app: options.app,
         stats: result.stats,
+        ...(hasUnauthenticatedSenderError(result.toolResult)
+          ? { unauthenticatedSender: true }
+          : {}),
       },
     );
   }
 
-  const failed = isRecord(result.toolResult) && Boolean(result.toolResult.isError);
-  if (failed) {
-    throw new ToolResultError(
-      "get_app_state returned an MCP tool error",
-      summarizeToolResult(result.toolResult),
-    );
-  }
-
+  throwIfToolError("get_app_state", result.toolResult);
   return EXIT.OK;
 }
 
@@ -303,6 +335,64 @@ export function printNextDiagnostics(error, options) {
   if (error instanceof MissingInstallError) {
     printMissingInstallDiagnostics();
   }
+  printAuthDiagnostics(script, parsed, error);
+}
+
+/**
+ * Resolve ChatGPT's signed node executable for raw-MCP service diagnostics.
+ * @returns {string}
+ */
+function resolveSignedCuaNode() {
+  const cuaRoot = join(resolvePath(vendorResources()), "cua_node");
+  try {
+    const manifest = /** @type {unknown} */ (
+      JSON.parse(readFileSync(join(cuaRoot, "manifest.json"), "utf8"))
+    );
+    if (isRecord(manifest) && typeof manifest.node_path === "string" && manifest.node_path !== "") {
+      return resolvePath(cuaRoot, manifest.node_path);
+    }
+  } catch {
+    /* Fall back to standard manifest layout path when unavailable. */
+  }
+  return join(cuaRoot, "bin/node");
+}
+
+/**
+ * @param {unknown} error
+ * @returns {boolean}
+ */
+function isUnauthenticatedSenderError(error) {
+  if (error instanceof JsonRpcResponseError && isRecord(error.rpcError)) {
+    return error.rpcError.code === -10000;
+  }
+  return (
+    error instanceof ToolResultError &&
+    isRecord(error.details) &&
+    error.details.unauthenticatedSender === true
+  );
+}
+
+/**
+ * @param {string} script
+ * @param {ProbeOptions | undefined} parsed
+ * @param {unknown} error
+ */
+function printAuthDiagnostics(script, parsed, error) {
+  if (!isUnauthenticatedSenderError(error)) {
+    return;
+  }
+  const command = parsed?.command ?? "apps";
+  const appFlag = parsed?.app !== undefined ? ` --app ${shellQuote(parsed.app)}` : "";
+  const approvalFlag =
+    parsed?.command === "state" && parsed.approval !== undefined
+      ? ` --approval ${shellQuote(parsed.approval)}`
+      : "";
+  process.stderr.write(
+    "  # SkyComputerUseService rejected the unsigned parent executable (-10000); rerun with ChatGPT's signed node:\n",
+  );
+  process.stderr.write(
+    `  ${shellQuote(resolveSignedCuaNode())} ${script} ${command}${appFlag}${approvalFlag}\n`,
+  );
 }
 
 /**
@@ -344,7 +434,7 @@ function printModeDiagnostics(script, parsed) {
  */
 function printMissingInstallDiagnostics() {
   process.stderr.write(
-    '  find "$CODEX_HOME/plugins/cache/openai-bundled/computer-use" -maxdepth 3 -name .mcp.json -print\n',
+    `  ls -l ${shellQuote(join(resolvePath(vendorResources()), "cua_node/manifest.json"))}\n`,
   );
   process.stderr.write(
     '  find "$CODEX_HOME/computer-use" -iname SkyComputerUseClient -type f -print\n',
