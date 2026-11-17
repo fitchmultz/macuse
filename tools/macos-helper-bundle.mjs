@@ -244,21 +244,26 @@ async function killWedgedHelper(pidPath, openChild) {
 }
 
 /**
- * @param {AbortController} startupAbort
- * @param {unknown} error
+ * @param {{ startupAbort: AbortController, timeoutSignal: AbortSignal, startTimeoutMs: number, callerSignal: AbortSignal | undefined, error: unknown }} spec
  * @returns {never}
  */
-function rethrowLaunchFailure(startupAbort, error) {
-  const abortReason = /** @type {unknown} */ (
-    startupAbort.signal.aborted ? startupAbort.signal.reason : undefined
-  );
-  if (abortReason instanceof Error) {
-    throw abortReason;
+function rethrowLaunchFailure(spec) {
+  if (spec.startupAbort.signal.aborted && spec.startupAbort.signal.reason instanceof Error) {
+    throw spec.startupAbort.signal.reason;
   }
-  if (error instanceof Error) {
-    throw error;
+  if (spec.timeoutSignal.aborted) {
+    throw new Error(`Native helper did not connect within ${spec.startTimeoutMs} ms.`, {
+      cause: spec.error,
+    });
   }
-  throw new Error(String(error), { cause: error });
+  if (spec.callerSignal !== undefined && spec.callerSignal.aborted) {
+    const reason = /** @type {unknown} */ (spec.callerSignal.reason);
+    throw reason instanceof Error ? reason : new Error(String(reason), { cause: spec.error });
+  }
+  if (spec.error instanceof Error) {
+    throw spec.error;
+  }
+  throw new Error(String(spec.error), { cause: spec.error });
 }
 
 /**
@@ -280,7 +285,8 @@ export async function launchHelperSession(appPath, onDisconnect, options) {
   await chmod(sockPath, 0o600);
 
   const startupAbort = new AbortController();
-  const signals = [startupAbort.signal, AbortSignal.timeout(options.startTimeoutMs)];
+  const timeoutSignal = AbortSignal.timeout(options.startTimeoutMs);
+  const signals = [startupAbort.signal, timeoutSignal];
   if (options.signal !== undefined) {
     signals.push(options.signal);
   }
@@ -329,11 +335,19 @@ export async function launchHelperSession(appPath, onDisconnect, options) {
       onDisconnect,
     });
   } catch (error) {
+    openChild.off("error", onOpenError);
+    openChild.off("exit", onOpenExit);
     server.close();
     socket?.destroy();
     await killWedgedHelper(pidPath, openChild);
     await rm(dir, { recursive: true, force: true });
-    return rethrowLaunchFailure(startupAbort, error);
+    return rethrowLaunchFailure({
+      startupAbort,
+      timeoutSignal,
+      startTimeoutMs: options.startTimeoutMs,
+      callerSignal: options.signal,
+      error,
+    });
   }
 }
 
