@@ -24,7 +24,6 @@ export const VERSION = (() => {
   }
   throw new Error(`macuse: could not read version from ${resolve(REPO_ROOT, "package.json")}`);
 })();
-export const DEFAULT_CHATGPT_RESOURCES = "/Applications/ChatGPT.app/Contents/Resources";
 const envCodexHome = process.env.CODEX_HOME;
 export const DEFAULT_CODEX_HOME =
   envCodexHome !== undefined && envCodexHome !== "" ? envCodexHome : resolve(homedir(), ".codex");

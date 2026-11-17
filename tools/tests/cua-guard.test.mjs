@@ -340,7 +340,7 @@ The focused UI element is 29 outline`;
 });
 
 nodeTest(
-  "select_text on a settable field preserves the focus anchor for paste when the field stays focused",
+  "select_text on a settable field sets and supersedes the focus anchor for paste when that field stays focused",
   async () => {
     const before = `Window: "Notes", App: Notes.
 0 standard window Notes, Secondary Actions: Raise
@@ -349,18 +349,26 @@ nodeTest(
 	28 scroll area
 		29 outline List
 The focused UI element is 29 outline`;
-    for (const [focus, succeeds] of /** @type {[string, boolean][]} */ ([
-      ["1 text field", true],
-      ["20 text field", false],
-    ])) {
+    const cases = /** @type {[number, number, string, boolean][]} */ ([
+      [1, 1, "1 text field", true],
+      [1, 1, "20 text field", false],
+      [1, 20, "20 text field", true],
+      [1, 20, "1 text field", false],
+    ]);
+    for (const [clickIndex, selectIndex, focus, succeeds] of cases) {
       const focused = before.replace(
         "The focused UI element is 29 outline",
         `The focused UI element is ${focus}`,
       );
       const f = fixture({ nativeApp: "Notes", states: [before, before, focused, focused] });
       await f.observe();
-      await f.guard(request("click", { element_index: 1 }));
-      await f.guard(request("select_text", { element_index: 1, text: "world" }));
+      await f.guard(request("click", { element_index: clickIndex }));
+      await f.guard(
+        request("select_text", {
+          element_index: selectIndex,
+          text: selectIndex === 1 ? "world" : "other",
+        }),
+      );
       const paste = f.guard(request("paste", { text: "café", format: "text" }));
       if (succeeds) {
         await paste;

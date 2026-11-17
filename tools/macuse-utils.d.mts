@@ -1,7 +1,6 @@
 export const TOOLS_DIR: string;
 export const REPO_ROOT: string;
 export const VERSION: string;
-export const DEFAULT_CHATGPT_RESOURCES: string;
 export const DEFAULT_CODEX_HOME: string;
 export const DEFAULT_COMPUTER_USE_APP: string;
 export const DEFAULT_BUNDLED_COMPUTER_USE_CLIENT: string;
