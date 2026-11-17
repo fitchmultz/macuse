@@ -11,9 +11,8 @@ import {
 import { hash } from "node:crypto";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
 
-export const TOOLS_DIR = dirname(fileURLToPath(import.meta.url));
+export const TOOLS_DIR = import.meta.dirname;
 export const REPO_ROOT = resolve(TOOLS_DIR, "..");
 
 /** Canonical package version. Single source of truth; read from package.json once. */
