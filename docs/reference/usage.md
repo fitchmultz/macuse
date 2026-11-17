@@ -89,7 +89,7 @@ For native macOS pointer input, `app.click(target, {key, durationMs})` can hold 
 
 Never automatically replay a dispatched or unknown-outcome mutation. Timeout/abort interrupts JavaScript through the vendor's reset operation and waits for settlement; it does not undo or prove cancellation of a GUI action. Inspect partial `dispatched`/`outcome` evidence and fresh app state before continuing. Programs are not transactions, and a reset can prevent JavaScript cleanup from running.
 
-Focus tracking defaults on. Native activation/window observations report their coverage honestly; they do not attribute input or guarantee uninterrupted keyboard/mouse use. macuse never warps the user's cursor. On GPT-6-Astra, a scoped Pi hook restores original macuse screenshot bytes only when Pi resized a matching retained tool output. Astra's `auto` already means original; other models, filtered outputs, and compacted-away outputs are left alone. No host patch or settings change is needed.
+Focus tracking defaults on. Native activation/window observations report their coverage honestly; they do not attribute input or guarantee uninterrupted keyboard/mouse use. macuse never warps the user's cursor. On GPT-6 Astra and GPT-6.2 Astra, a scoped Pi hook restores original macuse screenshot bytes only when Pi resized a matching retained tool output. Astra's `auto` already means original; other models, filtered outputs, and compacted-away outputs are left alone. No host patch or settings change is needed.
 
 To save a screenshot from the bound app:
 
