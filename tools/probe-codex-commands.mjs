@@ -163,6 +163,10 @@ export async function runState(options) {
     return { toolResult, stats: client.stats };
   });
 
+  if (hasUnauthenticatedSenderError(result.toolResult)) {
+    throwIfToolError("get_app_state", result.toolResult);
+  }
+
   if (options.approval === "deny") {
     if (result.stats.declined > 0) {
       process.stdout.write(
@@ -172,13 +176,7 @@ export async function runState(options) {
     }
     throw new ToolResultError(
       "deny mode did not observe an elicitation/create request to decline; the app may already be approved or the call failed before app approval",
-      {
-        app: options.app,
-        stats: result.stats,
-        ...(hasUnauthenticatedSenderError(result.toolResult)
-          ? { unauthenticatedSender: true }
-          : {}),
-      },
+      { app: options.app, stats: result.stats },
     );
   }
 
