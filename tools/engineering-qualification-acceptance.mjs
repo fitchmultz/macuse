@@ -63,7 +63,7 @@ function faults() {
       gate: "lock-freshness",
       path: "package.json",
       source: "",
-      replace: ['"oxfmt": "0.75.0"', '"oxfmt": "0.74.0"'],
+      replace: ['"oxfmt": "0.79.0"', '"oxfmt": "0.78.0"'],
       expected: "package-lock.json is stale",
     },
   ];
