@@ -49,6 +49,7 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 6
     env:
+      AUTOMATION_REF: 3e744f52412c3669bd781ed5ea3e21567798352e
       PI_TELEMETRY: "0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -71,12 +72,8 @@ jobs:
           PM="$(node -p 'require(process.env.GITHUB_WORKSPACE + "/package.json").packageManager')"
           npm exec --yes --package="$PM" -- npm install --global "$PM"
       - run: npm ci --ignore-scripts
-      - name: Native and offline behavior contracts
-        run: npm test
-      - name: Official Pi host and CLI
-        run: |
-          node tools/validate-pi-host.mjs
-          node .github/scripts/validate-pi-cli.mjs
+      - name: Official Pi CLI
+        run: node .github/scripts/validate-pi-cli.mjs
       - name: Check fork supported floor
         id: fork_support
         env:
@@ -105,8 +102,15 @@ jobs:
           appendFileSync(process.env.GITHUB_OUTPUT, `supported=${supported}\n`);
           appendFileSync(process.env.GITHUB_STEP_SUMMARY, `### Fork host eligibility\n\n\`\`\`json\n${json}\n\`\`\`\n`);
           NODE
-      - name: Build the current fork
+      - name: Cache fork package
+        id: fork_cache
         if: steps.fork_support.outputs.supported == 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/fork-package
+          key: pi-fork-${{ runner.os }}-${{ runner.arch }}-${{ steps.fork.outputs.commit }}-${{ env.AUTOMATION_REF }}-${{ hashFiles('fork/package-lock.json') }}
+      - name: Build the current fork
+        if: steps.fork_support.outputs.supported == 'true' && steps.fork_cache.outputs.cache-hit != 'true'
         working-directory: fork
         env:
           FORK_REF: ${{ steps.fork.outputs.commit }}
@@ -116,8 +120,23 @@ jobs:
           npm run hydrate:model-data
           PI_OFFLINE=1 npm run build:offline
           git diff --exit-code
-      - name: Fork Pi host and CLI
+          node --input-type=module <<'NODE'
+          import { join, resolve } from 'node:path';
+          import { rmSync } from 'node:fs';
+          import { produceArtifactSet } from './scripts/package-artifacts.mjs';
+          import { installConsumer } from './scripts/local-package-install.mjs';
+          const artifactsDir = join(process.env.RUNNER_TEMP, 'fork-artifacts');
+          try {
+            const artifactSet = produceArtifactSet({ repoRoot: resolve('.'), outDir: artifactsDir, build: false, force: true });
+            installConsumer({
+              artifactSet,
+              directory: join(process.env.RUNNER_TEMP, 'fork-package'),
+              packageNames: ['@earendil-works/pi-coding-agent'],
+            });
+          } finally {
+            rmSync(artifactsDir, { force: true, recursive: true });
+          }
+          NODE
+      - name: Fork Pi CLI
         if: steps.fork_support.outputs.supported == 'true'
-        run: |
-          node tools/validate-pi-host.mjs "$GITHUB_WORKSPACE/fork/packages/coding-agent"
-          node .github/scripts/validate-pi-cli.mjs "$GITHUB_WORKSPACE/fork/packages/coding-agent"
+        run: node .github/scripts/validate-pi-cli.mjs "$RUNNER_TEMP/fork-package/node_modules/@earendil-works/pi-coding-agent"

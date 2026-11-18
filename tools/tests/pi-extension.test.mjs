@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import nodeTest from "node:test";
 import { createJiti } from "jiti";
 import { crc32, deflateSync } from "node:zlib";
-import { formatDimensionNote, resizeImage } from "@earendil-works/pi-coding-agent";
+import {
+  ToolExecutionComponent,
+  formatDimensionNote,
+  initTheme,
+  resizeImage,
+} from "@earendil-works/pi-coding-agent";
+import { TuiMainScreen, stripTerminalSequences } from "@earendil-works/pi-tui";
 import { restoreMacuseImages, retainMacuseOriginals } from "../../lib/pi-images.mjs";
 import { tools as specs } from "../../lib/tools.mjs";
 
@@ -58,6 +64,31 @@ if (!isRecord(extensionModule) || !isExtensionFactory(extensionModule.default)) 
   assert.fail("macuse extension default export missing");
 }
 const extension = extensionModule.default;
+/** @typedef {import("@earendil-works/pi-coding-agent").ToolRenderers} ToolRenderers */
+/** @typedef {{ macuseToolRenderers: ToolRenderers, macuseResetToolRenderers: ToolRenderers, renderersForTool: (name: string) => ToolRenderers }} RenderersModule */
+/**
+ * @param {unknown} value
+ * @returns {value is ToolRenderers}
+ */
+const isToolRenderers = (value) =>
+  isRecord(value) &&
+  typeof value.renderCall === "function" &&
+  typeof value.renderResult === "function";
+/**
+ * @param {unknown} value
+ * @returns {value is RenderersModule}
+ */
+const isRenderersModule = (value) =>
+  isRecord(value) &&
+  isToolRenderers(value.macuseToolRenderers) &&
+  isToolRenderers(value.macuseResetToolRenderers) &&
+  typeof value.renderersForTool === "function";
+/** @type {unknown} */
+const renderersModule = await jiti.import("../../extensions/macuse-renderers.ts");
+if (!isRenderersModule(renderersModule)) {
+  assert.fail("macuse renderers module missing");
+}
+const { macuseToolRenderers, macuseResetToolRenderers, renderersForTool } = renderersModule;
 /** macuse registers its Pi surface only on macOS; the macOS CI job runs these. */
 const mac = { skip: process.platform !== "darwin" };
 /** @typedef {Record<string, unknown> & { properties?: Record<string, Record<string, unknown>> }} SchemaMock */
@@ -65,7 +96,7 @@ const mac = { skip: process.platform !== "darwin" };
  * The tool surfaces the fixture reads. `execute` models the trailing-optional
  * runtime signature the tests call.
  *
- * @typedef {{ name: string, exposure?: string, parameters: SchemaMock, executionMode?: string, constrainedSampling?: unknown, discovery?: boolean | undefined, promptGuidelines?: string[] | undefined, execute?: (command: string, input?: Record<string, unknown>) => Promise<{ details?: unknown }> }} RegisteredToolMock
+ * @typedef {{ name: string, exposure?: string, parameters: SchemaMock, executionMode?: string, constrainedSampling?: unknown, discovery?: boolean | undefined, promptGuidelines?: string[] | undefined, renderCall?: ToolRenderers["renderCall"], renderResult?: ToolRenderers["renderResult"], execute?: (command: string, input?: Record<string, unknown>) => Promise<{ details?: unknown }> }} RegisteredToolMock
  */
 /** @typedef {(event?: unknown, ctx?: unknown) => unknown} ExtensionHandlerMock */
 /**
@@ -73,7 +104,7 @@ const mac = { skip: process.platform !== "darwin" };
  *
  * @typedef {{
  *   registerTool: (tool: RegisteredToolMock) => void,
- *   registerCommand: (name: string, command: unknown) => void,
+ *   registerCommand: (name: string, command: { handler: (args: string, ctx: unknown) => Promise<void> }) => void,
  *   on: (name: string, handler: ExtensionHandlerMock) => void,
  *   getAllTools: () => RegisteredToolMock[],
  *   getActiveTools: () => string[],
@@ -87,7 +118,7 @@ export function extensionFixture() {
   const handlers = new Map();
   /** @type {Map<string, ExtensionHandlerMock[]>} Every handler for each event, in registration order. */
   const handlerLists = new Map();
-  /** @type {Map<string, unknown>} */
+  /** @type {Map<string, { handler: (args: string, ctx: unknown) => Promise<void> }>} */
   const commands = new Map();
   /** @type {PiApiMock} */
   const pi = {
@@ -200,16 +231,20 @@ nodeTest("macuse runs add a macos section; unreachable deferred tools warn once"
   const f = extensionFixture();
   /** @type {string[]} */
   const notices = [];
-  const ctx = {
-    ui: {
-      notify: (/** @type {string} */ message) => {
-        notices.push(message);
-      },
-    },
-  };
   /** @typedef {{ selectedTools: string[], hiddenTools: string[], toolGuidelines: Record<string, string[]>, sections: Record<string, string> }} PromptOptionsMock */
-  /** @param {{ systemPromptOptions: PromptOptionsMock }} runEvent */
-  const startRun = async (runEvent) => {
+  /**
+   * @param {{ systemPromptOptions: PromptOptionsMock }} runEvent
+   * @param {boolean} [hasUI]
+   */
+  const startRun = async (runEvent, hasUI = true) => {
+    const ctx = {
+      hasUI,
+      ui: {
+        notify: (/** @type {string} */ message) => {
+          notices.push(message);
+        },
+      },
+    };
     for (const handler of f.handlerLists.get("before_agent_start") ?? []) {
       await handler(runEvent, ctx);
     }
@@ -223,6 +258,9 @@ nodeTest("macuse runs add a macos section; unreachable deferred tools warn once"
       sections: { existing: "Preserve other instructions." },
     },
   };
+  // Headless runs (hasUI: false) still inject the macos section, without calling ctx.ui.notify or suppressing a later UI warning.
+  await startRun(event, false);
+  assert.equal(notices.length, 0);
   await startRun(event);
   const sections = event.systemPromptOptions.sections;
   assert.equal(sections.existing, "Preserve other instructions.");
@@ -266,13 +304,279 @@ nodeTest("macuse runs add a macos section; unreachable deferred tools warn once"
       sections: {},
     },
   });
+  await startRun({
+    systemPromptOptions: {
+      selectedTools: ["macuse"],
+      hiddenTools: [],
+      toolGuidelines: {},
+      sections: {},
+    },
+  });
   assert.deepEqual(
     notices.filter((message) => message.startsWith("macuse recording and history tools")),
     [
       "macuse recording and history tools that are not selected directly are only reachable from the tool_search or codemode tool, but neither is active; they cannot be called.",
     ],
   );
+  for (const name of ["macuse-status", "macuse-stop"]) {
+    const cmd = f.commands.get(name);
+    if (cmd === undefined) {
+      assert.fail(`missing command: ${name}`);
+    }
+    /** @type {string[]} */
+    const cmdNotices = [];
+    await cmd.handler("", {
+      hasUI: false,
+      ui: {
+        notify: (/** @type {string} */ msg) => {
+          cmdNotices.push(msg);
+        },
+      },
+    });
+    assert.equal(cmdNotices.length, 0);
+    await cmd.handler("", {
+      hasUI: true,
+      ui: {
+        notify: (/** @type {string} */ msg) => {
+          cmdNotices.push(msg);
+        },
+      },
+    });
+    assert.equal(cmdNotices.length, 1);
+  }
 });
+
+/** @returns {import("@earendil-works/pi-tui").Terminal} */
+function createTestTerminal() {
+  return {
+    start() {
+      /* No-op terminal for headless rendering tests. */
+    },
+    stop() {
+      /* No-op terminal for headless rendering tests. */
+    },
+    async drainInput() {
+      /* No-op terminal for headless rendering tests. */
+    },
+    write() {
+      /* No-op terminal for headless rendering tests. */
+    },
+    get columns() {
+      return 80;
+    },
+    get rows() {
+      return 24;
+    },
+    get kittyProtocolActive() {
+      return false;
+    },
+    moveBy() {
+      /* No-op. */
+    },
+    hideCursor() {
+      /* No-op. */
+    },
+    showCursor() {
+      /* No-op. */
+    },
+    clearLine() {
+      /* No-op. */
+    },
+    clearFromCursor() {
+      /* No-op. */
+    },
+    clearScreen() {
+      /* No-op. */
+    },
+    setTitle() {
+      /* No-op. */
+    },
+    setProgress() {
+      /* No-op. */
+    },
+    setProgramStatus() {
+      /* No-op. */
+    },
+  };
+}
+
+/**
+ * Render lines through Pi's real ToolExecutionComponent and strip Pi's own styling ANSI codes.
+ * @param {string} toolName
+ * @param {unknown} args
+ * @param {{ content: Array<{ type: string, text?: string }>, details?: unknown, isError: boolean } | undefined} result
+ * @param {{ renderers?: ToolRenderers, expanded?: boolean, isPartial?: boolean, showImages?: boolean, width?: number }} [options]
+ * @returns {string}
+ */
+function renderCard(toolName, args, result, options = {}) {
+  initTheme(undefined, false);
+  const tui = new TuiMainScreen(createTestTerminal());
+  const renderers = options.renderers ?? renderersForTool(toolName);
+  const component = new ToolExecutionComponent(
+    toolName,
+    "call_render",
+    args,
+    { showImages: options.showImages ?? false },
+    renderers,
+    tui,
+    process.cwd(),
+  );
+  component.setExpanded(options.expanded ?? false);
+  if (result !== undefined) {
+    component.updateResult(result, options.isPartial ?? false);
+  }
+  return stripTerminalSequences(component.render(options.width ?? 76).join("\n"));
+}
+
+nodeTest(
+  "tool cards sanitize untrusted app/title/AX strings, guard partial/missing details, and use visual line hints",
+  () => {
+    const injectionArgs = {
+      code: Array.from(
+        { length: 12 },
+        (_, i) => `// line ${i + 1}: \x1b[31mEvil\x1b[0m \x1b]0;spoof\x07`,
+      ).join("\n"),
+      apps: ["Bad\x1b[31mApp\x07\nSpoof\u009b2J"],
+      allowMutating: true,
+      safetyNote: "Click \x1b]8;;https://evil\x07Button\x1b]8;;\x07\r\nnow",
+      saveImagePath: "/tmp/\x1b[2Jshot.png",
+    };
+    const collapsedCall = renderCard("macuse", injectionArgs, undefined, {
+      renderers: macuseToolRenderers,
+    });
+    assert.ok(collapsedCall.includes("BadApp Spoof 2J"));
+    assert.ok(!collapsedCall.includes("\x1b"));
+    assert.ok(!collapsedCall.includes("\x07"));
+    assert.ok(!collapsedCall.includes("\u009b"));
+    assert.match(collapsedCall, /\.\.\. \(\d+ more lines, .*to expand\)/);
+
+    const expandedCall = renderCard("macuse", injectionArgs, undefined, {
+      renderers: macuseToolRenderers,
+      expanded: true,
+    });
+    assert.ok(expandedCall.includes("// line 12:"));
+    assert.ok(!expandedCall.includes("to expand"));
+
+    // Missing / null / empty / partial details fall back cleanly to sanitized text without throwing.
+    for (const badDetails of [undefined, null, {}, { macuse: null }, { macuse: "bad" }]) {
+      const rendered = renderCard(
+        "macuse",
+        { code: "await cua.getState()" },
+        {
+          content: [{ type: "text", text: "AX\x1b[31mFallback\x1b[0m\x07Line\u009bK" }],
+          details: badDetails,
+          isError: false,
+        },
+      );
+      assert.ok(rendered.includes("AXFallback Line K"));
+      assert.ok(!rendered.includes("\x1b") && !rendered.includes("\x07"));
+    }
+
+    // Partial streaming update with only status and provisionalActions.
+    const partial = renderCard(
+      "macuse",
+      { code: "await cua.getState()" },
+      {
+        content: [],
+        details: {
+          macuse: {
+            runId: "r1",
+            status: "running",
+            provisionalActions: [{ method: "click\x1b[31m", app: "Notes\x07App" }],
+          },
+        },
+        isError: false,
+      },
+      { isPartial: true },
+    );
+    assert.ok(partial.includes("running"));
+    assert.ok(partial.includes("click"));
+    assert.ok(partial.includes("Notes App"));
+
+    // Complete result with untrusted app/title/AX/error strings and long wrapped output.
+    const completed = renderCard(
+      "macuse",
+      { code: "await app.click(1)" },
+      {
+        content: [
+          {
+            type: "text",
+            text: Array.from({ length: 12 }, (_, i) => `Output ${i + 1}: \x1b[33mtext\x1b[0m`).join(
+              "\n",
+            ),
+          },
+        ],
+        details: {
+          macuse: {
+            status: "completed",
+            actions: [
+              {
+                method: "click\x07",
+                app: "App\x1b[31mOne",
+                outcome: "completed",
+                verification: "exact\x1b]0;v\x07",
+                target: {
+                  role: "button\x07",
+                  name: "Save\x1b[2JFile\nNow",
+                  index: "4",
+                },
+              },
+            ],
+            observations: [
+              {
+                app: "App\x1b[31mOne",
+                title: "Window\x1b]0;evil\x07Title\r\nInject",
+                url: "https://example.com/\x1b[31mpath",
+                focused: { role: "text field", name: "Input\x07Field" },
+              },
+            ],
+            focus: {
+              observationAvailable: true,
+              transitions: [{ kind: "activation" }],
+              after: { frontmost: { name: "Front\x1b[31mApp" } },
+            },
+          },
+        },
+        isError: false,
+      },
+    );
+    assert.ok(completed.includes("completed"));
+    assert.ok(completed.includes("AppOne"));
+    assert.ok(completed.includes('SaveFile Now" #4'));
+    assert.ok(completed.includes("WindowTitle Inject"));
+    assert.ok(completed.includes("FrontApp"));
+    assert.match(completed, /\.\.\. \(\d+ more lines, .*to expand\)/);
+    assert.ok(!completed.includes("\x1b") && !completed.includes("\x07"));
+
+    // Reset and auxiliary tools also render safely on missing details.
+    const resetCard = renderCard(
+      "macuse_reset",
+      {},
+      {
+        content: [{ type: "text", text: "Cleared\x1b[31mBindings" }],
+        details: undefined,
+        isError: false,
+      },
+      { renderers: macuseResetToolRenderers },
+    );
+    assert.ok(resetCard.includes("macuse_reset"));
+    assert.ok(resetCard.includes("ClearedBindings"));
+
+    const auxCard = renderCard(
+      "event_stream_start",
+      { allowRecording: true, safetyNote: "Record\x07Session" },
+      {
+        content: [{ type: "text", text: "Refused\x1b[31m" }],
+        details: { macuse: { dispatched: false } },
+        isError: true,
+      },
+    );
+    assert.ok(auxCard.includes("[recording]"));
+    assert.ok(auxCard.includes("Record Session"));
+    assert.ok(auxCard.includes("refused (not dispatched)"));
+    assert.ok(!auxCard.includes("\x1b") && !auxCard.includes("\x07"));
+  },
+);
 
 /**
  * @param {string} data

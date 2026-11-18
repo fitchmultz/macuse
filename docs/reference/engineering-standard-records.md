@@ -16,7 +16,7 @@ Records for the adoption of [engineering-standard.md](engineering-standard.md) (
 | Formatter ownership     | oxfmt owns maintained `.mjs`, `.d.mts`, `.ts`, `.json`, `.md`, and `.yml` files. `package-lock.json` is generated output owned by npm. Swift sources (`.swift`) and vendored bytes have no oxfmt owner.                                                                                                                                                                       |
 | Compiler projects       | root `tsconfig.json` compiles `extensions/**/*.ts`, `.github/scripts/**`, and all maintained JavaScript (`lib/**/*.mjs`, `tools/**/*.mjs`) with `allowJs`/`checkJs` and the Section 4.2 strict-family options; `.d.mts` declarations are checked by `tsconfig.declarations.json` with `skipLibCheck` off. Both projects run in `npm run typecheck` and pass with zero errors. |
 | Source profiles         | Production: `lib/`, `extensions/`, `tools/*.mjs` (bin + qualification tooling), `.github/scripts/`. Tests: `tools/tests/*.test.mjs`. Handwritten declarations: `lib/*.d.mts`, `tools/*.d.mts`. Static fixture app: `tools/actuator-fixture.mjs` (implementation-owned). No maintained React/Vitest/Jest sources; test runner is `node:test`.                                  |
-| Acceptance commands     | `npm run check:compat` (canonical aggregate), `npm run ci`, `npm run format:check`, `npm run lint`                                                                                                                                                                                                                                                                            |
+| Acceptance commands     | `npm run check` / `npm run check:compat` (canonical aggregate), `npm run ci`, `npm run format:check`, `npm run lint`                                                                                                                                                                                                                                                          |
 | Hosted CI               | `.github/workflows/ci.yml` (Linux contracts + macOS native hosts) and `.github/workflows/pi-compatibility.yml`                                                                                                                                                                                                                                                                |
 | Migration status        | See "Migration status" below                                                                                                                                                                                                                                                                                                                                                  |
 
@@ -26,13 +26,13 @@ Phased adoption per standard Section 9.2. Enforcement is added in each phase onl
 
 1. Toolchain, configurations, formatting ownership, and `format:check` gating — complete.
 2. Compiler coverage expansion (`allowJs`/`checkJs` and Section 4.2 options over all maintained JavaScript) with source repairs until `npm run typecheck` passes — complete.
-3. Strict lint enforcement (`npm run lint` and `lint:agent` in `check:compat`/`ci`) covers all maintained source. The qualification controls and integrity checks cover the declared profiles and exceptions.
+3. Strict lint enforcement (`npm run lint` in `check`/`check:compat`/`ci`) covers all maintained source. The qualification controls and integrity checks cover the declared profiles and exceptions.
 
 No finding budgets, diagnostic filtering, or incomplete-source exemptions are in force. Adoption also requires passing hosted CI on the integrated revision.
 
 ### Verification
 
-`npm run check:compat` runs each independent gate and reports all failures. The aggregate includes native lint, agent-format lint, both compiler projects, tests, formatting, npm lockfile freshness, policy and coverage, offline extension and Pi host contracts, and package checks.
+`npm run check` / `npm run check:compat` runs each independent gate and reports all failures. The aggregate includes lint, both compiler projects, tests, formatting, npm lockfile freshness (when `PI_COMPAT_HOST` is unset), policy and coverage, offline MCP/extension and Pi host contracts, and package checks.
 
 `npm run qualify:engineering` copies the current tracked and untracked inputs into a temporary workspace. It records the base revision and input digest, runs the Section 8.2 controls, and removes the workspace. The controls exercise actual lint diagnostics and compiler projects, the Node registration allowance, directive and policy integrity, formatting and generated freshness, and failure propagation through the complete acceptance command. The qualification fails if its working-tree inputs change while it runs.
 

@@ -38,7 +38,7 @@ For mutating/focus checks, no action should run unless Activity Monitor's origin
 
 ## GitHub Actions
 
-[CI](../../.github/workflows/ci.yml) runs the offline contract on Node 24.22.3 in Linux. A separate macOS job tests the Swift helper and probes both the installed official Pi release and the maintained fork's current `main`, resolved to one exact commit per run, including real Pi CLI extension loading. The fork build hydrates its model data from public catalogs. The jobs have four- and six-minute execution limits and upload no artifacts or caches.
+[CI](../../.github/workflows/ci.yml) runs the offline contract on Node 24.22.3 in Linux. A separate macOS job tests real Pi CLI extension loading against both the installed official Pi release and the maintained fork's current `main` (resolved to one exact commit per run and cached by OS, architecture, fork commit, automation pin, and lockfile hash), while [Pi compatibility](../../.github/workflows/pi-compatibility.yml) runs the macOS test suite (including the Swift helper) and host SDK probes across both hosts. The fork build hydrates its model data from public catalogs.
 
 Hosted CI does not use the installed ChatGPT runtime or prove macOS privacy permissions. Run the live checks locally when those behaviors change.
 
