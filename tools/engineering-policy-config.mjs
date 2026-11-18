@@ -84,10 +84,11 @@ function checkFormatter() {
 
 /** @type {[string, string, string[]]} */
 const piHostGate = ["pi-host", "node", ["tools/validate-pi-host.mjs"]];
+/** @type {[string, string, string[]]} */
+const lockFreshnessGate = ["lock-freshness", "node", ["tools/check-lock-freshness.mjs"]];
 /** @type {Array<[string, string, string[]]>} */
 const requiredGates = [
   ["lint", "npm", ["run", "lint"]],
-  ["lint:agent", "npm", ["run", "lint:agent"]],
   ["compiler:source", "npm", ["exec", "--", "tsc", "--noEmit"]],
   [
     "compiler:declarations",
@@ -96,9 +97,9 @@ const requiredGates = [
   ],
   ["test", "npm", ["test"]],
   ["format", "npm", ["run", "format:check"]],
-  ["lock-freshness", "node", ["tools/check-lock-freshness.mjs"]],
+  ...(process.env.PI_COMPAT_HOST === undefined ? [lockFreshnessGate] : []),
   ["policy", "node", ["tools/check-engineering-policy.mjs"]],
-  ["extension", "node", ["tools/validate-macuse.mjs", "extension"]],
+  ["extension", "node", ["tools/validate-macuse.mjs", "extension", "--mcp-only"]],
   // Mirrors compat-gates.mjs: the host probe drives the macuse Pi tool, which registers only on macOS.
   ...(process.platform === "darwin" ? [piHostGate] : []),
   ["package", "npm", ["run", "pack:check"]],
@@ -112,8 +113,8 @@ function checkScripts() {
   }
   const required = {
     lint: "oxlint --deny-warnings .",
-    "lint:agent": "oxlint --deny-warnings --format=agent .",
     "format:check": "oxfmt --check .",
+    check: "node tools/check-compat.mjs",
     "check:compat": "node tools/check-compat.mjs",
     test: "node --test tools/tests/*.test.mjs",
     "pack:check": "npm pack --dry-run",

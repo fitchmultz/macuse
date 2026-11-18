@@ -399,18 +399,21 @@ async function nativeAppStateCheck(session, app, timeoutMs) {
 /**
  * Offline extension-contract checks.
  * @param {(name: string, run: () => unknown) => Promise<void>} check
+ * @param {{ mcpOnly?: boolean }} [options]
  * @returns {Promise<void>}
  */
-async function extensionModeChecks(check) {
-  await check("Pi extension contract (no desktop)", () => {
-    const result = spawnSync(
-      process.execPath,
-      ["--test", "tools/tests/pi-extension.test.mjs", "tools/tests/pi-lifecycle.test.mjs"],
-      { encoding: "utf8", env: { ...process.env, PI_OFFLINE: "1" }, timeout: 60000 },
-    );
-    assert.equal(result.status, 0, result.stderr + result.stdout);
-    return "Registration, native SDK selection recovery and runtime cleanup, partial error flags, scoped original-image restoration";
-  });
+async function extensionModeChecks(check, { mcpOnly = false } = {}) {
+  if (!mcpOnly) {
+    await check("Pi extension contract (no desktop)", () => {
+      const result = spawnSync(
+        process.execPath,
+        ["--test", "tools/tests/pi-extension.test.mjs", "tools/tests/pi-lifecycle.test.mjs"],
+        { encoding: "utf8", env: { ...process.env, PI_OFFLINE: "1" }, timeout: 60000 },
+      );
+      assert.equal(result.status, 0, result.stderr + result.stdout);
+      return "Registration, native SDK selection recovery and runtime cleanup, partial error flags, scoped original-image restoration";
+    });
+  }
   await check("MCP schemas and pre-dispatch refusal", () => mcpCheck());
 }
 
@@ -480,6 +483,7 @@ async function main() {
     options: {
       json: { type: "boolean" },
       verbose: { type: "boolean" },
+      "mcp-only": { type: "boolean" },
       app: { type: "string", default: "Activity Monitor" },
       "tool-timeout-ms": { type: "string", default: "90000" },
       help: { type: "boolean", short: "h" },
@@ -488,7 +492,7 @@ async function main() {
   const mode = positionals[0] ?? "quick";
   if (values.help === true) {
     console.log(
-      "macuse validation: extension (offline) | quick | read-only | mutating | focus | mcp\nmutating/focus select an Activity Monitor tab and restore the captured original in finally. No recording/privacy changes.",
+      "macuse validation: extension (offline; pass --mcp-only to skip Pi test files) | quick | read-only | mutating | focus | mcp\nmutating/focus select an Activity Monitor tab and restore the captured original in finally. No recording/privacy changes.",
     );
     return;
   }
@@ -517,7 +521,7 @@ async function main() {
   const session = new MacuseSession();
   try {
     if (mode === "extension") {
-      await extensionModeChecks(check);
+      await extensionModeChecks(check, { mcpOnly: values["mcp-only"] === true });
     } else {
       await nativeModeChecks(check, session, { mode, timeoutMs, app: values.app });
     }

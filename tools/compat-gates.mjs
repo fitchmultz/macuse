@@ -3,7 +3,6 @@
 /** Independent acceptance checks. The runner reports every result before failing. @type {Gate[]} */
 export const compatGates = [
   { name: "lint", command: "npm", args: ["run", "lint"] },
-  { name: "lint:agent", command: "npm", args: ["run", "lint:agent"] },
   { name: "compiler:source", command: "npm", args: ["exec", "--", "tsc", "--noEmit"] },
   {
     name: "compiler:declarations",
@@ -12,9 +11,16 @@ export const compatGates = [
   },
   { name: "test", command: "npm", args: ["test"] },
   { name: "format", command: "npm", args: ["run", "format:check"] },
-  { name: "lock-freshness", command: "node", args: ["tools/check-lock-freshness.mjs"] },
+  // ci.yml contracts already verifies lockfile freshness; skip redundant runs under PI_COMPAT_HOST.
+  ...(process.env.PI_COMPAT_HOST === undefined
+    ? [{ name: "lock-freshness", command: "node", args: ["tools/check-lock-freshness.mjs"] }]
+    : []),
   { name: "policy", command: "node", args: ["tools/check-engineering-policy.mjs"] },
-  { name: "extension", command: "node", args: ["tools/validate-macuse.mjs", "extension"] },
+  {
+    name: "extension",
+    command: "node",
+    args: ["tools/validate-macuse.mjs", "extension", "--mcp-only"],
+  },
   // The host probe drives the macuse Pi tool, which registers only on macOS. Elsewhere
   // tools/tests/pi-lifecycle.test.mjs asserts the empty Pi surface through the same SDK.
   ...(process.platform === "darwin"

@@ -11,6 +11,8 @@ import {
   restoreMacuseImages,
 } from "../lib/pi-images.mjs";
 import type { MacuseSession } from "../lib/macuse-session.mjs";
+import { renderersForTool } from "./macuse-renderers";
+import { sanitizeInlineText, sanitizeMultilineText } from "./macuse-render-utils";
 
 interface MacuseDetailsMarker {
   macuse?: { isError?: boolean } | undefined;
@@ -49,6 +51,7 @@ const registerOwnedTools = (pi: ExtensionAPI, runtime: MacuseRuntime): void => {
       ...(primaryTools.includes(spec) ? {} : { exposure: "deferred" }),
       constrainedSampling: { type: "json_schema", strict: "prefer" },
       executionMode: "sequential",
+      ...renderersForTool(spec.name),
       ...(spec.name === "macuse"
         ? {
             promptSnippet:
@@ -197,7 +200,7 @@ const registerCommands = (pi: ExtensionAPI, runtime: MacuseRuntime): void => {
         const text =
           status === undefined
             ? "macuse is stopped; starts on first tool call."
-            : JSON.stringify(status);
+            : sanitizeInlineText(JSON.stringify(status));
         ctx.ui.notify(text, "info");
       }
     },
@@ -217,10 +220,12 @@ const registerCommands = (pi: ExtensionAPI, runtime: MacuseRuntime): void => {
       const result = await (await runtime.getSession(ctx.cwd)).reset();
       if (ctx.hasUI) {
         ctx.ui.notify(
-          result.content
-            .filter((part) => part.type === "text")
-            .map((part) => part.text)
-            .join("\n"),
+          sanitizeMultilineText(
+            result.content
+              .filter((part) => part.type === "text")
+              .map((part) => part.text)
+              .join("\n"),
+          ),
           "info",
         );
       }
@@ -269,7 +274,7 @@ export default function macuse(pi: ExtensionAPI): void {
   // tool_search or codemode in their own session_start handlers.
   let warnedUnreachable = false;
   pi.on("before_agent_start", (_event, ctx) => {
-    if (warnedUnreachable || deferredToolsReachable(pi)) {
+    if (!ctx.hasUI || warnedUnreachable || deferredToolsReachable(pi)) {
       return;
     }
     warnedUnreachable = true;

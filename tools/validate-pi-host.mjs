@@ -135,14 +135,15 @@ try {
   for (const path of ["extensions", "lib", "package.json"]) {
     await cp(join(packageRoot, path), join(scratch, path), { recursive: true });
   }
+  /** @param {string} pkg */
+  const resolveHostPkg = (pkg) =>
+    dirname(findPackageJSON(pkg, pathToFileURL(join(root, "package.json")).href) ?? "");
   /** @type {[string, string][]} */
   const links = [
     ["@earendil-works/pi-coding-agent", root],
     ["@earendil-works/pi-ai", ai],
-    [
-      "typebox",
-      dirname(findPackageJSON("typebox", pathToFileURL(join(root, "package.json")).href) ?? ""),
-    ],
+    ["@earendil-works/pi-tui", resolveHostPkg("@earendil-works/pi-tui")],
+    ["typebox", resolveHostPkg("typebox")],
   ];
   for (const [name, target] of links) {
     const link = join(scratch, "node_modules", name);
