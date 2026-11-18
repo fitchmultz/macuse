@@ -89,8 +89,8 @@ function checkLockFreshness(ws) {
   const good = ws.run("node", ["tools/check-lock-freshness.mjs"]);
   assert.equal(good.status, 0, `fresh lockfile failed: ${good.stdout} ${good.stderr}`);
   const original = ws.read("package.json");
-  assert.ok(original.includes('"oxfmt": "0.75.0"'), "lock control dependency is missing");
-  ws.write("package.json", original.replace('"oxfmt": "0.75.0"', '"oxfmt": "0.74.0"'));
+  assert.ok(original.includes('"oxfmt": "0.79.0"'), "lock control dependency is missing");
+  ws.write("package.json", original.replace('"oxfmt": "0.79.0"', '"oxfmt": "0.78.0"'));
   try {
     const stale = ws.run("node", ["tools/check-lock-freshness.mjs"]);
     assert.notEqual(stale.status, 0, "stale lockfile passed freshness gate");

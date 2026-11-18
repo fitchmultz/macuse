@@ -405,7 +405,7 @@ export async function qualifyFixtureText(actuator, challenger, fixture) {
     const captured = await captureFixtureOriginal(actuator, fixture);
     original = captured.original;
     const { alternate } = await pressChallengeTab(challenger, fixture);
-    // tsgo requires this guard (optional field) while tsgolint resolves the
+    // tsgo requires this guard (optional field) while tsrs resolves the
     // same property as non-optional; both cannot be satisfied at once.
     const originalField = original.field;
     if (originalField === undefined) {
