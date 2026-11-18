@@ -78,7 +78,7 @@ export class VisualPreview implements Component {
   readonly #keep: "start" | "end";
   readonly #formatHint: (hidden: number) => string;
   #cachedWidth: number | undefined;
-  #cachedLines: string[] | undefined;
+  #cachedLines: ReturnType<Component["render"]> | undefined;
 
   constructor(options: {
     text: string;
@@ -92,7 +92,7 @@ export class VisualPreview implements Component {
     this.#formatHint = options.formatHint;
   }
 
-  render(width: number): string[] {
+  render(width: number): ReturnType<Component["render"]> {
     if (this.#cachedLines === undefined || this.#cachedWidth !== width) {
       const preview = truncateToVisualLines(this.#text, this.#maxVisualLines, width, 0, this.#keep);
       if (preview.skippedCount > 0) {
