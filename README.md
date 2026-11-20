@@ -13,7 +13,7 @@ _macuse checks the app and document before each action. The assistant receives a
 
 ## Install in Pi
 
-Use macOS, Pi 1.5.2 or later, and Node 24.22.3 (24.x) or 26.13.1 or later. Set up ChatGPT Computer Use with its normal authentication and macOS permissions.
+Use macOS, Pi 1.6.0 or later, and Node 24.22.3 (24.x) or 26.13.1 or later. Set up ChatGPT Computer Use with its normal authentication and macOS permissions.
 
 Native focus checks also require Accessibility access and `xcrun swiftc`. See [local requirements](docs/reference/codex-computer-use-local-install.md) for setup details.
 
@@ -47,7 +47,7 @@ The tool returns API documentation and app state. Bindings persist until reset o
 | `macuse`       | Inspect apps and run JavaScript in a persistent session. |
 | `macuse_reset` | Clear bindings and observations; preserve app state.     |
 
-Pi starts with these two tools. The eight Record & Replay and Computer History tools register with deferred exposure: Pi's `tool_search` loads one on request, `codemode` scripts can call them directly, and `defaultTools` entries such as `+computer_history_status` select them at startup. Loading a tool starts no recording. Pi registers `tool_search` inactive; like Pi's own MCP extension, macuse activates a registered `tool_search` at session start (and after `/tree`) so the model can load the deferred tools. A host allowlist or exclusion that removes `tool_search`, or a branch that recorded removing it, keeps it off. When neither `tool_search` nor `codemode` is active, deferred tools that are not selected directly cannot be called. macuse checks as each run starts, after every extension's session start handling, and warns once. MCP exposes all ten tools directly. See [tool selection](docs/reference/usage.md#tool-selection).
+By default, Pi starts with these two entry tools. Host `toolExposure` settings may defer `macuse` and `macuse_reset` as well (or give them `codemode` exposure): if either is not declared directly, load it via `tool_search` or call it from `codemode` before reporting macuse unavailable. The eight Record & Replay and Computer History tools register with deferred exposure: Pi's `tool_search` loads one on request, `codemode` scripts can call them directly, and `defaultTools` entries such as `+computer_history_status` select them at startup. Loading a tool starts no recording. Pi registers `tool_search` inactive; like Pi's own MCP extension, macuse activates a registered `tool_search` at session start (and after `/tree`) so the model can load the deferred tools. A host allowlist or exclusion that removes `tool_search`, or a branch that recorded removing it, keeps it off. When neither `tool_search` nor `codemode` is active, deferred tools that are not selected directly cannot be called. macuse checks as each run starts, after every extension's session start handling, and warns once. MCP exposes all ten tools directly. See [tool selection](docs/reference/usage.md#tool-selection).
 
 ## App changes and limits
 

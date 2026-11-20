@@ -87,7 +87,8 @@ jobs:
           const { valid, gte } = createRequire(findPackageJSON('@earendil-works/pi-coding-agent', import.meta.url))('semver');
           const version = JSON.parse(readFileSync('fork/packages/coding-agent/package.json', 'utf8')).version;
           if (!valid(version)) throw new Error(`Invalid fork version: ${version}`);
-          const floor = '1.5.2';
+          const floor = JSON.parse(readFileSync('package.json', 'utf8')).devDependencies?.['@earendil-works/pi-coding-agent'];
+          if (!valid(floor)) throw new Error(`Invalid floor version: ${floor}`);
           const supported = gte(version, floor);
           const receipt = {
             repository: 'fitchmultz/pi', ref: 'main', commit: process.env.FORK_REF,

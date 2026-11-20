@@ -13,7 +13,7 @@ Inspect and operate native macOS apps with short adaptive JavaScript programs. P
 
 ## Bootstrap and routing
 
-Pi starts with two entry tools: `macuse` and `macuse_reset`. The eight recording/history tools are deferred: load one with `tool_search` or call it from `codemode`. Pi's native tool selection, `defaultTools`, allowlists, and exclusions remain binding; if an entry tool is deselected in a saved session, use the host's tool selector or a new session. The MCP server exposes all ten tools directly.
+By default, Pi starts with two entry tools: `macuse` and `macuse_reset`. The eight recording/history tools are deferred: load one with `tool_search` or call it from `codemode`. Host `toolExposure` settings may defer `macuse` and `macuse_reset` as well (or give them `codemode` exposure): if either is not declared directly, load it via `tool_search` or call it from `codemode` before reporting macuse unavailable. Pi's native tool selection, `defaultTools`, allowlists, and exclusions remain binding; if an entry tool is deselected in a saved session with `direct` exposure, use the host's tool selector or a new session. The MCP server exposes all ten tools directly.
 
 Start by calling `macuse` with one of:
 
