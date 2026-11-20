@@ -39,13 +39,6 @@ const isRecord = (value) => typeof value === "object" && value !== null && !Arra
 /** A context without an abort signal; createToolContext requires the argument. */
 /** @type {AbortSignal | undefined} */
 const noSignal = undefined;
-/** @typedef {Fixture["session"]["extensionRunner"]["emitBeforeAgentStart"]} EmitBeforeAgentStart */
-/** @typedef {Awaited<ReturnType<EmitBeforeAgentStart>>} EmitResult */
-/**
- * @param {unknown} value
- * @returns {value is (trigger: { messageType: "user", prompt: string }, options: unknown) => Promise<EmitResult>}
- */
-const isTwoArgEmitter = (value) => typeof value === "function" && value.length === 2;
 /**
  * @param {unknown} value
  * @returns {value is GetCurrentTools}
@@ -210,13 +203,10 @@ function declare(f) {
  * @param {string} prompt
  */
 function beforeAgentStart(f, prompt) {
-  const runner = f.session.extensionRunner;
-  const options = { cwd: f.dir, selectedTools: f.session.getActiveToolNames() };
-  const emit = runner.emitBeforeAgentStart.bind(runner);
-  if (isTwoArgEmitter(emit)) {
-    return emit({ messageType: "user", prompt }, options);
-  }
-  assert.fail("unsupported emitBeforeAgentStart host signature");
+  return f.session.extensionRunner.emitBeforeAgentStart(
+    { messageType: "user", prompt },
+    { cwd: f.dir, selectedTools: f.session.getActiveToolNames() },
+  );
 }
 
 /** The guidance for the macuse tool, exactly as the model reads it. */
