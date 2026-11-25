@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setTimeout as delay } from "node:timers/promises";
 import { CuaRuntime, resolveLaunch, appApproval, imageMetadata } from "../../lib/cua-runtime.mjs";
+import { createGuard } from "../../lib/cua-guard-service.mjs";
 import {
   MACUSE_API_DOC,
   SUPPRESS_STATE_END,
@@ -44,8 +45,9 @@ const mutating = {
 };
 /**
  * @param {(request: CuaToolRequest, emit?: (event: unknown) => void) => unknown} [call]
+ * @param {Omit<NonNullable<ConstructorParameters<typeof CuaRuntime>[0]>, "connect">} [runtimeOptions]
  */
-function fixture(call) {
+function fixture(call, runtimeOptions) {
   /** @type {{ request: CuaToolRequest, options: CuaCallToolOptions | undefined }[]} */
   const calls = [];
   let connects = 0;
@@ -53,6 +55,7 @@ function fixture(call) {
   /** @type {((event: unknown) => void) | undefined} */
   let diagnostic;
   const runtime = new CuaRuntime({
+    ...runtimeOptions,
     connect: async (_options, emit) => {
       connects++;
       diagnostic = emit;
@@ -269,6 +272,74 @@ nodeTest(
       ["js", "js_reset"],
     );
     await f.runtime.stop();
+  },
+);
+
+nodeTest(
+  "a Sky app-state timeout names competing Chrome processes without resetting JS",
+  async () => {
+    const bundle = "/Applications/Google Chrome.app";
+    const binary = `${bundle}/Contents/MacOS/Google Chrome`;
+    for (const app of ["Google Chrome", bundle, "com.google.Chrome"]) {
+      const f = fixture(
+        async (request) => {
+          if (request.name !== "js") {
+            return;
+          }
+          /** @type {Record<string, unknown>} */
+          const meta = {};
+          const guard = createGuard({
+            dispatch: async () => {
+              throw Object.assign(new Error("timeoutReached"), { code: -10005 });
+            },
+            context: () => ({
+              requestMeta: request._meta ?? {},
+              setResponseMeta: (data) => {
+                assert.ok(isRecord(data));
+                Object.assign(meta, structuredClone(data));
+              },
+            }),
+          });
+          try {
+            await guard({ type: "execute", method: "get_app_state", args: [{ app }] });
+            assert.fail("get_app_state should reject");
+          } catch (error) {
+            assert.ok(error instanceof Error);
+            return {
+              content: [{ type: "text", text: error.message }],
+              isError: true,
+              _meta: { ...meta, "codex/nodeReplExecutionDurationMs": 1 },
+            };
+          }
+        },
+        {
+          readProcessCommand: async (command, args) => {
+            if (command === "/usr/bin/lsappinfo") {
+              assert.deepEqual(args, ["info", "-only", "bundlepath", "-app", "com.google.Chrome"]);
+              return `"LSBundlePath"="${bundle}"\n`;
+            }
+            assert.equal(command, "/bin/ps");
+            if (args.includes("pid=,comm=")) {
+              return ` 42 ${binary}\n 43 ${binary}\n 44 ${binary}\n 45 /Applications/Not Google Chrome.app/Contents/MacOS/Not Google Chrome\n`;
+            }
+            assert.deepEqual(args, ["-ww", "-p", "42,43,44", "-o", "pid=,args="]);
+            return ` 42 ${binary}\n 43 ${binary} --headless=new --user-data-dir=/tmp/private-profile\n 44 ${binary} --type=renderer --headless=new\n`;
+          },
+        },
+      );
+      const result = await f.runtime.execute({ code: `await cua.getApp(${JSON.stringify(app)})` });
+      const output = result.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+      assert.match(output, /Native app-state request.*timeoutReached/);
+      assert.match(output, /competing.*Google Chrome.*PID 42.*Google Chrome.*PID 43.*headless/i);
+      assert.doesNotMatch(output, /PID (44|45)|private-profile|kernel reset/i);
+      assert.equal(result.isError, true);
+      assert.equal(result.details.macuse.status, "failed");
+      assert.equal(result.details.macuse.kernelReset, false);
+      assert.deepEqual(
+        f.calls.map((c) => c.request.name),
+        ["js"],
+      );
+    }
   },
 );
 

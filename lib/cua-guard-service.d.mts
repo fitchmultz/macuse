@@ -39,6 +39,7 @@ export interface RunRecord {
   runId: string;
   actions: GuardAction[];
   mutationBlocked: boolean;
+  appStateTimeout?: string;
 }
 
 /** The focused field the guard carries across a follow-up keyboard input. */
