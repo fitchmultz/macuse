@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Require Pi 1.6.1 or later (PEA-238).
+
 - Restore original macuse screenshot bytes on GPT-6.2 Astra (`gpt-6.2-astra`) as on GPT-6 Astra, on the native OpenAI Responses and Codex Responses APIs. Its `auto` image detail also means original resolution.
 - Bundle and sign the native Accessibility helper as content-addressed `~/Library/Application Support/macuse/bundles/<hash>/MacuseHelper.app` (`com.fitchmultz.macuse.helper`, `LSUIElement`), launched via LaunchServices over a private `0700`/`0600` local UNIX socket so one Accessibility approval covers all Pi, CLI, and MCP hosts across rebuilds. Interactive `macuse` sessions trigger the macOS Accessibility prompt at most once when access is missing, `macuse-doctor.mjs --prompt` and `macuse-repair.mjs --apply --prompt-permissions` surface the native prompt directly, and direct `TCC.db` editing (`macuse-repair-tcc.mjs`) is removed.
 - Send the `macos` prompt section only in runs that start with `macuse` declared to the model. The same text is now the `macuse` tool's prompt guideline, so Pi delivers it with the tool: `codemode` returns it when a script lists or looks up the tool, and Pi adds it to the prompt's rules when `tool_search` loads `macuse` during a run. `tool_search` loads `macuse` only in a session whose settings give it `deferred` or `codemode` exposure (the `toolExposure` setting of the fitchmultz/pi fork); a `macuse` that is turned off keeps its `direct` exposure and cannot be loaded that way. A session that never declares `macuse` no longer carries the text, which was 1,343 bytes of every request. Requests of a session that declares `macuse` are unchanged. In `codemode` `only` mode the text moves from the `macos` section to the `macuse` entry of the codemode tool listing.
