@@ -1997,6 +1997,63 @@ nodeTest("missing focus evidence never authorizes keyboard editing or submission
 });
 
 nodeTest(
+  "Return is refused with menu recovery when Sky reports focus outside the tree",
+  async () => {
+    const outside = tree().replace(
+      /The focused UI element is .*$/,
+      "The focused UI element is 92 text Staging",
+    );
+    const f = fixture({ states: [tree(), outside] });
+    await f.observe();
+    await assert.rejects(
+      f.guard(request("press_key", { key: "Return" })),
+      /focused element.*92.*outside the accessibility tree.*cannot be verified.*screenshot.*AX state.*click.*instead of pressing Return/i,
+    );
+    assert.equal(
+      f.calls.some((call) => call.method === "press_key"),
+      false,
+    );
+    assert.equal(f.actions()[0]?.outcome, "not_dispatched");
+
+    // Stale before.focusedOutsideTree does not mislabel a later in-tree focus refusal as an open menu.
+    const closedMenu = fixture({ states: [outside, tree()] });
+    await closedMenu.observe();
+    await assert.rejects(closedMenu.guard(request("press_key", { key: "Return" })), (error) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /Focused field changed or is unavailable/);
+      assert.doesNotMatch(error.message, /outside the accessibility tree|menu is open/i);
+      return true;
+    });
+  },
+);
+
+nodeTest(
+  "Sky keyNotFound identifies the exact chord without settling or replaying it",
+  async () => {
+    const key = "Super_L+grave";
+    const f = fixture({
+      mutate: () => {
+        throw Object.assign(new Error('keyNotFound("grave")'), { code: -10005 });
+      },
+    });
+    await f.observe();
+    await assert.rejects(
+      f.guard(request("press_key", { key })),
+      /unsupported.*"Super_L\+grave".*keyNotFound\("grave"\).*menu bar.*supported shortcut/i,
+    );
+    const action = f.actions()[0];
+    assert.equal(action?.dispatched, true);
+    assert.equal(action.outcome, "unknown");
+    assert.match(String(action.error), /unsupported.*"Super_L\+grave"/i);
+    assert.equal(f.context.meta?.macuse?.mutationBlocked, true);
+    assert.deepEqual(
+      f.calls.filter((call) => call.method === "press_key"),
+      [request("press_key", { key })],
+    );
+  },
+);
+
+nodeTest(
   "bare Escape and directional navigation preserve focusless dispatch without ignoring known focus drift",
   async () => {
     const missing = tree().replace(/\nThe focused UI element.*$/, "");

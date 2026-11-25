@@ -266,15 +266,25 @@ nodeTest(
       "page label",
       "sheet",
       "window",
+      "focus reported outside tree",
     ]) {
       const f = fixture();
-      const source =
-        typeof mismatch === "string" && ["page label", "sheet", "window"].includes(mismatch)
-          ? parseAppState(
-              "Test",
-              `Window: "", App: Test.\n0 ${mismatch === "page label" ? "window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html" : `${mismatch} Fixture`}\n\t2 text field ID: editor, Value: old`,
-            )
-          : observed;
+      let source = observed;
+      if (mismatch === "focus reported outside tree") {
+        source = parseAppState(
+          "Test",
+          'Window: "Fixture", App: Test.\n0 standard window Fixture\n\t2 text field ID: editor, Value: old\nThe focused UI element is 92 text Staging',
+        );
+        assert.equal(source.focused, undefined);
+      } else if (
+        typeof mismatch === "string" &&
+        ["page label", "sheet", "window"].includes(mismatch)
+      ) {
+        source = parseAppState(
+          "Test",
+          `Window: "", App: Test.\n0 ${mismatch === "page label" ? "window Secondary Actions: Raise\n\t1 HTML content chrome-extension://fixture.invalid/popup.html" : `${mismatch} Fixture`}\n\t2 text field ID: editor, Value: old`,
+        );
+      }
       const field = source.focused ?? source.elements.find((e) => e.id === "editor");
       if (field === undefined) {
         assert.fail("missing editor field");

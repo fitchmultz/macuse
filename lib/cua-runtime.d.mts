@@ -89,11 +89,18 @@ export interface CuaClient {
   ) => Promise<unknown>;
   close: () => Promise<void>;
 }
+/** Read output from a fixed macOS process diagnostic command. */
+export type ProcessCommandReader = (
+  command: string,
+  args: string[],
+  signal: AbortSignal,
+) => Promise<string>;
 export class CuaRuntime {
   constructor(options?: {
     cwd?: string;
     resourcesPath?: string;
     connect?: (options: unknown, onDiagnostic: (event: unknown) => void) => Promise<CuaClient>;
+    readProcessCommand?: ProcessCommandReader;
   });
   execute(
     input: unknown,

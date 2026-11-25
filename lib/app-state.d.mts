@@ -25,6 +25,8 @@ export interface AppObservation {
   nativeSheetId?: string;
   text: string;
   focused?: AppElement;
+  /** Sky reported this focused index, but it is absent from the parsed tree. */
+  focusedOutsideTree?: string;
   focusedWindow?: boolean;
   elements: AppElement[];
   observedAt: number;
