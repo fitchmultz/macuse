@@ -340,6 +340,74 @@ nodeTest(
         ["js"],
       );
     }
+
+    // A caught timeoutReached followed by an unrelated failure or a later successful read
+    // does not attach a stale competing-instance note.
+    for (const scenario of ["unrelated-error", "later-success"]) {
+      const f = fixture(
+        async (request) => {
+          if (request.name !== "js") {
+            return;
+          }
+          /** @type {Record<string, unknown>} */
+          const meta = {};
+          let calls = 0;
+          const guard = createGuard({
+            dispatch: async () => {
+              calls++;
+              if (calls === 1) {
+                throw Object.assign(new Error("timeoutReached"), { code: -10005 });
+              }
+              return {
+                text: 'Window: "Google Chrome", App: Google Chrome.\n0 button Reload\n',
+                app: "Google Chrome",
+              };
+            },
+            context: () => ({
+              requestMeta: request._meta ?? {},
+              setResponseMeta: (data) => {
+                assert.ok(isRecord(data));
+                Object.assign(meta, structuredClone(data));
+              },
+            }),
+          });
+          await assert.rejects(
+            guard({
+              type: "execute",
+              method: "get_app_state",
+              args: [{ app: "Google Chrome" }],
+            }),
+            /timeoutReached/,
+          );
+          if (scenario === "later-success") {
+            await guard({
+              type: "execute",
+              method: "get_app_state",
+              args: [{ app: "Google Chrome" }],
+            });
+          }
+          return {
+            content: [
+              {
+                type: "text",
+                text: scenario === "later-success" ? "later timeoutReached text" : "unrelated boom",
+              },
+            ],
+            isError: true,
+            _meta: { ...meta, "codex/nodeReplExecutionDurationMs": 1 },
+          };
+        },
+        {
+          readProcessCommand: async (_command, args) =>
+            args.includes("pid=,comm=")
+              ? ` 42 ${binary}\n 43 ${binary}\n`
+              : ` 42 ${binary}\n 43 ${binary} --headless=new\n`,
+        },
+      );
+      const result = await f.runtime.execute({ code: `// ${scenario}` });
+      const output = result.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+      assert.doesNotMatch(output, /competing/i, scenario);
+    }
   },
 );
 

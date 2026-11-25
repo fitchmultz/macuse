@@ -2014,6 +2014,16 @@ nodeTest(
       false,
     );
     assert.equal(f.actions()[0]?.outcome, "not_dispatched");
+
+    // Stale before.focusedOutsideTree does not mislabel a later in-tree focus refusal as an open menu.
+    const closedMenu = fixture({ states: [outside, tree()] });
+    await closedMenu.observe();
+    await assert.rejects(closedMenu.guard(request("press_key", { key: "Return" })), (error) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /Focused field changed or is unavailable/);
+      assert.doesNotMatch(error.message, /outside the accessibility tree|menu is open/i);
+      return true;
+    });
   },
 );
 
