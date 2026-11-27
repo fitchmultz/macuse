@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Require Pi 1.6.1 or later (PEA-238).
+- Require Pi 1.7.0 or later (PEA-240).
 
 - Restore original macuse screenshot bytes on GPT-6.2 Astra (`gpt-6.2-astra`) as on GPT-6 Astra, on the native OpenAI Responses and Codex Responses APIs. Its `auto` image detail also means original resolution.
 - Bundle and sign the native Accessibility helper as content-addressed `~/Library/Application Support/macuse/bundles/<hash>/MacuseHelper.app` (`com.fitchmultz.macuse.helper`, `LSUIElement`), launched via LaunchServices over a private `0700`/`0600` local UNIX socket so one Accessibility approval covers all Pi, CLI, and MCP hosts across rebuilds. Interactive `macuse` sessions trigger the macOS Accessibility prompt at most once when access is missing, `macuse-doctor.mjs --prompt` and `macuse-repair.mjs --apply --prompt-permissions` surface the native prompt directly, and direct `TCC.db` editing (`macuse-repair-tcc.mjs`) is removed.

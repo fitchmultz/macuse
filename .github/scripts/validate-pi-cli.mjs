@@ -153,7 +153,6 @@ try {
     ...process.env,
     PI_PACKAGE_DIR: root,
     PI_CODING_AGENT_DIR: join(directory, "agent"),
-    PI_TELEMETRY: "0",
     MACUSE_CI_OBSERVATION: observation,
   };
   /**
